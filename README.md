@@ -14,7 +14,7 @@ Google Drive.
   app's hidden folder, merged per document and per drawing. PDFs themselves are
   never uploaded. No server, no account, no telemetry.
 
-Site and privacy policy: https://croksuter.github.io/research-pdf/
+Site and privacy policy: https://research-pdf.croksuter.com/
 
 ## Develop
 
