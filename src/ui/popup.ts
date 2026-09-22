@@ -78,8 +78,11 @@ function renderSync(status: SyncStatus): void {
   syncConnectButton.disabled = !status.googleConfigured;
   syncNowButton.disabled = !(status.googleConnected && status.enabled);
   syncDisconnectButton.disabled = !status.googleConnected;
+  // Always show the redirect URI: a redirect_uri_mismatch from Google means
+  // this install's extension ID (unpacked loads get a path-derived one) is not
+  // registered on the OAuth client yet.
   syncSetup.textContent = status.googleConfigured
-    ? ''
+    ? `이 설치의 리디렉션 URI: ${redirectUri()} — 로그인 창에 redirect_uri_mismatch가 뜨면 이 주소가 OAuth 클라이언트에 등록되지 않은 것입니다.`
     : `이 빌드에는 Google OAuth 클라이언트 ID가 설정되어 있지 않습니다. docs/google-drive-sync.md를 따라 설정하세요. 등록할 리디렉션 URI: ${redirectUri()}`;
   if (status.syncing) syncStatus.textContent = '동기화 중…';
   else if (status.error) syncStatus.textContent = `동기화 오류: ${status.error}`;
