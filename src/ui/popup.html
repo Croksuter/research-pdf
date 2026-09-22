@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ResearchPDF</title>
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="rp-shell">
+    <header class="rp-header">
+      <img src="icons/icon-32.png" width="28" height="28" alt="">
+      <div>
+        <h1>ResearchPDF</h1>
+        <p>논문 PDF 뷰어 · 그림과 읽던 위치가 따라다닙니다</p>
+      </div>
+    </header>
+
+    <button type="button" id="open-viewer" class="btn-primary">PDF 열기 (새 뷰어 탭)</button>
+
+    <section class="rp-section" aria-labelledby="sync-title">
+      <div class="rp-heading">
+        <h2 id="sync-title">Google Drive 동기화</h2>
+        <span class="rp-badge">선택</span>
+      </div>
+      <p class="settings-privacy-note">Google Drive의 앱 전용 숨김 폴더에 그림과 읽던 위치를 저장합니다. 같은 Google 계정을 연결한 모든 Chrome 프로필과 기기가 문서를 열 때, 그림을 저장한 직후, 그리고 약 15분마다 자동으로 동기화됩니다. ResearchPDF는 이 폴더 밖의 Drive 파일을 볼 수 없고 비밀번호나 장기 토큰을 저장하지 않습니다. PDF 파일 자체는 업로드하지 않습니다.</p>
+      <p id="sync-account" class="rp-account"></p>
+      <label class="settings-toggle">
+        <input type="checkbox" id="sync-enabled">
+        <span><strong>동기화 사용</strong><small>끄면 이 기기는 Drive와 주고받지 않습니다. 계정 연결은 유지됩니다.</small></span>
+      </label>
+      <div class="settings-actions">
+        <button type="button" id="sync-connect" class="btn-primary">Google 계정 연결</button>
+        <button type="button" id="sync-now" class="btn-secondary">지금 동기화</button>
+        <button type="button" id="sync-disconnect" class="btn-secondary">연결 해제</button>
+      </div>
+      <p id="sync-status" class="status-bar" aria-live="polite"></p>
+      <p id="sync-setup" class="settings-privacy-note"></p>
+    </section>
+
+    <section class="rp-section" aria-labelledby="viewer-title">
+      <h2 id="viewer-title">뷰어</h2>
+      <label class="settings-toggle">
+        <input type="checkbox" id="local-pdf-viewer-enabled">
+        <span>
+          <strong>로컬 PDF를 ResearchPDF로 열기</strong>
+          <small>file:///…pdf 파일을 Chrome 기본 뷰어 대신 내장 뷰어로 엽니다. 확장 프로그램 세부정보에서 "파일 URL에 대한 액세스 허용"이 켜져 있어야 합니다.</small>
+        </span>
+      </label>
+      <label class="settings-toggle">
+        <input type="checkbox" id="web-pdf-viewer-enabled">
+        <span>
+          <strong>웹 PDF도 ResearchPDF로 열기</strong>
+          <small>주소로 접속한 PDF(https://…, Content-Type이 PDF인 응답)를 내장 뷰어로 엽니다. 켜면 모든 사이트에 대한 접근 권한을 요청하며, PDF 응답을 뷰어로 돌리는 데만 씁니다.</small>
+        </span>
+      </label>
+      <label class="settings-toggle">
+        <input type="checkbox" id="paper-info-enabled">
+        <span>
+          <strong>논문 정보 표시</strong>
+          <small>논문(DOI·arXiv·제목)을 인식하면 게재처·연도, 인용 수와 추이, 참고문헌, 외부 링크를 표시합니다. 식별자만 Semantic Scholar·OpenAlex·Crossref에 보냅니다.</small>
+        </span>
+      </label>
+      <div class="field-group">
+        <label for="s2-api-key-input">Semantic Scholar API 키 (선택)</label>
+        <div class="settings-actions">
+          <input type="password" id="s2-api-key-input" class="settings-input" autocomplete="off" placeholder="없으면 공용 익명 한도 사용">
+          <button type="button" id="s2-api-key-save" class="btn-secondary">저장</button>
+        </div>
+      </div>
+      <button type="button" id="restore-viewer-tabs" class="btn-secondary">닫힌 PDF 뷰어 탭 복구</button>
+      <p class="settings-privacy-note">확장 프로그램을 리로드하거나 업데이트하면 Chrome이 뷰어 탭을 모두 닫습니다. 열려 있던 문서·페이지·확대 상태는 자동으로 다시 열리며, 안 됐을 때 이 버튼으로 복구합니다.</p>
+      <p id="settings-status" class="status-bar" aria-live="polite"></p>
+    </section>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

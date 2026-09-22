@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PDF · ResearchPDF</title>
+  <link rel="stylesheet" href="pdfjs/pdf_viewer.css">
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="pdfViewer.css">
+</head>
+<body>
+  <!-- Every piece of viewer chrome lives under an element whose id starts with
+       `vocab-t-`: the highlighter and page translator skip such subtrees, so
+       toolbar labels, thumbnails, dialogs and print sheets are never treated as
+       page content. Only #viewerContainer (the PDF.js pages) is scanned. -->
+  <svg hidden aria-hidden="true">
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-fit-page" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="1.5"/><path d="M9 8l3-3 3 3M9 16l3 3 3-3"/></symbol>
+    <symbol id="i-fit-width" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1.5"/><path d="M8 9l-3 3 3 3M16 9l3 3-3 3"/></symbol>
+    <symbol id="i-rotate" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></symbol>
+    <symbol id="i-pen" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
+    <symbol id="i-highlighter" viewBox="0 0 24 24"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></symbol>
+    <symbol id="i-text" viewBox="0 0 24 24"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></symbol>
+    <symbol id="i-undo" viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></symbol>
+    <symbol id="i-redo" viewBox="0 0 24 24"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 15-6.7L21 13"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M6 11l6 6 6-6M4 21h16"/></symbol>
+    <symbol id="i-print" viewBox="0 0 24 24"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="7"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-prev" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></symbol>
+    <symbol id="i-next" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  </svg>
+
+  <header id="vocab-t-pdf-toolbar" class="vt-toolbar" role="toolbar" aria-label="PDF 도구 모음">
+    <div class="vt-group vt-left">
+      <button id="vt-sidebar-toggle" class="vt-btn vt-icon-btn" type="button" title="사이드바 (썸네일·목차)" aria-label="사이드바 열기/닫기" aria-pressed="false"><svg><use href="#i-menu"/></svg></button>
+      <span id="vt-file-name" class="vt-file-name" title=""></span>
+    </div>
+
+    <div class="vt-group vt-center">
+      <input id="vt-page" class="vt-page-input" type="number" min="1" value="1" aria-label="현재 페이지">
+      <span class="vt-page-total">/ <span id="vt-page-count">–</span></span>
+      <span class="vt-sep"></span>
+      <button id="vt-zoom-out" class="vt-btn vt-icon-btn" type="button" title="축소 (Ctrl+-)" aria-label="축소"><svg><use href="#i-minus"/></svg></button>
+      <select id="vt-zoom" class="vt-select" aria-label="확대/축소">
+        <option value="auto">자동</option>
+        <option value="page-fit">페이지 맞춤</option>
+        <option value="page-width">너비 맞춤</option>
+        <option value="page-actual">실제 크기</option>
+        <option value="0.5">50%</option>
+        <option value="0.75">75%</option>
+        <option value="1">100%</option>
+        <option value="1.25">125%</option>
+        <option value="1.5">150%</option>
+        <option value="2">200%</option>
+        <option value="3">300%</option>
+        <option value="4">400%</option>
+        <option value="custom" hidden>사용자 지정</option>
+      </select>
+      <button id="vt-zoom-in" class="vt-btn vt-icon-btn" type="button" title="확대 (Ctrl++)" aria-label="확대"><svg><use href="#i-plus"/></svg></button>
+      <span class="vt-sep"></span>
+      <button id="vt-fit-toggle" class="vt-btn vt-icon-btn" type="button" title="페이지 맞춤 / 너비 맞춤 전환" aria-label="페이지 맞춤 / 너비 맞춤 전환"><svg><use href="#i-fit-page"/></svg></button>
+      <button id="vt-rotate" class="vt-btn vt-icon-btn" type="button" title="시계 방향 회전 (Ctrl+])" aria-label="시계 방향 회전"><svg><use href="#i-rotate"/></svg></button>
+      <span class="vt-sep"></span>
+      <button id="vt-annotate-toggle" class="vt-btn vt-icon-btn" type="button" title="주석 달기" aria-label="주석 도구 열기/닫기" aria-pressed="false" disabled><svg><use href="#i-pen"/></svg></button>
+      <button id="vt-undo" class="vt-btn vt-icon-btn" type="button" title="실행취소 (Ctrl+Z)" aria-label="실행취소" disabled><svg><use href="#i-undo"/></svg></button>
+      <button id="vt-redo" class="vt-btn vt-icon-btn" type="button" title="다시실행 (Ctrl+Y)" aria-label="다시실행" disabled><svg><use href="#i-redo"/></svg></button>
+    </div>
+
+    <div class="vt-group vt-right">
+      <button id="vt-find-toggle" class="vt-btn vt-icon-btn" type="button" title="문서에서 찾기 (Ctrl+F)" aria-label="찾기" aria-pressed="false"><svg><use href="#i-search"/></svg></button>
+      <button id="vt-download" class="vt-btn vt-icon-btn" type="button" title="다운로드 (Ctrl+S)" aria-label="다운로드"><svg><use href="#i-download"/></svg></button>
+      <button id="vt-print" class="vt-btn vt-icon-btn" type="button" title="인쇄 (Ctrl+P)" aria-label="인쇄"><svg><use href="#i-print"/></svg></button>
+      <div class="vt-menu-wrap">
+        <button id="vt-more" class="vt-btn vt-icon-btn" type="button" title="더보기" aria-label="더보기 메뉴" aria-haspopup="menu" aria-expanded="false"><svg><use href="#i-more"/></svg></button>
+        <div id="vt-menu" class="vt-menu" role="menu" hidden>
+          <button type="button" role="menuitemcheckbox" class="vt-menu-item" id="vt-menu-two-page" aria-checked="false">두 페이지 보기</button>
+          <button type="button" role="menuitemcheckbox" class="vt-menu-item" id="vt-menu-annotations" aria-checked="true">주석 표시</button>
+          <button type="button" role="menuitem" class="vt-menu-item" id="vt-menu-rotate-ccw">시계 반대 방향 회전 <kbd>Ctrl+[</kbd></button>
+          <button type="button" role="menuitem" class="vt-menu-item" id="vt-menu-first">첫 페이지 <kbd>Home</kbd></button>
+          <button type="button" role="menuitem" class="vt-menu-item" id="vt-menu-last">마지막 페이지 <kbd>End</kbd></button>
+          <hr class="vt-menu-sep">
+          <button type="button" role="menuitem" class="vt-menu-item" id="vt-menu-present">프레젠테이션</button>
+          <button type="button" role="menuitem" class="vt-menu-item" id="vt-menu-properties">문서 속성…</button>
+          <hr class="vt-menu-sep">
+          <button type="button" role="menuitem" class="vt-menu-item" id="vt-menu-open-file">파일 열기…</button>
+          <button type="button" role="menuitem" class="vt-menu-item" id="vt-open-native">Chrome 기본 뷰어로 열기</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div id="vocab-t-pdf-paper" class="vt-paper" role="region" aria-label="논문 정보" hidden>
+    <div id="vt-paper-body" class="vt-paper-body"></div>
+    <button id="vt-paper-close" class="vt-btn vt-icon-btn vt-paper-close" type="button" title="논문 정보 숨기기" aria-label="논문 정보 숨기기"><svg><use href="#i-close"/></svg></button>
+  </div>
+
+  <div id="vocab-t-pdf-findbar" class="vt-findbar" role="search" hidden>
+    <input id="vt-find-input" class="vt-find-input" type="search" placeholder="문서에서 찾기" aria-label="문서에서 찾기">
+    <span id="vt-find-status" class="vt-find-status" aria-live="polite"></span>
+    <button id="vt-find-prev" class="vt-btn vt-icon-btn" type="button" title="이전 결과 (Shift+Enter)" aria-label="이전 결과"><svg><use href="#i-prev"/></svg></button>
+    <button id="vt-find-next" class="vt-btn vt-icon-btn" type="button" title="다음 결과 (Enter)" aria-label="다음 결과"><svg><use href="#i-next"/></svg></button>
+    <label class="vt-find-opt"><input id="vt-find-case" type="checkbox"> 대소문자 구분</label>
+    <label class="vt-find-opt"><input id="vt-find-word" type="checkbox"> 단어 단위</label>
+    <button id="vt-find-close" class="vt-btn vt-icon-btn" type="button" title="닫기 (Esc)" aria-label="찾기 닫기"><svg><use href="#i-close"/></svg></button>
+  </div>
+
+  <div id="vocab-t-pdf-annotate-bar" class="vt-annotate-bar" role="toolbar" aria-label="주석 도구" hidden>
+    <button class="vt-btn vt-tool" type="button" data-editor-mode="9" title="형광펜" aria-pressed="false"><svg><use href="#i-highlighter"/></svg><span>형광펜</span></button>
+    <button class="vt-btn vt-tool" type="button" data-editor-mode="15" title="펜" aria-pressed="false"><svg><use href="#i-pen"/></svg><span>펜</span></button>
+    <button class="vt-btn vt-tool" type="button" data-editor-mode="3" title="텍스트" aria-pressed="false"><svg><use href="#i-text"/></svg><span>텍스트</span></button>
+    <span class="vt-sep"></span>
+    <div id="vt-annotate-colors" class="vt-swatches" role="radiogroup" aria-label="색상"></div>
+    <label class="vt-range"><span>굵기</span><input id="vt-annotate-thickness" type="range" min="1" max="24" value="4" aria-label="굵기"></label>
+    <label class="vt-range"><span>투명도</span><input id="vt-annotate-opacity" type="range" min="10" max="100" value="100" aria-label="투명도"></label>
+    <span class="vt-sep"></span>
+    <button id="vt-annotate-delete" class="vt-btn vt-icon-btn" type="button" title="선택한 주석 삭제 (Delete)" aria-label="선택한 주석 삭제" disabled><svg><use href="#i-trash"/></svg></button>
+    <span class="vt-annotate-hint">주석은 다운로드한 PDF에 함께 저장됩니다.</span>
+  </div>
+
+  <aside id="vocab-t-pdf-sidebar" class="vt-sidebar" hidden>
+    <div class="vt-sidebar-tabs" role="tablist">
+      <button type="button" class="vt-sidebar-tab is-active" role="tab" data-sidebar-view="thumbs">썸네일</button>
+      <button type="button" class="vt-sidebar-tab" role="tab" data-sidebar-view="outline">목차</button>
+      <button type="button" class="vt-sidebar-tab" role="tab" data-sidebar-view="attachments">첨부파일</button>
+    </div>
+    <div id="vt-sidebar-thumbs" class="vt-sidebar-pane vt-thumbs"></div>
+    <div id="vt-sidebar-outline" class="vt-sidebar-pane" hidden></div>
+    <div id="vt-sidebar-attachments" class="vt-sidebar-pane" hidden></div>
+  </aside>
+
+  <div id="vocab-t-pdf-progress" class="vt-progress" hidden><div id="vt-progress-bar" class="vt-progress-bar"></div></div>
+
+  <div id="viewerContainer" tabindex="0">
+    <div id="viewer" class="pdfViewer"></div>
+  </div>
+  <div id="vocab-t-pdf-viewer-alert" class="vt-sr-only" aria-live="assertive"></div>
+
+  <div id="vocab-t-pdf-message" class="vt-message" hidden>
+    <p id="vt-message-text"></p>
+    <button id="vt-message-action" class="vt-btn vt-btn-text" type="button" hidden></button>
+  </div>
+
+  <div id="vocab-t-pdf-drop" class="vt-drop" hidden><p>PDF 파일을 여기에 놓으면 엽니다</p></div>
+
+  <dialog id="vocab-t-pdf-password" class="vt-dialog">
+    <form method="dialog" id="vt-password-form">
+      <h2>암호로 보호된 PDF</h2>
+      <p id="vt-password-hint">이 문서를 열려면 암호를 입력하세요.</p>
+      <input id="vt-password-input" type="password" autocomplete="off" aria-label="PDF 암호">
+      <div class="vt-dialog-actions">
+        <button type="button" class="vt-btn vt-btn-text" id="vt-password-cancel">취소</button>
+        <button type="submit" class="vt-btn vt-btn-text vt-btn-primary">열기</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="vocab-t-pdf-properties" class="vt-dialog">
+    <h2>문서 속성</h2>
+    <table class="vt-props"><tbody id="vt-props-body"></tbody></table>
+    <div class="vt-dialog-actions"><button type="button" class="vt-btn vt-btn-text vt-btn-primary" id="vt-props-close">닫기</button></div>
+  </dialog>
+
+  <dialog id="vocab-t-pdf-annot-conflict" class="vt-dialog vt-conflict">
+    <h2>필기가 두 곳에 있습니다</h2>
+    <p id="vt-conflict-summary"></p>
+    <div id="vt-conflict-choices" class="vt-conflict-choices">
+      <button type="button" class="vt-btn vt-btn-text" id="vt-conflict-file">파일 필기만 유지</button>
+      <button type="button" class="vt-btn vt-btn-text" id="vt-conflict-browser">브라우저 필기만 유지</button>
+      <button type="button" class="vt-btn vt-btn-text vt-btn-primary" id="vt-conflict-both">모두 유지</button>
+      <button type="button" class="vt-btn vt-btn-text" id="vt-conflict-pick-open">직접 선택…</button>
+    </div>
+    <div id="vt-conflict-pick" class="vt-conflict-pick" hidden>
+      <p class="vt-conflict-hint">체크한 필기만 남습니다. 항목 위에 마우스를 올리면 문서에서 위치를 보여 줍니다.</p>
+      <div class="vt-conflict-columns">
+        <section class="vt-conflict-col">
+          <h3>파일에만 있는 필기 <span id="vt-conflict-file-count"></span></h3>
+          <div class="vt-conflict-tools"><button type="button" class="vt-btn vt-btn-text" id="vt-conflict-file-all">전체 선택</button><button type="button" class="vt-btn vt-btn-text" id="vt-conflict-file-none">전체 해제</button></div>
+          <ul id="vt-conflict-file-list" class="vt-conflict-list"></ul>
+        </section>
+        <section class="vt-conflict-col">
+          <h3>브라우저에만 있는 필기 <span id="vt-conflict-cache-count"></span></h3>
+          <div class="vt-conflict-tools"><button type="button" class="vt-btn vt-btn-text" id="vt-conflict-cache-all">전체 선택</button><button type="button" class="vt-btn vt-btn-text" id="vt-conflict-cache-none">전체 해제</button></div>
+          <ul id="vt-conflict-cache-list" class="vt-conflict-list"></ul>
+        </section>
+      </div>
+      <div class="vt-dialog-actions">
+        <button type="button" class="vt-btn vt-btn-text" id="vt-conflict-pick-back">뒤로</button>
+        <button type="button" class="vt-btn vt-btn-text vt-btn-primary" id="vt-conflict-pick-apply">선택한 필기만 유지</button>
+      </div>
+    </div>
+  </dialog>
+
+  <div id="vocab-t-pdf-print-progress" class="vt-print-progress" hidden>
+    <span id="vt-print-progress-text">인쇄 준비 중…</span>
+    <progress id="vt-print-progress-bar" max="1" value="0"></progress>
+    <button id="vt-print-cancel" class="vt-btn vt-btn-text" type="button">취소</button>
+  </div>
+  <div id="vocab-t-pdf-print" class="vt-print-sheets" aria-hidden="true"></div>
+  <input id="vt-open-file-input" type="file" accept="application/pdf,.pdf" hidden>
+
+  <!-- The viewer bundle first (builds the PDF.js text layer), then the very same
+       content-script bundle that runs on ordinary web pages. Content scripts
+       cannot be declared for chrome-extension:// pages, so it is loaded here as
+       a plain page script; its runtime messaging works identically. -->
+  <script src="pdfViewer.js"></script>
+</body>
+</html>

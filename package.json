@@ -1,0 +1,28 @@
+{
+  "name": "research-pdf",
+  "version": "0.1.0",
+  "description": "PDF viewer for papers: drawings and reading position follow you across every Chrome profile and device through your own Google Drive.",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "build": "rspack --mode production",
+    "dev": "rspack --mode development --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run typecheck && vitest run",
+    "test:watch": "vitest",
+    "test:bundle": "npm run build && vitest run test/bundleAssets.test.ts",
+    "zip": "npm run build && rm -f research-pdf.zip && cd dist && zip -qr ../research-pdf.zip . -x '*.map'"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@rspack/cli": "^2.1.7",
+    "@rspack/core": "^2.1.7",
+    "@types/chrome": "^0.1.37",
+    "fake-indexeddb": "^6.2.5",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9"
+  },
+  "dependencies": {
+    "pdfjs-dist": "6.3.289"
+  }
+}

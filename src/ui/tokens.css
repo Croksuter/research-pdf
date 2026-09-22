@@ -1,0 +1,64 @@
+/* ─── Design token SSOT (shared palette) ───
+ *
+ * Mirror of src/shared/theme.ts (LIGHT_TOKENS / DARK_TOKENS). Loaded before
+ * popup.css / debug.css so both surfaces inherit one canonical palette instead
+ * of maintaining duplicate :root blocks. Values are verified against theme.ts
+ * by test/theme.test.ts — keep the two in sync.
+ *
+ * Page-specific tokens (--popup-*, --debug-*, --warning-*, --error-*, etc.)
+ * still live in their own stylesheet's :root.
+ */
+
+:root {
+  color-scheme: light;
+  --surface: rgba(255, 255, 255, 0.96);
+  --surface-strong: #ffffff;
+  --surface-soft: #f8fafc;
+  --surface-hover: #eff6ff;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --text-strong: #0f172a;
+  --text-default: #1e293b;
+  --text-muted: #64748b;
+  --text-subtle: #94a3b8;
+  --accent: #2563eb;
+  --accent-soft: rgba(37, 99, 235, 0.10);
+  --accent-soft-strong: rgba(37, 99, 235, 0.14);
+  --accent-top: #2563eb;
+  --accent-bottom: #1d4ed8;
+  --success-text: #15803d;
+  --success-soft: #f0fdf4;
+  --success-border: #bbf7d0;
+  --danger-soft: #fff1f2;
+  --danger-border: #fecdd3;
+  --danger-text: #b91c1c;
+  --shadow-soft: 0 20px 44px rgba(15, 23, 42, 0.11);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --surface: rgba(15, 23, 42, 0.88);
+    --surface-strong: #0f172a;
+    --surface-soft: #172033;
+    --surface-hover: #1b2940;
+    --border: #334155;
+    --border-strong: #475569;
+    --text-strong: #f8fafc;
+    --text-default: #dbe4f0;
+    --text-muted: #b4c0d0;
+    --text-subtle: #8ea0b7;
+    --accent: #60a5fa;
+    --accent-soft: rgba(96, 165, 250, 0.14);
+    --accent-soft-strong: rgba(96, 165, 250, 0.18);
+    --accent-top: #3b82f6;
+    --accent-bottom: #2563eb;
+    --success-text: #4ade80;
+    --success-soft: rgba(74, 222, 128, 0.14);
+    --success-border: rgba(74, 222, 128, 0.3);
+    --danger-soft: rgba(248, 113, 113, 0.14);
+    --danger-border: rgba(248, 113, 113, 0.32);
+    --danger-text: #fda4af;
+    --shadow-soft: 0 24px 54px rgba(2, 6, 23, 0.42);
+  }
+}
