@@ -2,8 +2,14 @@
   "manifest_version": 3,
   "name": "ResearchPDF",
   "version": "0.1.0",
-  "description": "PDF viewer for papers: drawings and reading position follow you across every Chrome profile and device through your own Google Drive.",
-  "permissions": ["storage", "alarms", "webNavigation", "declarativeNetRequestWithHostAccess", "identity"],
+  "description": "PDF viewer for papers. Drawings and reading position follow you across Chrome profiles and devices via your own Google Drive.",
+  "permissions": [
+    "storage",
+    "alarms",
+    "webNavigation",
+    "declarativeNetRequestWithHostAccess",
+    "identity"
+  ],
   "optional_host_permissions": [
     "https://*/*",
     "http://*/*"
@@ -25,8 +31,12 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["pdf-viewer.html"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "pdf-viewer.html"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ],
   "icons": {
