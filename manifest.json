@@ -3,6 +3,7 @@
   "name": "ResearchPDF",
   "version": "0.1.0",
   "description": "PDF viewer for papers. Drawings and reading position follow you across Chrome profiles and devices via your own Google Drive.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAgKNTsxLkcLZ19E5Ge5T3Dh+Hsfb/xwsPWJzazWf8Tr9FAWtnfrFywPqZzPGY0bduPKqswy1CT0QueKObg8dc6hV0jXaRThXQrVjnmbZMDtVrLCjym/J9NkVqoNtWlrfG9D12CvukZ0sKrHfStgIW3n1sW9akdVUic8KtZnnbgjbnDFey75U/q5TVCUc4xMmh4Lx1ufX4PaRmhNjQw/QB7da4b5Gzk+ggOGK3pseAlXOeAs3RsPCPhnaum5XX9HvPmlffeD1gZCCx3DCa+zI4D3Pode99u9LP1yQzRDVxmjBAA44vD5b/I6VTpXuCQMh2c3082NhaCu9ojXoI5f5eDwIDAQAB",
   "permissions": [
     "storage",
     "alarms",
