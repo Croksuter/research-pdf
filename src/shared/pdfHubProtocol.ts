@@ -9,7 +9,7 @@ export const HUB_MESSAGE_TAG = 'rpdf-hub';
 export type HubKeyAction = 'prev' | 'next' | 'close';
 
 export type ViewerToHubMessage =
-  | { tag: typeof HUB_MESSAGE_TAG; kind: 'doc'; title: string }
+  | { tag: typeof HUB_MESSAGE_TAG; kind: 'doc'; title: string; paperTitle: string | null }
   | { tag: typeof HUB_MESSAGE_TAG; kind: 'key'; action: HubKeyAction }
   | { tag: typeof HUB_MESSAGE_TAG; kind: 'open-files'; files: File[] };
 
@@ -30,10 +30,14 @@ function isFile(value: unknown): value is File {
 export function parseViewerToHubMessage(value: unknown): ViewerToHubMessage | null {
   if (!isRecord(value) || value.tag !== HUB_MESSAGE_TAG) return null;
   switch (value.kind) {
-    case 'doc':
-      return typeof value.title === 'string'
-        ? { tag: HUB_MESSAGE_TAG, kind: 'doc', title: value.title.slice(0, TITLE_MAX_CHARS) }
+    case 'doc': {
+      if (typeof value.title !== 'string') return null;
+      if (value.paperTitle !== null && typeof value.paperTitle !== 'string') return null;
+      const paperTitle = typeof value.paperTitle === 'string' && value.paperTitle.trim()
+        ? value.paperTitle.trim().slice(0, TITLE_MAX_CHARS)
         : null;
+      return { tag: HUB_MESSAGE_TAG, kind: 'doc', title: value.title.slice(0, TITLE_MAX_CHARS), paperTitle };
+    }
     case 'key':
       return value.action === 'prev' || value.action === 'next' || value.action === 'close'
         ? { tag: HUB_MESSAGE_TAG, kind: 'key', action: value.action }
@@ -69,6 +73,12 @@ export function hubKeyAction(e: { altKey: boolean; shiftKey: boolean; ctrlKey: b
   if (e.shiftKey && e.code === 'ArrowRight') return 'next';
   if (!e.shiftKey && e.code === 'KeyW') return 'close';
   return null;
+}
+
+/** Same title up to case, spacing and punctuation (a PDF's metadata often repeats the paper title). */
+export function sameTitle(a: string, b: string): boolean {
+  const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+  return norm(a) === norm(b);
 }
 
 /** Tab-header title for the hub: the active document, prefixed by the count. */

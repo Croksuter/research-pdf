@@ -45,9 +45,12 @@ interface HubTab {
   hash: string;
   file: File | null;
   title: string;
+  /** Detected paper title, shown under `title`. */
+  paperTitle: string | null;
   frame: HTMLIFrameElement | null;
   button: HTMLButtonElement;
   titleEl: HTMLSpanElement;
+  paperEl: HTMLSpanElement;
 }
 
 const tabList = byId<HTMLDivElement>('rpdf-tabs');
@@ -86,15 +89,20 @@ function createTab(doc: { url: string | null; hash: string; file: File | null })
   button.setAttribute('role', 'tab');
   button.draggable = true;
   button.dataset.key = String(key);
-  const kind = el('span', { className: 'rpdf-tab-kind', textContent: doc.url?.startsWith('file:') || doc.file ? 'LOCAL' : 'PDF' });
+  const local = !!doc.file || !!doc.url?.startsWith('file:');
+  const icon = el('span', { className: 'rpdf-tab-icon' });
+  icon.innerHTML = `<svg aria-hidden="true"><use href="#${local ? 'i-file-local' : 'i-file'}"/></svg>`;
   const titleEl = el('span', { className: 'rpdf-tab-title', textContent: initialTitle });
+  const paperEl = el('span', { className: 'rpdf-tab-paper', hidden: true });
+  const text = el('span', { className: 'rpdf-tab-text' });
+  text.append(titleEl, paperEl);
   const close = el('span', { className: 'rpdf-tab-close', title: '닫기 (Alt+W)' });
   close.setAttribute('role', 'button');
   close.setAttribute('aria-label', '이 PDF 닫기');
   close.innerHTML = '<svg><use href="#i-close"/></svg>';
-  button.append(kind, titleEl, close);
-  const tab: HubTab = { key, url: doc.url, hash: doc.hash, file: doc.file, title: initialTitle, frame: null, button, titleEl };
-  button.title = doc.url ?? initialTitle;
+  button.append(icon, text, close);
+  const tab: HubTab = { key, url: doc.url, hash: doc.hash, file: doc.file, title: initialTitle, paperTitle: null, frame: null, button, titleEl, paperEl };
+  updateTabLabel(tab);
   button.addEventListener('click', (e) => {
     if ((e.target as Element).closest('.rpdf-tab-close')) closeTab(key);
     else activate(key);
@@ -102,6 +110,15 @@ function createTab(doc: { url: string | null; hash: string; file: File | null })
   button.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); closeTab(key); } });
   wireDrag(tab);
   return tab;
+}
+
+function updateTabLabel(tab: HubTab): void {
+  tab.titleEl.textContent = tab.title;
+  tab.paperEl.textContent = tab.paperTitle ?? '';
+  tab.paperEl.hidden = !tab.paperTitle;
+  tab.button.classList.toggle('has-paper', !!tab.paperTitle);
+  tab.button.title = [tab.title, tab.paperTitle, tab.url].filter(Boolean).join('\n');
+  if (tab.frame) tab.frame.title = tab.paperTitle ?? tab.title;
 }
 
 function addDocs(docs: Array<{ url: string | null; hash: string; file: File | null }>, activateLast: boolean, autoActivate = true): void {
@@ -233,7 +250,7 @@ let stateTimer: ReturnType<typeof setTimeout> | null = null;
 
 function render(): void {
   const current = activeTab();
-  document.title = tabs.length ? hubDocumentTitle(current?.title ?? 'PDF', tabs.length, APP_NAME) : `PDF · ${APP_NAME}`;
+  document.title = tabs.length ? hubDocumentTitle(current?.paperTitle ?? current?.title ?? 'PDF', tabs.length, APP_NAME) : `PDF · ${APP_NAME}`;
   empty.hidden = tabs.length > 0;
   if (!isHub) return;
   const urlTabs = tabs.filter((t): t is HubTab & { url: string } => t.url !== null);
@@ -258,8 +275,8 @@ window.addEventListener('message', (event) => {
   if (!message) return;
   if (message.kind === 'doc') {
     tab.title = message.title;
-    tab.titleEl.textContent = message.title;
-    if (tab.frame) tab.frame.title = message.title;
+    tab.paperTitle = message.paperTitle;
+    updateTabLabel(tab);
     render();
   } else if (message.kind === 'key') {
     step(message.action);

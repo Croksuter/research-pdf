@@ -17,6 +17,7 @@ import {
   hubKeyAction,
   parseHubToViewerMessage,
   parseViewerToHubMessage,
+  sameTitle,
 } from '../src/shared/pdfHubProtocol';
 
 const HUB = 'chrome-extension://abc/pdf-hub.html';
@@ -70,7 +71,10 @@ describe('hub messages', () => {
 
   it('parses frame messages and never trusts untagged or malformed ones', () => {
     const file = new File([new Uint8Array([1])], 'x.pdf', { type: 'application/pdf' });
-    expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'doc', title: 'T' })).toEqual({ tag: HUB_MESSAGE_TAG, kind: 'doc', title: 'T' });
+    expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'doc', title: '1706.03762', paperTitle: ' Attention Is All You Need ' }))
+      .toEqual({ tag: HUB_MESSAGE_TAG, kind: 'doc', title: '1706.03762', paperTitle: 'Attention Is All You Need' });
+    expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'doc', title: 'T', paperTitle: null })?.kind).toBe('doc');
+    expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'doc', title: 'T', paperTitle: 3 })).toBeNull();
     expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'key', action: 'next' })?.kind).toBe('key');
     expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'key', action: 'reload' })).toBeNull();
     expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'open-files', files: [file] })?.kind).toBe('open-files');
@@ -89,6 +93,8 @@ describe('hub messages', () => {
     expect(key('KeyW', { altKey: true })).toBe('close');
     expect(key('ArrowLeft', { altKey: true })).toBeNull(); // Alt+← is the browser's Back
     expect(key('KeyW', { ctrlKey: true })).toBeNull();
+    expect(sameTitle('Attention Is All You Need', 'attention is all you need.')).toBe(true);
+    expect(sameTitle('1706.03762', 'Attention Is All You Need')).toBe(false);
     expect(hubDocumentTitle('Attention', 3, 'ResearchPDF')).toBe('(3) Attention · ResearchPDF');
     expect(hubDocumentTitle('  ', 1, 'ResearchPDF')).toBe('PDF · ResearchPDF');
   });

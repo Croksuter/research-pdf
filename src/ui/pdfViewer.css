@@ -105,13 +105,24 @@ html, body {
 .vt-select { min-width: 96px; }
 .vt-select option { background: var(--vt-panel-bg); color: var(--vt-toolbar-fg); }
 
-.vt-file-name {
+.vt-title {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  padding-left: 4px;
+  line-height: 1.25;
+}
+.vt-file-name,
+.vt-paper-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14px;
-  padding-left: 4px;
 }
+.vt-file-name { font-size: 14px; }
+/* The detected paper title, under the document's own name. */
+.vt-paper-title { font-size: 11.5px; color: var(--vt-toolbar-muted); }
+.vt-paper-title[hidden] { display: none; }
 
 /* ── More menu ── */
 .vt-menu-wrap { position: relative; }
@@ -607,7 +618,7 @@ body.vt-presenting .vt-sidebar { display: none; }
 }
 
 @media (max-width: 980px) {
-  .vt-file-name { display: none; }
+  .vt-title { display: none; }
   .vt-find-opt { display: none; }
   .vt-annotate-hint { display: none; }
 }

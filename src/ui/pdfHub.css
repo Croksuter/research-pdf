@@ -1,19 +1,23 @@
-/* ─── PDF hub: one browser tab, many documents ─── */
+/* ─── PDF hub: one browser tab, many documents ───
+ *
+ * Same dark palette as the viewer (pdfViewer.css): the strip is the viewer's
+ * panel colour, and the active tab takes the toolbar colour so it runs
+ * straight into the toolbar of the document below it, like Chrome's tabs.
+ */
 
 :root {
-  --hub-strip-height: 34px;
-  --hub-strip-bg: #e2e8f0;
-  --hub-tab-bg: transparent;
-  --hub-tab-hover: rgba(255, 255, 255, 0.55);
-  --hub-tab-active: #ffffff;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --hub-strip-bg: #0b1220;
-    --hub-tab-hover: rgba(255, 255, 255, 0.06);
-    --hub-tab-active: #1e293b;
-  }
+  color-scheme: dark;
+  --hub-strip-height: 42px;
+  --hub-strip-bg: #202124;      /* --vt-panel-bg */
+  --hub-tab-active: #323639;    /* --vt-toolbar-bg */
+  --hub-tab-hover: rgba(255, 255, 255, 0.06);
+  --hub-fg: #e8eaed;            /* --vt-toolbar-fg */
+  --hub-fg-inactive: #bdc1c6;
+  --hub-muted: #9aa0a6;         /* --vt-toolbar-muted */
+  --hub-border: rgba(255, 255, 255, 0.12);
+  --hub-accent: #8ab4f8;        /* --vt-accent */
+  --hub-viewer-bg: #525659;     /* --vt-viewer-bg */
+  --hub-tab-radius: 10px;
 }
 
 * { box-sizing: border-box; }
@@ -25,9 +29,9 @@ html, body {
   height: 100%;
   margin: 0;
   overflow: hidden;
-  background: var(--surface-strong);
-  color: var(--text-default);
-  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--hub-viewer-bg);
+  color: var(--hub-fg);
+  font: 13px/1.4 system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans KR', sans-serif;
 }
 
 body {
@@ -35,70 +39,127 @@ body {
   flex-direction: column;
 }
 
+/* ── Strip ── */
 .rpdf-strip {
   display: flex;
   align-items: flex-end;
-  gap: 4px;
+  gap: 2px;
   height: var(--hub-strip-height);
   flex: none;
-  padding: 0 6px;
+  padding: 0 8px 0 10px;
   background: var(--hub-strip-bg);
-  border-bottom: 1px solid var(--border);
 }
 
 .rpdf-tabs {
   display: flex;
   align-items: flex-end;
-  gap: 2px;
   min-width: 0;
   height: 100%;
+  /* Room for the active tab's outer corners. */
+  padding: 0 var(--hub-tab-radius);
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
 }
 .rpdf-tabs::-webkit-scrollbar { display: none; }
 
+/* ── Tab ── */
 .rpdf-tab {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex: 0 1 220px;
-  min-width: 96px;
-  height: calc(var(--hub-strip-height) - 5px);
-  padding: 0 4px 0 10px;
+  gap: 8px;
+  flex: 0 1 240px;
+  min-width: 112px;
+  height: calc(var(--hub-strip-height) - 6px);
+  padding: 0 6px 0 12px;
   border: 0;
-  border-radius: 8px 8px 0 0;
-  background: var(--hub-tab-bg);
-  color: var(--text-muted);
+  border-radius: var(--hub-tab-radius) var(--hub-tab-radius) 0 0;
+  background: transparent;
+  color: var(--hub-fg-inactive);
   font: inherit;
   text-align: left;
   cursor: default;
   user-select: none;
 }
-.rpdf-tab:hover { background: var(--hub-tab-hover); }
+
+/* Hairline between two inactive tabs. */
+.rpdf-tab + .rpdf-tab::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 9px;
+  bottom: 9px;
+  width: 1px;
+  background: var(--hub-border);
+}
+.rpdf-tab[aria-selected="true"]::before,
+.rpdf-tab[aria-selected="true"] + .rpdf-tab::before,
+.rpdf-tab:hover::before,
+.rpdf-tab:hover + .rpdf-tab::before { opacity: 0; }
+
+.rpdf-tab:hover:not([aria-selected="true"]) {
+  background: var(--hub-tab-hover);
+  border-radius: 8px;
+  height: calc(var(--hub-strip-height) - 10px);
+  margin-bottom: 4px;
+}
+
 .rpdf-tab[aria-selected="true"] {
   background: var(--hub-tab-active);
-  color: var(--text-strong);
-  box-shadow: inset 0 2px 0 var(--accent);
+  color: var(--hub-fg);
+  z-index: 1;
 }
-.rpdf-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Chrome-style flared corners where the active tab meets the toolbar. */
+.rpdf-tab[aria-selected="true"]::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: calc(-1 * var(--hub-tab-radius));
+  right: calc(-1 * var(--hub-tab-radius));
+  height: var(--hub-tab-radius);
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 0 0, transparent calc(var(--hub-tab-radius) - 0.5px), var(--hub-tab-active) var(--hub-tab-radius)) left bottom / var(--hub-tab-radius) var(--hub-tab-radius) no-repeat,
+    radial-gradient(circle at 100% 0, transparent calc(var(--hub-tab-radius) - 0.5px), var(--hub-tab-active) var(--hub-tab-radius)) right bottom / var(--hub-tab-radius) var(--hub-tab-radius) no-repeat;
+}
+
+.rpdf-tab:focus-visible { outline: 2px solid var(--hub-accent); outline-offset: -2px; }
 .rpdf-tab.is-dragging { opacity: 0.5; }
-.rpdf-tab.is-drop-before { box-shadow: inset 2px 0 0 var(--accent); }
+.rpdf-tab.is-drop-before { box-shadow: inset 2px 0 0 var(--hub-accent); }
 
-.rpdf-tab-kind {
+.rpdf-tab-icon {
+  display: inline-grid;
+  place-items: center;
   flex: none;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-subtle);
+  color: var(--hub-muted);
 }
+.rpdf-tab[aria-selected="true"] .rpdf-tab-icon { color: var(--hub-accent); }
 
-.rpdf-tab-title {
+.rpdf-tab-text {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   flex: 1 1 auto;
   min-width: 0;
+  line-height: 1.2;
+}
+
+.rpdf-tab-title,
+.rpdf-tab-paper {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+.rpdf-tab-title { font-size: 12.5px; }
+/* The detected paper title, under the document's own name. */
+.rpdf-tab-paper {
+  margin-top: 1px;
+  font-size: 11px;
+  color: var(--hub-muted);
+}
+.rpdf-tab-paper[hidden] { display: none; }
 
 .rpdf-tab-close,
 .rpdf-add {
@@ -111,18 +172,20 @@ body {
   border: 0;
   border-radius: 50%;
   background: transparent;
-  color: inherit;
+  color: var(--hub-muted);
   cursor: pointer;
 }
-.rpdf-tab-close:hover,
-.rpdf-add:hover { background: var(--accent-soft-strong); }
+.rpdf-tab-close:hover { background: rgba(255, 255, 255, 0.12); color: var(--hub-fg); }
 .rpdf-add {
-  width: 26px;
-  height: 26px;
-  margin-bottom: 3px;
-  color: var(--text-muted);
+  width: 28px;
+  height: 28px;
+  margin-bottom: 5px;
 }
+.rpdf-add:hover { background: var(--hub-tab-hover); color: var(--hub-fg); }
+.rpdf-add:focus-visible,
+.rpdf-tab-close:focus-visible { outline: 2px solid var(--hub-accent); outline-offset: 1px; }
 
+.rpdf-tab-icon svg,
 .rpdf-tab-close svg,
 .rpdf-add svg {
   width: 14px;
@@ -131,12 +194,17 @@ body {
   stroke: currentColor;
   stroke-width: 2;
   stroke-linecap: round;
+  stroke-linejoin: round;
 }
+.rpdf-tab-icon svg { width: 15px; height: 15px; stroke-width: 1.8; }
+.rpdf-add svg { width: 16px; height: 16px; }
 
+/* ── Documents ── */
 .rpdf-frames {
   position: relative;
   flex: 1 1 auto;
   min-height: 0;
+  background: var(--hub-viewer-bg);
 }
 
 .rpdf-frames iframe {
@@ -145,29 +213,34 @@ body {
   width: 100%;
   height: 100%;
   border: 0;
-  background: var(--surface-strong);
+  background: var(--hub-viewer-bg);
 }
 .rpdf-frames iframe[hidden] { display: none; }
 
+/* ── Empty hub ── */
 .rpdf-empty {
   position: absolute;
   inset: var(--hub-strip-height) 0 0;
   display: grid;
   place-content: center;
   justify-items: center;
-  gap: 12px;
-  color: var(--text-muted);
+  gap: 14px;
+  color: var(--hub-fg-inactive);
+  background: var(--hub-viewer-bg);
 }
 .rpdf-empty[hidden] { display: none; }
-.rpdf-empty.is-dropping { background: var(--accent-soft); }
+.rpdf-empty p { margin: 0; }
+.rpdf-empty.is-dropping { box-shadow: inset 0 0 0 3px var(--hub-accent); }
 
 .rpdf-empty-open {
-  padding: 6px 14px;
-  border: 1px solid var(--border-strong);
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
   border-radius: 8px;
-  background: var(--surface-strong);
-  color: var(--text-strong);
+  background: var(--hub-accent);
+  color: #0b1220;
   font: inherit;
   cursor: pointer;
 }
-.rpdf-empty-open:hover { background: var(--surface-hover); }
+.rpdf-empty-open:hover { background: #a5c6fb; }
+.rpdf-empty-open:focus-visible { outline: 2px solid var(--hub-fg); outline-offset: 2px; }

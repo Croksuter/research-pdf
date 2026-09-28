@@ -23,7 +23,7 @@ import {
 import { APP_NAME } from '../shared/brand';
 import { initDebugLogging } from '../shared/debugLog';
 import { PDF_HUB_PAGE, WEB_PDF_HOST_ORIGINS, buildPdfHubEntryUrl, isWebPdfSourceUrl, parsePdfViewerFile, pdfDisplayName } from '../shared/localPdf';
-import { HUB_MESSAGE_TAG, hubKeyAction, parseHubToViewerMessage, type ViewerToHubMessage } from '../shared/pdfHubProtocol';
+import { HUB_MESSAGE_TAG, hubKeyAction, parseHubToViewerMessage, sameTitle, type ViewerToHubMessage } from '../shared/pdfHubProtocol';
 import { AnnotationToolbar, HIGHLIGHT_COLORS } from './pdfViewer/annotate';
 import { byId } from './pdfViewer/dom';
 import { PresentationMode } from './pdfViewer/presentation';
@@ -68,6 +68,7 @@ const findCase = byId<HTMLInputElement>('vt-find-case');
 const findWord = byId<HTMLInputElement>('vt-find-word');
 const findStatus = byId<HTMLSpanElement>('vt-find-status');
 const fileNameEl = byId<HTMLSpanElement>('vt-file-name');
+const paperTitleEl = byId<HTMLSpanElement>('vt-paper-title');
 const downloadBtn = byId<HTMLButtonElement>('vt-download');
 const printBtn = byId<HTMLButtonElement>('vt-print');
 const moreBtn = byId<HTMLButtonElement>('vt-more');
@@ -145,12 +146,9 @@ const sidebar = new Sidebar({
 });
 const annotate = new AnnotationToolbar(pdfViewer, eventBus);
 const presentation = new PresentationMode(container, pdfViewer, eventBus);
-// A paper title resolved by the strip names the document better than the
-// PDF's own metadata or its file name, so it wins once known.
-let hasPaperTitle = false;
+// The paper title the strip resolves is shown under the document's own name.
 const paperStrip = new PaperStrip(() => eventBus.dispatch('resize', { source: paperStrip }), (title) => {
-  hasPaperTitle = true;
-  setDocTitle(title);
+  setTitles({ paper: title });
 });
 // Drawings persist per document identity and come back on reopen; when the
 // file itself also carries annotations the user resolves it in a dialog.
@@ -186,10 +184,22 @@ function postToHub(message: ViewerToHubMessage) {
   if (inHub) window.parent.postMessage(message, location.origin);
 }
 
-// The tab title is the hub's; the viewer only reports its document title.
-function setDocTitle(title: string) {
-  document.title = `${title} · ${APP_NAME}`;
-  postToHub({ tag: HUB_MESSAGE_TAG, kind: 'doc', title });
+// Two names per document: its own (file name, or the PDF's Title metadata)
+// and, for a recognised paper, the detected paper title shown beneath it in
+// the toolbar and the hub's tab. The browser tab title is the hub's; the
+// viewer reports both names to it.
+let docTitle = 'PDF';
+let paperTitle: string | null = null;
+function setTitles(next: { doc?: string; paper?: string | null }) {
+  if (next.doc !== undefined) docTitle = next.doc;
+  if (next.paper !== undefined) paperTitle = next.paper;
+  const shownPaper = paperTitle && !sameTitle(paperTitle, docTitle) ? paperTitle : null;
+  document.title = `${paperTitle ?? docTitle} · ${APP_NAME}`;
+  fileNameEl.textContent = docTitle;
+  paperTitleEl.textContent = shownPaper ?? '';
+  paperTitleEl.hidden = !shownPaper;
+  paperTitleEl.title = shownPaper ?? '';
+  postToHub({ tag: HUB_MESSAGE_TAG, kind: 'doc', title: docTitle, paperTitle: shownPaper });
 }
 
 window.addEventListener('message', (event) => {
@@ -631,9 +641,7 @@ async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesIn
   hideMessage();
   currentDoc = doc;
   currentFileName = /\.pdf$/iu.test(label) ? label : `${label}.pdf`;
-  hasPaperTitle = false;
-  setDocTitle(label);
-  fileNameEl.textContent = label;
+  setTitles({ doc: label, paper: null });
   // Resolve the identity before the first page renders so `pagesinit` can
   // apply the remembered position; identity failures never block opening.
   // The cloud pull started with the load; it must land before the position
@@ -654,7 +662,7 @@ async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesIn
   void paperStrip.show(doc, currentFileUrl);
   void doc.getMetadata().then(({ info }) => {
     const title = (info as { Title?: unknown } | undefined)?.Title;
-    if (typeof title === 'string' && title.trim() && loadingTask === task && !hasPaperTitle) setDocTitle(title.trim());
+    if (typeof title === 'string' && title.trim() && loadingTask === task) setTitles({ doc: title.trim() });
   }).catch(() => { /* metadata is optional */ });
   if (currentByteLength === null) {
     void doc.getData().then((data) => { currentByteLength = data.byteLength; }).catch(() => { /* optional */ });
