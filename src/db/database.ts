@@ -1,9 +1,12 @@
-// ─── IndexedDB: two stores ───
+// ─── IndexedDB ───
 //
 //   settings        — key/value (viewer toggles, paper-strip key, sync config/state)
 //   pdf_annotations — one PdfAnnotationCache per document identity
+//   pdf_files       — cached web PDFs: size and last use, keyed by content hash
+//   pdf_file_bytes  — their bytes (apart, so eviction never loads them)
+//   pdf_urls        — URL / arXiv-id aliases pointing at a cached file
 
-import { DB_NAME, DB_VERSION, STORE_PDF_ANNOTATIONS, STORE_SETTINGS } from '../shared/constants';
+import { DB_NAME, DB_VERSION, STORE_PDF_ANNOTATIONS, STORE_PDF_FILE_BYTES, STORE_PDF_FILES, STORE_PDF_URLS, STORE_SETTINGS } from '../shared/constants';
 
 let dbInstance: IDBDatabase | null = null;
 
@@ -26,6 +29,16 @@ export function openDB(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORE_PDF_ANNOTATIONS)) {
         const store = db.createObjectStore(STORE_PDF_ANNOTATIONS, { keyPath: 'docId' });
         store.createIndex('by_updatedAt', 'updatedAt', { unique: false });
+      }
+      if (!db.objectStoreNames.contains(STORE_PDF_FILES)) {
+        db.createObjectStore(STORE_PDF_FILES, { keyPath: 'sha256' });
+      }
+      if (!db.objectStoreNames.contains(STORE_PDF_FILE_BYTES)) {
+        db.createObjectStore(STORE_PDF_FILE_BYTES, { keyPath: 'sha256' });
+      }
+      if (!db.objectStoreNames.contains(STORE_PDF_URLS)) {
+        const store = db.createObjectStore(STORE_PDF_URLS, { keyPath: 'alias' });
+        store.createIndex('by_sha256', 'sha256', { unique: false });
       }
     };
 

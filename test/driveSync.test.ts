@@ -7,6 +7,7 @@ import {
   connectPdfSyncGoogle,
   disconnectPdfSyncGoogle,
   getPdfSyncStatus,
+  pullPdfSyncForOpen,
   requestPdfSyncSoon,
   setPdfSyncEnabled,
   syncPdfNow,
@@ -17,6 +18,7 @@ import { PDF_ANNOTATION_CACHE_VERSION, type CachedAnnotationItem, type PdfAnnota
 import { PDF_DOC_STATE_STORAGE_KEY, type PdfDocRecord } from '../src/shared/pdfIdentity';
 import {
   PdfSyncSnapshot,
+  changedPdfDocIds,
   mergeAnnotationCaches,
   mergePdfSyncSnapshots,
   parsePdfSyncSnapshot,
@@ -175,6 +177,32 @@ describe('drive sync', () => {
     const state = await dbGet<{ value: { pendingLocalChanges: boolean; base: PdfSyncSnapshot } }>(STORE_SETTINGS, PDF_SYNC_STATE_SETTING_KEY);
     expect(state?.value.pendingLocalChanges).toBe(false);
     expect(keysOf(state?.value.base.annotations[0])).toEqual(['mine', 'theirs']);
+  });
+
+  it('reports which documents a pull changed, and an open right after a sync skips Drive', async () => {
+    await dbPut(STORE_PDF_ANNOTATIONS, cache(DOC_A, [item('mine')], 5));
+    await setDocs([doc(DOC_A, 2, ago(50)), doc(DOC_B, 1, ago(50))]);
+    await connect();
+
+    // Just synced: opening a document costs no Drive request at all.
+    const before = google.requests.length;
+    await expect(pullPdfSyncForOpen()).resolves.toEqual({ changedDocIds: [] });
+    expect(google.requests.length).toBe(before);
+
+    // A minute later, with another device's work waiting, the open pulls it
+    // and names the one document it touched.
+    const state = await dbGet<{ key: string; value: Record<string, unknown> }>(STORE_SETTINGS, PDF_SYNC_STATE_SETTING_KEY);
+    await dbPut(STORE_SETTINGS, { ...state!, value: { ...state!.value, lastSyncAt: new Date(Date.now() - 120_000).toISOString() } });
+    google.remoteWrite(snapshot([doc(DOC_A, 9, ago(10)), doc(DOC_B, 1, ago(50))], [cache(DOC_A, [item('mine')], 5)]));
+    await expect(pullPdfSyncForOpen()).resolves.toEqual({ changedDocIds: [DOC_A] });
+    expect((await localDocs())[DOC_A].page).toBe(9);
+  });
+
+  it('names the documents that differ between two snapshots', () => {
+    const before = snapshot([doc(DOC_A, 1, 1), doc(DOC_B, 1, 1)], [cache(DOC_A, [item('k')], 1)]);
+    expect(changedPdfDocIds(before, before)).toEqual([]);
+    expect(changedPdfDocIds(before, snapshot([doc(DOC_A, 1, 1), doc(DOC_B, 2, 2)], [cache(DOC_A, [item('k')], 1)]))).toEqual([DOC_B]);
+    expect(changedPdfDocIds(before, snapshot([doc(DOC_A, 1, 1), doc(DOC_B, 1, 1)], []))).toEqual([DOC_A]);
   });
 
   it('leaves a document the viewer changed mid-sync alone and marks it pending', async () => {

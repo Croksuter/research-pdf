@@ -7,13 +7,16 @@
 import {
   DEFAULT_LOCAL_PDF_VIEWER_ENABLED,
   DEFAULT_PAPER_INFO_ENABLED,
+  DEFAULT_PDF_FILE_CACHE_ENABLED,
   DEFAULT_WEB_PDF_VIEWER_ENABLED,
   LOCAL_PDF_VIEWER_ENABLED_SETTING_KEY,
   PAPER_INFO_ENABLED_SETTING_KEY,
+  PDF_FILE_CACHE_ENABLED_SETTING_KEY,
   SEMANTIC_SCHOLAR_API_KEY_SETTING_KEY,
   WEB_PDF_VIEWER_ENABLED_SETTING_KEY,
 } from '../shared/constants';
 import { getSetting, setSetting } from '../db/settingsRepository';
+import { clearPdfFileCache, pdfFileCacheUsage } from '../db/pdfFileCache';
 import { PDF_HUB_PAGE, WEB_PDF_HOST_ORIGINS } from '../shared/localPdf';
 
 const byId = <T extends HTMLElement>(id: string): T => {
@@ -37,6 +40,9 @@ const s2KeyInput = byId<HTMLInputElement>('s2-api-key-input');
 const s2KeySaveButton = byId<HTMLButtonElement>('s2-api-key-save');
 const restoreTabsButton = byId<HTMLButtonElement>('restore-viewer-tabs');
 const settingsStatus = byId<HTMLParagraphElement>('settings-status');
+const fileCacheInput = byId<HTMLInputElement>('pdf-file-cache-enabled');
+const fileCacheUsage = byId<HTMLSpanElement>('pdf-file-cache-usage');
+const fileCacheClearButton = byId<HTMLButtonElement>('pdf-file-cache-clear');
 
 type SyncStatus = {
   googleConfigured: boolean;
@@ -192,6 +198,31 @@ paperInfoInput.addEventListener('change', () => {
   });
 });
 
+async function renderFileCacheUsage(): Promise<void> {
+  try {
+    const { files, bytes } = await pdfFileCacheUsage();
+    fileCacheUsage.textContent = files ? `보관 중: PDF ${files}개 · ${(bytes / (1024 * 1024)).toFixed(1)}MB` : '보관 중인 PDF가 없습니다.';
+    fileCacheClearButton.disabled = files === 0;
+  } catch {
+    fileCacheUsage.textContent = '';
+  }
+}
+
+fileCacheInput.addEventListener('change', () => {
+  void setSetting(PDF_FILE_CACHE_ENABLED_SETTING_KEY, fileCacheInput.checked).then(() => {
+    settingsStatus.textContent = fileCacheInput.checked
+      ? '연 웹 PDF를 이 기기에 보관합니다.'
+      : '더 이상 보관하지 않습니다. 이미 보관한 PDF는 "비우기"로 지울 수 있습니다.';
+  });
+});
+
+fileCacheClearButton.addEventListener('click', () => {
+  void clearPdfFileCache().then(() => {
+    settingsStatus.textContent = '보관한 PDF를 모두 지웠습니다.';
+    return renderFileCacheUsage();
+  });
+});
+
 s2KeySaveButton.addEventListener('click', () => {
   const key = s2KeyInput.value.trim();
   void setSetting(SEMANTIC_SCHOLAR_API_KEY_SETTING_KEY, key).then(() => {
@@ -219,12 +250,15 @@ restoreTabsButton.addEventListener('click', () => {
 // ─── Boot ───
 
 async function loadSettings(): Promise<void> {
-  const [localPdf, webPdf, paperInfo, s2Key] = await Promise.all([
+  const [localPdf, webPdf, paperInfo, s2Key, fileCache] = await Promise.all([
     getSetting(LOCAL_PDF_VIEWER_ENABLED_SETTING_KEY, DEFAULT_LOCAL_PDF_VIEWER_ENABLED),
     getSetting(WEB_PDF_VIEWER_ENABLED_SETTING_KEY, DEFAULT_WEB_PDF_VIEWER_ENABLED),
     getSetting(PAPER_INFO_ENABLED_SETTING_KEY, DEFAULT_PAPER_INFO_ENABLED),
     getSetting<string>(SEMANTIC_SCHOLAR_API_KEY_SETTING_KEY, ''),
+    getSetting(PDF_FILE_CACHE_ENABLED_SETTING_KEY, DEFAULT_PDF_FILE_CACHE_ENABLED),
   ]);
+  fileCacheInput.checked = fileCache;
+  void renderFileCacheUsage();
   localPdfInput.checked = localPdf;
   // The rule only exists while host access is granted; reflect that, not just the stored flag.
   webPdfInput.checked = webPdf && await hasWebPdfHostAccess();

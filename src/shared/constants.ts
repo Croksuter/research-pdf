@@ -1,15 +1,23 @@
 // ─── ResearchPDF constants ───
 
 export const DB_NAME = 'ResearchPDF';
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 export const STORE_SETTINGS = 'settings';
 export const STORE_PDF_ANNOTATIONS = 'pdf_annotations';
+// Local cache of opened web PDFs (db/pdfFileCache.ts); never synced.
+export const STORE_PDF_FILES = 'pdf_files';
+export const STORE_PDF_FILE_BYTES = 'pdf_file_bytes';
+export const STORE_PDF_URLS = 'pdf_urls';
 
 // Viewer routing (see background/pdfRouting.ts).
 export const LOCAL_PDF_VIEWER_ENABLED_SETTING_KEY = 'localPdfViewerEnabled';
 export const DEFAULT_LOCAL_PDF_VIEWER_ENABLED = true;
 export const WEB_PDF_VIEWER_ENABLED_SETTING_KEY = 'webPdfViewerEnabled';
 export const DEFAULT_WEB_PDF_VIEWER_ENABLED = false;
+
+// Keep the bytes of opened web PDFs on this device for instant reopening.
+export const PDF_FILE_CACHE_ENABLED_SETTING_KEY = 'pdfFileCacheEnabled';
+export const DEFAULT_PDF_FILE_CACHE_ENABLED = true;
 
 // Paper strip (venue, citations, references) in the viewer.
 export const PAPER_INFO_ENABLED_SETTING_KEY = 'paperInfoEnabled';

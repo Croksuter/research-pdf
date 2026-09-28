@@ -20,6 +20,7 @@ import { debugError, debugLog, debugWarn } from '../shared/debugLog';
 import { PdfAnnotationCache, isEmptyAnnotationCache, parsePdfAnnotationCache } from '../shared/pdfAnnotations';
 import { PDF_DOC_STATE_STORAGE_KEY, PdfDocRecord, PdfDocRecords, parsePdfDocRecords } from '../shared/pdfIdentity';
 import {
+  changedPdfDocIds,
   PDF_SYNC_SNAPSHOT_VERSION,
   PdfSyncSnapshot,
   boundPdfSyncSnapshot,
@@ -66,7 +67,7 @@ interface PdfSyncState {
 }
 
 export type PdfSyncResult =
-  | { success: true; lastSyncAt: string; merged: boolean }
+  | { success: true; lastSyncAt: string; merged: boolean; changedDocIds: string[] }
   | { success: false; error: string };
 
 class StaleConfigError extends CloudSyncError {
@@ -331,7 +332,7 @@ async function performSync(): Promise<PdfSyncResult> {
         const lastSyncAt = new Date().toISOString();
         await saveState({ lastSyncAt, error: null });
         debugLog('sync', 'terminal: success (unchanged)');
-        return { success: true, lastSyncAt, merged: false };
+        return { success: true, lastSyncAt, merged: false, changedDocIds: [] };
       }
 
       const read = await store.read();
@@ -398,7 +399,7 @@ async function performSync(): Promise<PdfSyncResult> {
         () => configGeneration === generation,
       );
       debugLog('sync', 'terminal: success', () => ({ merged: remote !== null, pendingLocalChanges }));
-      return { success: true, lastSyncAt, merged: remote !== null };
+      return { success: true, lastSyncAt, merged: remote !== null, changedDocIds: changedPdfDocIds(localBeforePut, cloudSnapshot) };
     }
   } catch (error) {
     const message = safeError(error);
@@ -419,6 +420,32 @@ async function performSync(): Promise<PdfSyncResult> {
 export function syncPdfNow(): Promise<PdfSyncResult> {
   if (!activeSync) activeSync = performSync().finally(() => { activeSync = null; });
   return activeSync;
+}
+
+// A viewer opening a document pulls first, but a sync that finished this
+// recently already brought everything: opening ten restored documents must
+// not mean ten Drive round trips.
+const OPEN_PULL_FRESH_MS = 60_000;
+
+/**
+ * Pull for a document being opened. Resolves with the documents the pull
+ * changed locally; the viewer renders from local data meanwhile and reloads
+ * its document only when it is among them.
+ */
+export async function pullPdfSyncForOpen(): Promise<{ changedDocIds: string[] }> {
+  try {
+    const config = await getPdfSyncConfig();
+    if (!config.enabled || !config.googleAccountId || !isGoogleSyncConfigured()) return { changedDocIds: [] };
+    if (!activeSync) {
+      const { lastSyncAt, error } = await getState();
+      if (!error && lastSyncAt && Date.now() - Date.parse(lastSyncAt) < OPEN_PULL_FRESH_MS) return { changedDocIds: [] };
+    }
+    const result = await syncPdfNow();
+    return { changedDocIds: result.success ? result.changedDocIds : [] };
+  } catch (error) {
+    debugError('sync', 'open pull failed', () => ({ error: safeError(error) }));
+    return { changedDocIds: [] };
+  }
 }
 
 /** The unattended path: silent no-op unless a Google account is connected. */

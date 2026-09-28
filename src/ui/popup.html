@@ -17,7 +17,7 @@
       </div>
     </header>
 
-    <button type="button" id="open-viewer" class="btn-primary">PDF 열기 (새 뷰어 탭)</button>
+    <button type="button" id="open-viewer" class="btn-primary">PDF 탭 열기</button>
 
     <section class="rp-section" aria-labelledby="sync-title">
       <div class="rp-heading">
@@ -62,6 +62,17 @@
           <small>논문(DOI·arXiv·제목)을 인식하면 게재처·연도, 인용 수와 추이, 참고문헌, 외부 링크를 표시합니다. 식별자만 Semantic Scholar·OpenAlex·Crossref에 보냅니다.</small>
         </span>
       </label>
+      <label class="settings-toggle">
+        <input type="checkbox" id="pdf-file-cache-enabled">
+        <span>
+          <strong>연 PDF를 이 기기에 보관</strong>
+          <small>한 번 연 웹 PDF를 이 기기의 확장 저장소에 두어, 다시 열거나 새로고침할 때 네트워크를 기다리지 않습니다. 가끔 서버와 비교해 새 버전이면 알려줍니다. 최대 1GB, 오래 안 쓴 것부터 지웁니다. Drive로는 보내지 않습니다.</small>
+        </span>
+      </label>
+      <div class="settings-actions">
+        <span id="pdf-file-cache-usage" class="settings-privacy-note"></span>
+        <button type="button" id="pdf-file-cache-clear" class="btn-secondary">보관한 PDF 비우기</button>
+      </div>
       <div class="field-group">
         <label for="s2-api-key-input">Semantic Scholar API 키 (선택)</label>
         <div class="settings-actions">

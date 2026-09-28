@@ -14,7 +14,7 @@ server, no account of its own.
 | hub | `src/ui/pdf-hub.html`, `pdfHub.ts` + `src/background/pdfHub.ts` |
 | viewer | `src/ui/pdf-viewer.html`, `pdfViewer.ts`, `pdfViewer/*` |
 | sync engine | `src/background/pdfSyncService.ts`, `src/shared/pdfSync.ts` |
-| storage | IndexedDB `ResearchPDF` (settings, pdf_annotations) + `chrome.storage.local` (reading positions, hub tabs) + `chrome.storage.session` (hub registry) |
+| storage | IndexedDB `ResearchPDF` (settings, pdf_annotations, pdf_files / pdf_file_bytes / pdf_urls) + `chrome.storage.local` (reading positions, hub tabs) + `chrome.storage.session` (hub registry) |
 
 ## Modules
 
@@ -54,6 +54,35 @@ longer scatter across tabs that look like web pages.
 - A top-level `pdf-viewer.html` (old tabs, bookmarks) redirects into the hub;
   a hub framed by a web page acts as the plain viewer.
 
+## Storage layers
+
+Opening a document reads the nearest layer first and never waits for the
+next one:
+
+1. **Local file cache** (`db/pdfFileCache.ts`, policy in
+   `shared/pdfCachePolicy.ts`). The bytes of every web PDF this device opened,
+   stored once by SHA-256, reached through aliases: each URL (fragment
+   dropped) and, for arXiv, the paper id — `arxiv:ID` for versionless URLs
+   (all hosts and `.pdf` forms meet there) and `arxiv:IDvN` for versioned
+   ones, which never change. A hit renders with no network request. Copies
+   are re-checked in the background (conditional GET every 6 h with
+   ETag/Last-Modified, a full compare weekly without them, never for
+   versioned arXiv); a changed file is stored and the viewer offers the new
+   version. A first open streams through PDF.js as before and is stored once
+   fully downloaded (one HEAD for validators and the redirect target, which
+   becomes another alias). Budget 1 GiB / 400 files, LRU; files over 150 MB
+   are not kept. The hub prefetches documents behind other tabs while idle.
+   Local `file://` PDFs are not cached. Never synced.
+2. **Local state**: reading position (`chrome.storage.local`) and drawings
+   (`pdf_annotations`), applied at first render.
+3. **Drive sync**: the open pull runs alongside rendering and answers with
+   the document ids it changed (`changedPdfDocIds`). Only if the open
+   document is among them does the viewer reopen it in place from the bytes
+   in memory — silently if the reader has not touched it yet, otherwise
+   after asking. An open within 60 s of a successful sync skips Drive. The
+   viewer saves a position only after the reader moves, so a restored
+   position is never re-stamped "now" and outranks another device's newer one.
+
 ## Sync document
 
 `researchpdf-sync-v1.json` (gzip) in the account's Drive appDataFolder,
@@ -79,9 +108,9 @@ stay on the device.
 
 - Alarm every 15 minutes (`researchpdf-sync`) and at browser start.
 - **Opening a document:** the viewer sends `VOCAB_T_PDF_SYNC_HINT {reason:'open'}`
-  as the load starts and waits (bounded, 8 s) for the pull before it reads the
-  position and drawings, so another device's work is what comes back. When
-  nothing changed on either side this is one metadata request.
+  as the load starts and renders without waiting; see "Storage layers" for
+  how a pull that changed the document is applied. When nothing changed on
+  either side this is one metadata request, and none within 60 s of a sync.
 - **After a stored edit:** `{reason:'edit'}` schedules one coalesced push 30 s
   later (`researchpdf-sync-soon`).
 

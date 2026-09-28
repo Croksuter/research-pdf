@@ -21,7 +21,7 @@ import {
   SpreadMode,
 } from 'pdfjs-dist/web/pdf_viewer.mjs';
 import { APP_NAME } from '../shared/brand';
-import { initDebugLogging } from '../shared/debugLog';
+import { debugLog, initDebugLogging } from '../shared/debugLog';
 import { PDF_HUB_PAGE, WEB_PDF_HOST_ORIGINS, buildPdfHubEntryUrl, isWebPdfSourceUrl, parsePdfViewerFile, pdfDisplayName } from '../shared/localPdf';
 import { HUB_MESSAGE_TAG, hubKeyAction, parseHubToViewerMessage, sameTitle, type ViewerToHubMessage } from '../shared/pdfHubProtocol';
 import { AnnotationToolbar, HIGHLIGHT_COLORS } from './pdfViewer/annotate';
@@ -34,6 +34,8 @@ import { Sidebar } from './pdfViewer/sidebar';
 import { derivePdfDocIdentity, inspectPdfBytes, loadPdfDocRecord, savePdfDocRecord, type PdfBytesInfo } from './pdfViewer/docState';
 import { AnnotationCache } from './pdfViewer/annotationCache';
 import { requestPdfSync } from './pdfViewer/syncHint';
+import { readCachedPdf } from '../db/pdfFileCache';
+import { cachePdfBytes, headValidators, pdfFileCacheEnabled, revalidateCachedPdf } from './pdfFileFetch';
 import { showAnnotationConflictDialog } from './pdfViewer/annotationConflict';
 import type { PdfDocIdentity, PdfDocRecord } from '../shared/pdfIdentity';
 
@@ -158,6 +160,7 @@ const annotationCache = new AnnotationCache(eventBus, pdfViewer, (conflict) =>
 let currentDoc: PDFDocumentProxy | null = null;
 let currentFileUrl: string | null = null;
 let currentFileName = 'document.pdf';
+let currentLabel = 'PDF';
 let currentByteLength: number | null = null;
 let loadingTask: PDFDocumentLoadingTask | null = null;
 // Content-derived identity of the open document (shared/pdfIdentity.ts) and
@@ -458,10 +461,18 @@ eventBus.on('scalechanging', syncZoomSelect);
 // so the same PDF opened from a URL, a local copy, or a dropped file resumes
 // where it was left — including files opened via the picker, which have no
 // source URL at all.
+//
+// Only a position the reader chose is saved: the one the viewer restored (or
+// page 1 of a new document) must not be stamped "now", or it would outrank
+// the newer position another device is about to deliver by sync.
+let userTouched = false;
+for (const type of ['pointerdown', 'keydown', 'wheel'] as const) {
+  document.addEventListener(type, () => { if (currentDoc) userTouched = true; }, { capture: true, passive: true });
+}
 let docStateTimer: ReturnType<typeof setTimeout> | null = null;
 function rememberDocState() {
   const identity = currentIdentity;
-  if (!identity) return;
+  if (!identity || !userTouched) return;
   if (docStateTimer) clearTimeout(docStateTimer);
   docStateTimer = setTimeout(() => {
     docStateTimer = null;
@@ -476,7 +487,6 @@ function rememberDocState() {
     });
   }, 400);
 }
-eventBus.on('pagesinit', rememberDocState);
 eventBus.on('pagechanging', rememberDocState);
 eventBus.on('scalechanging', rememberDocState);
 window.addEventListener('resize', () => eventBus.dispatch('resize', { source: window }));
@@ -619,7 +629,10 @@ function openExtensionSettings() {
 async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesInfo: PdfBytesInfo | null = null): Promise<PDFDocumentProxy> {
   if (loadingTask) await loadingTask.destroy().catch(() => { /* ignore */ });
   loadingTask = task;
+  // Local first: the Drive pull runs alongside and never delays rendering;
+  // it reports which documents it changed (see onRemoteUpdate below).
   const openSync = requestPdfSync('open');
+  userTouched = false;
   currentIdentity = null;
   pendingRestore = null;
   setProgress(Number.NaN);
@@ -641,12 +654,10 @@ async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesIn
   hideMessage();
   currentDoc = doc;
   currentFileName = /\.pdf$/iu.test(label) ? label : `${label}.pdf`;
+  currentLabel = label;
   setTitles({ doc: label, paper: null });
   // Resolve the identity before the first page renders so `pagesinit` can
   // apply the remembered position; identity failures never block opening.
-  // The cloud pull started with the load; it must land before the position
-  // and drawings are read so another device's work is what comes back.
-  await openSync;
   try {
     currentIdentity = await derivePdfDocIdentity(doc, bytesInfo);
     pendingRestore = currentIdentity ? await loadPdfDocRecord(currentIdentity) : null;
@@ -667,7 +678,38 @@ async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesIn
   if (currentByteLength === null) {
     void doc.getData().then((data) => { currentByteLength = data.byteLength; }).catch(() => { /* optional */ });
   }
+  void openSync.then(({ changedDocIds }) => {
+    if (currentDoc === doc && currentIdentity && changedDocIds.includes(currentIdentity.docId)) void onRemoteUpdate(doc);
+  });
   return doc;
+}
+
+// Another device changed this document's drawings or position while it was
+// opening. Untouched, it is reopened in place from the bytes already in
+// memory (no network); once the reader has started, they choose when.
+async function onRemoteUpdate(doc: PDFDocumentProxy): Promise<void> {
+  debugLog('viewer', 'document updated by sync', () => ({ touched: userTouched }));
+  if (userTouched) {
+    showMessage('다른 기기에서 이 문서의 필기나 읽던 위치가 바뀌었습니다.', {
+      label: '다시 불러오기',
+      onClick: () => { hideMessage(); void reopenInPlace(doc); },
+    });
+    return;
+  }
+  await reopenInPlace(doc);
+}
+
+async function reopenInPlace(doc: PDFDocumentProxy): Promise<void> {
+  try {
+    const data = await doc.getData();
+    if (currentDoc !== doc) return;
+    // Same identity rules as the original load: URL loads never pass byte
+    // info (see docState.ts), dropped files always do.
+    const bytesInfo = currentFileUrl ? null : await inspectPdfBytes(data);
+    await openDocument(pdfjsLib.getDocument({ data, ...documentOptions() }), currentLabel, bytesInfo);
+  } catch (error) {
+    showMessage(`문서를 다시 불러오지 못했습니다: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function documentOptions(): Record<string, unknown> {
@@ -697,14 +739,45 @@ async function loadFromFile(file: File) {
   }
 }
 
+// After a network open finishes downloading (PDF.js keeps fetching the rest
+// in the background), the bytes go to the local cache for the next open.
+async function keepLocalCopy(fileUrl: string, doc: PDFDocumentProxy): Promise<void> {
+  try {
+    const data = await doc.getData();
+    if (currentDoc !== doc) return;
+    await cachePdfBytes(fileUrl, data, await headValidators(fileUrl));
+  } catch {
+    /* the cache is an optimisation only */
+  }
+}
+
 async function loadFromUrl(fileUrl: string) {
   currentFileUrl = fileUrl;
   currentByteLength = null;
   const isWeb = isWebPdfSourceUrl(fileUrl);
   const displayName = pdfDisplayName(fileUrl);
   fileNameEl.title = fileUrl;
+  // First layer: this device's copy of the file, if it has one.
+  const cached = isWeb && await pdfFileCacheEnabled() ? await readCachedPdf(fileUrl).catch(() => null) : null;
+  if (cached) {
+    try {
+      currentByteLength = cached.bytes.byteLength;
+      // No byte info: the identity must come out exactly as for a URL load.
+      const doc = await openDocument(pdfjsLib.getDocument({ data: cached.bytes, ...documentOptions() }), displayName);
+      debugLog('cache', 'opened from local copy', () => ({ url: fileUrl }));
+      void revalidateCachedPdf(fileUrl, cached).then((outcome) => {
+        if (outcome === 'changed' && currentDoc === doc) {
+          showMessage('서버에 이 PDF의 새 버전이 있습니다.', { label: '새 버전 열기', onClick: () => location.reload() });
+        }
+      });
+      return;
+    } catch (error) {
+      debugLog('cache', 'local copy unusable, loading from the network', () => ({ error: error instanceof Error ? error.message : String(error) }));
+    }
+  }
   try {
-    await openDocument(pdfjsLib.getDocument({ url: fileUrl, ...documentOptions() }), displayName);
+    const doc = await openDocument(pdfjsLib.getDocument({ url: fileUrl, ...documentOptions() }), displayName);
+    if (isWeb) void keepLocalCopy(fileUrl, doc);
   } catch (error) {
     setProgress(null);
     const message = error instanceof Error ? error.message : String(error);

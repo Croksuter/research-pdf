@@ -24,6 +24,7 @@ import {
   connectPdfSyncGoogle,
   disconnectPdfSyncGoogle,
   getPdfSyncStatus,
+  pullPdfSyncForOpen,
   requestPdfSyncSoon,
   setPdfSyncEnabled,
   syncPdfNow,
@@ -51,16 +52,14 @@ const messageHandlers: Record<string, MessageHandler> = {
     if (!request || !isExtensionPageSender(sender)) return { success: false, error: '동기화 설정 요청 형식이 올바르지 않습니다.' };
     return { success: true, status: await setPdfSyncEnabled(request.enabled) };
   },
-  // The viewer waits for an `open` pull (bounded on its side); an `edit`
-  // schedules one coalesced push a little later.
+  // An `open` pull answers with the documents it changed (the viewer has
+  // already rendered from local data); an `edit` schedules one coalesced
+  // push a little later.
   VOCAB_T_PDF_SYNC_HINT: async (m, sender) => {
     const request = parsePdfSyncHintRequest(m);
     if (!request || !isExtensionPageSender(sender)) return { success: false, error: '동기화 힌트 형식이 올바르지 않습니다.' };
-    if (request.reason === 'open') {
-      await autoSyncPdfIfConnected();
-    } else {
-      requestPdfSyncSoon();
-    }
+    if (request.reason === 'open') return { success: true, ...(await pullPdfSyncForOpen()) };
+    requestPdfSyncSoon();
     return { success: true };
   },
 };

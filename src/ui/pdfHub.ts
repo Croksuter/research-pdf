@@ -20,6 +20,7 @@ import {
   PDF_VIEWER_PAGE,
   buildPdfHubUrl,
   buildPdfViewerUrl,
+  isWebPdfSourceUrl,
   parsePdfHubUrl,
   pdfDisplayName,
   type PdfHubDoc,
@@ -34,6 +35,7 @@ import {
   type HubToViewerMessage,
 } from '../shared/pdfHubProtocol';
 import { byId } from './pdfViewer/dom';
+import { prefetchPdf } from './pdfFileFetch';
 
 initDebugLogging();
 
@@ -48,6 +50,8 @@ interface HubTab {
   /** Detected paper title, shown under `title`. */
   paperTitle: string | null;
   frame: HTMLIFrameElement | null;
+  /** Prefetch into the local file cache was attempted. */
+  prefetched: boolean;
   button: HTMLButtonElement;
   titleEl: HTMLSpanElement;
   paperEl: HTMLSpanElement;
@@ -101,7 +105,7 @@ function createTab(doc: { url: string | null; hash: string; file: File | null })
   close.setAttribute('aria-label', '이 PDF 닫기');
   close.innerHTML = '<svg><use href="#i-close"/></svg>';
   button.append(icon, text, close);
-  const tab: HubTab = { key, url: doc.url, hash: doc.hash, file: doc.file, title: initialTitle, paperTitle: null, frame: null, button, titleEl, paperEl };
+  const tab: HubTab = { key, url: doc.url, hash: doc.hash, file: doc.file, title: initialTitle, paperTitle: null, frame: null, prefetched: false, button, titleEl, paperEl };
   updateTabLabel(tab);
   button.addEventListener('click', (e) => {
     if ((e.target as Element).closest('.rpdf-tab-close')) closeTab(key);
@@ -141,6 +145,29 @@ function addDocs(docs: Array<{ url: string | null; hash: string; file: File | nu
   }
   if (last && (activateLast || (autoActivate && activeKey === null))) activate(last.key);
   render();
+  void queuePrefetch();
+}
+
+// ─── Prefetch ───
+//
+// Documents behind other tabs (restored with the hub, opened in the
+// background) are downloaded into the local file cache while idle, one at a
+// time, so switching to them renders from disk.
+let prefetching = false;
+async function queuePrefetch(): Promise<void> {
+  if (prefetching) return;
+  prefetching = true;
+  try {
+    for (;;) {
+      const next = tabs.find((t) => t.url && !t.frame && !t.prefetched && isWebPdfSourceUrl(t.url));
+      if (!next?.url) break;
+      next.prefetched = true;
+      await new Promise<void>((resolve) => { requestIdleCallback(() => resolve(), { timeout: 2_000 }); });
+      if (!next.frame) await prefetchPdf(next.url).catch(() => false);
+    }
+  } finally {
+    prefetching = false;
+  }
 }
 
 function frameUrl(tab: HubTab): string {

@@ -69,6 +69,25 @@ export function pdfSyncSnapshotDataEquals(left: PdfSyncSnapshot, right: PdfSyncS
 }
 
 /**
+ * Documents whose position or drawings differ between two snapshots: what a
+ * sync changed locally. Lets an open viewer know its document was updated by
+ * another device.
+ */
+export function changedPdfDocIds(before: PdfSyncSnapshot, after: PdfSyncSnapshot): string[] {
+  const changed = new Set<string>();
+  const compare = <T extends { docId: string }>(left: T[], right: T[]) => {
+    const leftById = new Map(left.map((row) => [row.docId, stableJson(row)]));
+    const rightById = new Map(right.map((row) => [row.docId, stableJson(row)]));
+    for (const id of new Set([...leftById.keys(), ...rightById.keys()])) {
+      if (leftById.get(id) !== rightById.get(id)) changed.add(id);
+    }
+  };
+  compare(before.docs, after.docs);
+  compare(before.annotations, after.annotations);
+  return [...changed].sort();
+}
+
+/**
  * Merge one document's caches at drawing granularity. `base` is the cache
  * both sides last agreed on; without it the union can only add drawings.
  */
