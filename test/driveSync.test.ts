@@ -112,7 +112,7 @@ describe('package boundary', () => {
     expect(researchManifest.permissions).not.toContain('activeTab');
     expect(JSON.stringify(researchManifest)).not.toContain('vocab');
     expect(JSON.stringify(researchManifest)).not.toContain('googleapis');
-    expect(researchManifest.web_accessible_resources.flatMap((entry) => entry.resources)).toEqual(['pdf-viewer.html']);
+    expect(researchManifest.web_accessible_resources.flatMap((entry) => entry.resources)).toEqual(['pdf-hub.html', 'pdf-viewer.html']);
   });
 });
 

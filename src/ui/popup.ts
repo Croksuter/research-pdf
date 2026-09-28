@@ -14,7 +14,7 @@ import {
   WEB_PDF_VIEWER_ENABLED_SETTING_KEY,
 } from '../shared/constants';
 import { getSetting, setSetting } from '../db/settingsRepository';
-import { PDF_VIEWER_PAGE, WEB_PDF_HOST_ORIGINS } from '../shared/localPdf';
+import { PDF_HUB_PAGE, WEB_PDF_HOST_ORIGINS } from '../shared/localPdf';
 
 const byId = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
@@ -139,7 +139,7 @@ syncNowButton.addEventListener('click', () => {
 // ─── Viewer settings ───
 
 openViewerButton.addEventListener('click', () => {
-  void chrome.tabs.create({ url: chrome.runtime.getURL(PDF_VIEWER_PAGE) });
+  void chrome.tabs.create({ url: chrome.runtime.getURL(PDF_HUB_PAGE) });
   window.close();
 });
 

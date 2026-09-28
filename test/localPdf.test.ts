@@ -14,6 +14,7 @@ import {
 } from '../src/shared/localPdf';
 
 const VIEWER = 'chrome-extension://abc/pdf-viewer.html';
+const HUB = 'chrome-extension://abc/pdf-hub.html';
 
 describe('isLocalPdfUrl', () => {
   it('accepts file: URLs whose path ends in .pdf regardless of case, query, or fragment', () => {
@@ -125,12 +126,10 @@ describe('extractWebPdfSourceFromViewerUrl', () => {
 });
 
 describe('buildWebPdfRedirectRules', () => {
-  it('covers PDF content types, octet-stream .pdf URLs, and inline .pdf dispositions in every frame kind', () => {
-    const rules = buildWebPdfRedirectRules(VIEWER);
+  it('covers PDF content types, octet-stream .pdf URLs, and inline .pdf dispositions', () => {
+    const rules = buildWebPdfRedirectRules(VIEWER, HUB);
     expect(rules.map((r) => r.id)).toEqual([...WEB_PDF_REDIRECT_RULE_IDS]);
     for (const rule of rules) {
-      expect(rule.action).toEqual({ type: 'redirect', redirect: { regexSubstitution: `${VIEWER}?file=\\0` } });
-      expect(rule.condition.resourceTypes).toEqual(['main_frame', 'sub_frame', 'object']);
       expect(rule.condition.excludedRequestMethods).toEqual(['post']);
       expect(rule.condition.isUrlFilterCaseSensitive).toBe(false);
       expect(rule.condition.excludedResponseHeaders).toContainEqual({ header: 'content-disposition', values: ['attachment*'] });
@@ -153,5 +152,21 @@ describe('buildWebPdfRedirectRules', () => {
     expect(byDisposition.condition.excludedResponseHeaders).toContainEqual(
       expect.objectContaining({ header: 'content-type', values: expect.arrayContaining(['text/*', 'image/*']) }),
     );
+  });
+
+  it('sends top-level PDFs to the hub and embedded ones to the inline viewer, with identical conditions', () => {
+    const rules = buildWebPdfRedirectRules(VIEWER, HUB);
+    const topLevel = rules.slice(0, 3);
+    const embedded = rules.slice(3);
+    for (const rule of topLevel) {
+      expect(rule.action).toEqual({ type: 'redirect', redirect: { regexSubstitution: `${HUB}?file=\\0` } });
+      expect(rule.condition.resourceTypes).toEqual(['main_frame']);
+    }
+    for (const rule of embedded) {
+      expect(rule.action).toEqual({ type: 'redirect', redirect: { regexSubstitution: `${VIEWER}?file=\\0` } });
+      expect(rule.condition.resourceTypes).toEqual(['sub_frame', 'object']);
+    }
+    const strip = ({ id: _id, action: _action, condition: { resourceTypes: _types, ...rest } }: typeof rules[number]) => rest;
+    expect(embedded.map(strip)).toEqual(topLevel.map(strip));
   });
 });

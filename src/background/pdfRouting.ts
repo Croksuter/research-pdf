@@ -10,31 +10,38 @@ import {
   DEFAULT_WEB_PDF_VIEWER_ENABLED,
 } from '../shared/constants';
 import {
+  PDF_HUB_PAGE,
   PDF_VIEWER_PAGE,
   WEB_PDF_HOST_ORIGINS,
   WEB_PDF_REDIRECT_RULE_IDS,
-  buildPdfViewerUrl,
+  buildPdfHubEntryUrl,
+  buildPdfHubUrl,
   buildWebPdfRedirectRules,
   isLocalPdfUrl,
+  isPdfViewerSourceUrl,
   isWebPdfSourceUrl,
   isWebPdfSuffixUrl,
-  parsePdfViewerFile,
+  parsePdfHubUrl,
 } from '../shared/localPdf';
 import {
   parseOpenNativePdfRequest,
+  parsePdfHubClaimRequest,
+  parsePdfHubStateRequest,
   parseRestoreViewerTabsRequest,
   parseSyncWebPdfRoutingRequest,
-  parseViewerStateRequest,
 } from '../shared/messages';
 import { getSetting } from '../db/settingsRepository';
 import { debugError, debugLog } from '../shared/debugLog';
+import { claimPdfHub, noteTopLevelCommit } from './pdfHub';
+import { isExtensionPageSender } from './messageDispatcher';
 
 // ─── PDF viewer routing ───
 //
 // Chrome's built-in PDF viewer is a privileged guest frame; content scripts
 // never run inside it, even with file-URL access granted. PDF navigations are
-// therefore re-pointed at the bundled PDF.js page, whose DOM text layer the
-// ordinary content bundle can work on.
+// therefore re-pointed at the bundled PDF.js page. Top-level PDFs land in the
+// window's PDF hub (./pdfHub.ts: one tab collecting every PDF), embedded ones
+// in the viewer page inline.
 //
 //   • file:///…pdf — webNavigation.onBeforeNavigate + tabs.update. Requires the
 //     user setting AND "Allow access to file URLs" (otherwise the viewer page
@@ -68,7 +75,7 @@ async function syncWebPdfRouting(): Promise<{ enabled: boolean }> {
     await chrome.declarativeNetRequest.updateDynamicRules({
       removeRuleIds: [...WEB_PDF_REDIRECT_RULE_IDS],
       addRules: enabled
-        ? buildWebPdfRedirectRules(chrome.runtime.getURL(PDF_VIEWER_PAGE)) as unknown as chrome.declarativeNetRequest.Rule[]
+        ? buildWebPdfRedirectRules(chrome.runtime.getURL(PDF_VIEWER_PAGE), chrome.runtime.getURL(PDF_HUB_PAGE)) as unknown as chrome.declarativeNetRequest.Rule[]
         : [],
     });
     debugLog('bg:pdf', `web PDF routing ${enabled ? 'enabled' : 'disabled'}`);
@@ -101,8 +108,9 @@ function finishWebPdfNativeReopen(tabId: number) {
 chrome.webNavigation.onCommitted.addListener((details) => {
   if (details.frameId !== 0) return;
   finishWebPdfNativeReopen(details.tabId);
-  // A viewer tab that navigated somewhere else is no longer restorable.
-  if (!details.url.startsWith(chrome.runtime.getURL(PDF_VIEWER_PAGE))) void forgetViewerTab(details.tabId);
+  noteTopLevelCommit(details.tabId, details.url);
+  // A hub tab that navigated somewhere else is no longer restorable.
+  if (!details.url.startsWith(chrome.runtime.getURL(PDF_HUB_PAGE))) void forgetViewerTab(details.tabId);
 });
 
 async function isFileSchemeAccessAllowed(): Promise<boolean> {
@@ -140,9 +148,9 @@ chrome.webNavigation.onBeforeNavigate.addListener((details) => {
     const route = await shouldRouteByUrl(details.url);
     debugLog('bg:pdf', `PDF URL navigation ${route ? 'routing' : 'left to Chrome'}`, () => ({ tabId: details.tabId, url: details.url }));
     if (!route) return;
-    const viewerUrl = buildPdfViewerUrl(details.url, chrome.runtime.getURL(PDF_VIEWER_PAGE));
+    const hubUrl = buildPdfHubEntryUrl(details.url, chrome.runtime.getURL(PDF_HUB_PAGE));
     try {
-      await chrome.tabs.update(details.tabId, { url: viewerUrl });
+      await chrome.tabs.update(details.tabId, { url: hubUrl });
       debugLog('bg:pdf', 'PDF URL routed to bundled viewer', () => ({ tabId: details.tabId, url: details.url }));
     } catch (error) {
       // The tab may have closed or navigated away in the meantime.
@@ -155,13 +163,23 @@ chrome.webNavigation.onBeforeNavigate.addListener((details) => {
   // and the exact suffix checks above the fine one.
 }, { url: [{ urlPrefix: 'file://' }, { urlPrefix: 'http://' }, { urlPrefix: 'https://' }] });
 
+// The viewer inside the hub is a frame of the hub tab; navigating that tab
+// would unload every other document, so the native copy gets its own tab.
+async function nativeTargetTab(sender: chrome.runtime.MessageSender): Promise<number | null> {
+  const tab = sender.tab;
+  if (!tab || typeof tab.id !== 'number') return null;
+  if (sender.frameId === 0) return tab.id;
+  const created = await chrome.tabs.create({ windowId: tab.windowId, index: tab.index + 1, url: 'about:blank' });
+  return typeof created.id === 'number' ? created.id : null;
+}
+
 async function openNativePdf(url: string, sender: chrome.runtime.MessageSender): Promise<Record<string, unknown>> {
-  const tabId = sender.tab?.id;
-  if (typeof tabId !== 'number') return { success: false, error: '탭 정보를 찾을 수 없습니다.' };
   const isWeb = isWebPdfSourceUrl(url);
   if (!isWeb && !(await isFileSchemeAccessAllowed())) {
     return { success: false, error: '파일 URL 액세스가 꺼져 있어 로컬 파일로 이동할 수 없습니다.' };
   }
+  const tabId = await nativeTargetTab(sender).catch(() => null);
+  if (tabId === null) return { success: false, error: '탭 정보를 찾을 수 없습니다.' };
   nativePdfBypassTabs.add(tabId);
   if (isWeb) {
     try {
@@ -182,18 +200,17 @@ async function openNativePdf(url: string, sender: chrome.runtime.MessageSender):
   }
 }
 
-// ─── PDF viewer tab persistence ───
+// ─── PDF hub persistence ───
 //
 // Chrome closes every page of an extension when the extension is reloaded or
-// updated, taking open PDF viewer tabs with it. The viewer page reports its
-// source URL + page + zoom (VOCAB_T_VIEWER_STATE); entries are dropped when
-// the tab closes or navigates elsewhere. Whatever is still recorded when
-// onInstalled fires belonged to a tab Chrome killed, so it is recreated in
-// the same window at the same index with `#page=…&zoom=…`.
-interface ViewerTabRecord {
-  sourceUrl: string;
-  page: number | null;
-  zoom: string | null;
+// updated, taking the hub tabs with it. Each hub reports its URL-backed
+// documents (VOCAB_T_PDF_HUB_STATE); entries are dropped when the tab closes
+// or navigates elsewhere. Whatever is still recorded when onInstalled fires
+// belonged to a tab Chrome killed, so it is recreated in the same window at
+// the same index. Reading positions come back from the per-document records.
+interface HubTabRecord {
+  urls: string[];
+  active: number;
   windowId: number;
   index: number;
   updatedAt: number;
@@ -201,17 +218,33 @@ interface ViewerTabRecord {
 const VIEWER_TABS_STORAGE_KEY = 'vtViewerTabs';
 const VIEWER_TAB_RECORD_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-async function readViewerTabs(): Promise<Record<string, ViewerTabRecord>> {
+// Records written before the hub existed held one `sourceUrl` per viewer tab.
+function normalizeRecord(value: unknown): HubTabRecord | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Partial<HubTabRecord> & { sourceUrl?: unknown };
+  const urls = Array.isArray(record.urls) ? record.urls : typeof record.sourceUrl === 'string' ? [record.sourceUrl] : [];
+  const valid = urls.filter((url): url is string => typeof url === 'string' && isPdfViewerSourceUrl(url));
+  if (valid.length === 0 || typeof record.windowId !== 'number' || typeof record.index !== 'number' || typeof record.updatedAt !== 'number') return null;
+  return { urls: valid, active: typeof record.active === 'number' ? record.active : 0, windowId: record.windowId, index: record.index, updatedAt: record.updatedAt };
+}
+
+async function readViewerTabs(): Promise<Record<string, HubTabRecord>> {
   try {
     const stored = await chrome.storage.local.get(VIEWER_TABS_STORAGE_KEY);
     const value = stored[VIEWER_TABS_STORAGE_KEY];
-    return value && typeof value === 'object' ? value as Record<string, ViewerTabRecord> : {};
+    if (!value || typeof value !== 'object') return {};
+    const records: Record<string, HubTabRecord> = {};
+    for (const [tabId, raw] of Object.entries(value as Record<string, unknown>)) {
+      const record = normalizeRecord(raw);
+      if (record) records[tabId] = record;
+    }
+    return records;
   } catch {
     return {};
   }
 }
 
-async function writeViewerTabs(records: Record<string, ViewerTabRecord>): Promise<void> {
+async function writeViewerTabs(records: Record<string, HubTabRecord>): Promise<void> {
   try {
     await chrome.storage.local.set({ [VIEWER_TABS_STORAGE_KEY]: records });
   } catch {
@@ -219,24 +252,24 @@ async function writeViewerTabs(records: Record<string, ViewerTabRecord>): Promis
   }
 }
 
-async function recordViewerState(
-  request: { sourceUrl: string; page: number | null; zoom: string | null },
+async function recordHubState(
+  request: { urls: string[]; active: number },
   sender: chrome.runtime.MessageSender,
 ): Promise<Record<string, unknown>> {
   const tab = sender.tab;
-  if (!tab || typeof tab.id !== 'number') return { success: false, error: '탭 정보를 찾을 수 없습니다.' };
-  // Only top-level viewer tabs are restorable; a viewer inside an iframe/embed
-  // belongs to its host page.
-  if (sender.frameId !== undefined && sender.frameId !== 0) return { success: true, ignored: true };
+  if (!tab || typeof tab.id !== 'number' || sender.frameId !== 0) return { success: false, error: '탭 정보를 찾을 수 없습니다.' };
   const records = await readViewerTabs();
-  records[String(tab.id)] = {
-    sourceUrl: request.sourceUrl,
-    page: request.page,
-    zoom: request.zoom,
-    windowId: tab.windowId,
-    index: tab.index,
-    updatedAt: Date.now(),
-  };
+  if (request.urls.length === 0) {
+    delete records[String(tab.id)];
+  } else {
+    records[String(tab.id)] = {
+      urls: request.urls,
+      active: request.active,
+      windowId: tab.windowId,
+      index: tab.index,
+      updatedAt: Date.now(),
+    };
+  }
   await writeViewerTabs(records);
   return { success: true };
 }
@@ -257,50 +290,48 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   setTimeout(() => { void forgetViewerTab(tabId); }, VIEWER_TAB_FORGET_DELAY_MS);
 });
 
-function viewerRestoreUrl(record: ViewerTabRecord): string {
-  const base = buildPdfViewerUrl(record.sourceUrl, chrome.runtime.getURL(PDF_VIEWER_PAGE));
-  const hash: string[] = [];
-  if (record.page) hash.push(`page=${record.page}`);
-  if (record.zoom) hash.push(`zoom=${record.zoom}`);
-  return hash.length ? `${base}#${hash.join('&')}` : base;
-}
-
 async function restoreViewerTabs(): Promise<{ restored: number; open: number }> {
   const records = await readViewerTabs();
   const entries = Object.entries(records);
   let restored = 0;
   let open = 0;
   if (entries.length === 0) return { restored, open };
-  const viewerBase = chrome.runtime.getURL(PDF_VIEWER_PAGE);
-  // Our own open viewer pages, via the extension's context list: tabs.query
+  const hubBase = chrome.runtime.getURL(PDF_HUB_PAGE);
+  // Our own open hub pages, via the extension's context list: tabs.query
   // cannot match URLs without the `tabs` permission, but getContexts always
   // sees the extension's own documents.
   let openTabs: Array<{ id: number; url: string }> = [];
   try {
     const contexts = await chrome.runtime.getContexts({ contextTypes: ['TAB'] });
     openTabs = contexts
-      .filter((c) => c.documentUrl?.startsWith(viewerBase) && typeof c.tabId === 'number' && c.frameId === 0)
+      .filter((c) => c.documentUrl?.startsWith(hubBase) && typeof c.tabId === 'number' && c.frameId === 0)
       .map((c) => ({ id: c.tabId, url: c.documentUrl ?? '' }));
   } catch {
     openTabs = [];
   }
-  const alreadyOpen = new Set(openTabs.map((t) => parsePdfViewerFile(new URL(t.url).search)).filter(Boolean));
+  const alreadyOpen = new Set(openTabs.flatMap((t) => {
+    const parsed = new URL(t.url);
+    return parsePdfHubUrl(parsed.search, parsed.hash).docs.map((doc) => doc.url);
+  }));
   const now = Date.now();
-  const next: Record<string, ViewerTabRecord> = {};
+  const next: Record<string, HubTabRecord> = {};
   for (const [tabId, record] of entries) {
     if (now - record.updatedAt > VIEWER_TAB_RECORD_MAX_AGE_MS) continue;
     const stillThere = openTabs.some((t) => t.id === Number(tabId));
     if (stillThere) { next[tabId] = record; open += 1; continue; }
-    if (alreadyOpen.has(record.sourceUrl)) continue; // e.g. Chrome's own session restore brought it back
+    // e.g. Chrome's own session restore brought them back
+    const urls = record.urls.filter((url) => !alreadyOpen.has(url));
+    if (urls.length === 0) continue;
+    const active = Math.max(0, urls.indexOf(record.urls[record.active] ?? ''));
     try {
       let windowId: number | undefined = record.windowId;
       try { await chrome.windows.get(windowId); } catch { windowId = undefined; }
-      const tab = await chrome.tabs.create({ url: viewerRestoreUrl(record), active: false, ...(windowId !== undefined ? { windowId, index: record.index } : {}) });
-      if (typeof tab.id === 'number') next[String(tab.id)] = { ...record, windowId: tab.windowId, index: tab.index, updatedAt: now };
+      const tab = await chrome.tabs.create({ url: buildPdfHubUrl(urls, active, hubBase), active: false, ...(windowId !== undefined ? { windowId, index: record.index } : {}) });
+      if (typeof tab.id === 'number') next[String(tab.id)] = { urls, active, windowId: tab.windowId, index: tab.index, updatedAt: now };
       restored += 1;
-      debugLog('bg:pdf', 'restored viewer tab after reload', () => ({ sourceUrl: record.sourceUrl, page: record.page }));
+      debugLog('bg:pdf', 'restored PDF hub after reload', () => ({ documents: urls.length }));
     } catch (error) {
-      debugError('bg:pdf', 'failed to restore viewer tab', () => ({ error: error instanceof Error ? error.message : String(error) }));
+      debugError('bg:pdf', 'failed to restore PDF hub', () => ({ error: error instanceof Error ? error.message : String(error) }));
     }
   }
   await writeViewerTabs(next);
@@ -311,6 +342,10 @@ chrome.runtime.onInstalled.addListener(() => {
   void restoreViewerTabs();
   void syncWebPdfRouting();
 });
+
+function isHubPageSender(sender: chrome.runtime.MessageSender): boolean {
+  return isExtensionPageSender(sender) && (sender.url ?? '').startsWith(chrome.runtime.getURL(PDF_HUB_PAGE));
+}
 
 type PdfMessageHandler = (
   message: { type: string; [key: string]: unknown },
@@ -324,9 +359,17 @@ export const pdfMessageHandlers: Record<string, PdfMessageHandler> = {
       ? openNativePdf(request.url, sender)
       : { success: false, error: '기본 PDF 뷰어 열기 요청 형식이 올바르지 않습니다.' };
   },
-  VOCAB_T_VIEWER_STATE: (m, sender) => {
-    const request = parseViewerStateRequest(m);
-    return request ? recordViewerState(request, sender) : { success: false, error: '뷰어 상태 형식이 올바르지 않습니다.' };
+  VOCAB_T_PDF_HUB_CLAIM: (m, sender) => {
+    const request = parsePdfHubClaimRequest(m);
+    return request && isHubPageSender(sender)
+      ? claimPdfHub(request, sender)
+      : { success: false, error: 'PDF 탭 요청 형식이 올바르지 않습니다.' };
+  },
+  VOCAB_T_PDF_HUB_STATE: (m, sender) => {
+    const request = parsePdfHubStateRequest(m);
+    return request && isHubPageSender(sender)
+      ? recordHubState(request, sender)
+      : { success: false, error: 'PDF 탭 상태 형식이 올바르지 않습니다.' };
   },
   VOCAB_T_RESTORE_VIEWER_TABS: async (m) => {
     if (!parseRestoreViewerTabsRequest(m)) return { success: false, error: '뷰어 탭 복구 요청 형식이 올바르지 않습니다.' };

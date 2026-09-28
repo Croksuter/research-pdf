@@ -22,7 +22,8 @@ import {
 } from 'pdfjs-dist/web/pdf_viewer.mjs';
 import { APP_NAME } from '../shared/brand';
 import { initDebugLogging } from '../shared/debugLog';
-import { WEB_PDF_HOST_ORIGINS, isWebPdfSourceUrl, parsePdfViewerFile, pdfDisplayName } from '../shared/localPdf';
+import { PDF_HUB_PAGE, WEB_PDF_HOST_ORIGINS, buildPdfHubEntryUrl, isWebPdfSourceUrl, parsePdfViewerFile, pdfDisplayName } from '../shared/localPdf';
+import { HUB_MESSAGE_TAG, hubKeyAction, parseHubToViewerMessage, type ViewerToHubMessage } from '../shared/pdfHubProtocol';
 import { AnnotationToolbar, HIGHLIGHT_COLORS } from './pdfViewer/annotate';
 import { byId } from './pdfViewer/dom';
 import { PresentationMode } from './pdfViewer/presentation';
@@ -161,9 +162,44 @@ let currentIdentity: PdfDocIdentity | null = null;
 let pendingRestore: PdfDocRecord | null = null;
 
 const isFramed = window.top !== window.self;
-// Inside an iframe/<embed>/<object> the viewer replaces only that frame; a
-// tab-level "reopen natively" would navigate the whole host page away.
-if (isFramed) openNativeBtn.hidden = true;
+// Framed by our own PDF hub (ui/pdfHub.ts), the one place a top-level PDF is
+// shown; any other frame is a PDF embedded in a web page.
+const inHub = isFramed && (() => {
+  try {
+    return window.parent.location.origin === location.origin && window.parent.location.pathname === `/${PDF_HUB_PAGE}`;
+  } catch {
+    return false;
+  }
+})();
+// Embedded in a web page the viewer replaces only that frame; a tab-level
+// "reopen natively" would navigate the whole host page away. From the hub
+// the native copy opens in a tab of its own.
+if (isFramed && !inHub) openNativeBtn.hidden = true;
+
+function postToHub(message: ViewerToHubMessage) {
+  if (inHub) window.parent.postMessage(message, location.origin);
+}
+
+// The tab title is the hub's; the viewer only reports its document title.
+function setDocTitle(title: string) {
+  document.title = `${title} · ${APP_NAME}`;
+  postToHub({ tag: HUB_MESSAGE_TAG, kind: 'doc', title });
+}
+
+window.addEventListener('message', (event) => {
+  if (!inHub || event.source !== window.parent || event.origin !== location.origin) return;
+  const message = parseHubToViewerMessage(event.data);
+  if (!message) return;
+  if (message.kind === 'open-file') void loadFromFile(message.file);
+  else if (currentDoc) linkService.setHash(message.hash.slice(1));
+});
+
+// In the hub a newly opened local file gets its own hub tab instead of
+// replacing this document.
+function openLocalFiles(files: File[]) {
+  if (inHub) postToHub({ tag: HUB_MESSAGE_TAG, kind: 'open-files', files });
+  else if (files[0]) void loadFromFile(files[0]);
+}
 
 // ─── Toolbar: pages ───
 
@@ -363,8 +399,7 @@ menuProperties.addEventListener('click', () => {
 propsClose.addEventListener('click', () => propertiesDialog.close());
 menuOpenFile.addEventListener('click', () => openFileInput.click());
 openFileInput.addEventListener('change', () => {
-  const file = openFileInput.files?.[0];
-  if (file) void loadFromFile(file);
+  openLocalFiles(Array.from(openFileInput.files ?? []));
   openFileInput.value = '';
 });
 
@@ -401,27 +436,6 @@ eventBus.on('pagesinit', () => {
 });
 eventBus.on('pagechanging', updatePageControls);
 eventBus.on('scalechanging', syncZoomSelect);
-
-// ─── Tab state for restore-after-reload ───
-// Chrome closes every page of a reloaded extension; the background recreates
-// this tab from the last reported source URL + page + zoom (see background.ts).
-let viewerStateTimer: ReturnType<typeof setTimeout> | null = null;
-function reportViewerState() {
-  if (!currentFileUrl || isFramed) return;
-  if (viewerStateTimer) clearTimeout(viewerStateTimer);
-  viewerStateTimer = setTimeout(() => {
-    viewerStateTimer = null;
-    chrome.runtime.sendMessage({
-      type: 'VOCAB_T_VIEWER_STATE',
-      sourceUrl: currentFileUrl,
-      page: pdfViewer.currentPageNumber || null,
-      zoom: pdfViewer.currentScaleValue || null,
-    }, () => { void chrome.runtime.lastError; });
-  }, 400);
-}
-eventBus.on('pagesinit', reportViewerState);
-eventBus.on('pagechanging', reportViewerState);
-eventBus.on('scalechanging', reportViewerState);
 
 // ─── Per-document state (reading position keyed by document identity) ───
 // Unlike the tab record above this is keyed by the document's own identity,
@@ -496,6 +510,8 @@ document.addEventListener('wheel', (e) => {
 
 document.addEventListener('keydown', (e) => {
   if (presentation.handleKey(e)) { e.preventDefault(); return; }
+  const hubAction = inHub ? hubKeyAction(e) : null;
+  if (hubAction) { e.preventDefault(); postToHub({ tag: HUB_MESSAGE_TAG, kind: 'key', action: hubAction }); return; }
   const target = e.target as HTMLElement | null;
   const typing = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
   const mod = e.ctrlKey || e.metaKey;
@@ -543,10 +559,11 @@ document.addEventListener('dragover', (e) => { if (e.dataTransfer?.types.include
 document.addEventListener('drop', (e) => {
   dragDepth = 0;
   dropOverlay.hidden = true;
-  const file = e.dataTransfer?.files?.[0];
-  if (!file) return;
+  const files = Array.from(e.dataTransfer?.files ?? []);
+  if (files.length === 0) return;
   e.preventDefault();
-  if (file.type === 'application/pdf' || /\.pdf$/iu.test(file.name)) void loadFromFile(file);
+  const pdfs = files.filter((file) => file.type === 'application/pdf' || /\.pdf$/iu.test(file.name));
+  if (pdfs.length) openLocalFiles(pdfs);
   else showMessage('PDF 파일만 열 수 있습니다.');
 });
 
@@ -608,7 +625,7 @@ async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesIn
   hideMessage();
   currentDoc = doc;
   currentFileName = /\.pdf$/iu.test(label) ? label : `${label}.pdf`;
-  document.title = `${label} · ${APP_NAME}`;
+  setDocTitle(label);
   fileNameEl.textContent = label;
   // Resolve the identity before the first page renders so `pagesinit` can
   // apply the remembered position; identity failures never block opening.
@@ -630,7 +647,7 @@ async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesIn
   void paperStrip.show(doc, currentFileUrl);
   void doc.getMetadata().then(({ info }) => {
     const title = (info as { Title?: unknown } | undefined)?.Title;
-    if (typeof title === 'string' && title.trim()) document.title = `${title.trim()} · ${APP_NAME}`;
+    if (typeof title === 'string' && title.trim() && loadingTask === task) setDocTitle(title.trim());
   }).catch(() => { /* metadata is optional */ });
   if (currentByteLength === null) {
     void doc.getData().then((data) => { currentByteLength = data.byteLength; }).catch(() => { /* optional */ });
@@ -706,7 +723,7 @@ async function loadFromUrl(fileUrl: string) {
         return;
       }
     }
-    showMessage(`PDF를 열지 못했습니다: ${message}`, isFramed ? undefined : {
+    showMessage(`PDF를 열지 못했습니다: ${message}`, isFramed && !inHub ? undefined : {
       label: '기본 뷰어로 열기',
       onClick: () => openNativeBtn.click(),
     });
@@ -715,6 +732,15 @@ async function loadFromUrl(fileUrl: string) {
 
 function boot() {
   const fileUrl = parsePdfViewerFile(location.search);
+  if (!isFramed) {
+    // Top-level PDFs live in the window's hub (old tabs restored by Chrome,
+    // bookmarks, links to the viewer page).
+    const hubBase = extensionUrl(PDF_HUB_PAGE);
+    location.replace(fileUrl ? buildPdfHubEntryUrl(fileUrl + location.hash, hubBase) : hubBase);
+    return;
+  }
+  // A hub tab for a local file: the file arrives by postMessage.
+  if (inHub && new URLSearchParams(location.search).get('hub') === 'file') return;
   if (!fileUrl) {
     showMessage('열 PDF가 지정되지 않았습니다. PDF 파일을 이 창에 끌어다 놓거나 메뉴에서 "파일 열기…"를 선택하세요.', {
       label: '파일 열기…',

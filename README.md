@@ -6,6 +6,9 @@ Google Drive.
 
 - Opens local files and web PDFs in a bundled PDF.js viewer with pen,
   highlight, text and stamp annotations.
+- Collects every PDF a window opens into one tab with its own tab strip, so
+  papers stop scattering among your web tabs (Alt+Shift+←/→ to switch, Alt+W
+  to close one).
 - Remembers drawings and the last page/zoom per document, identified by the
   file's own content rather than its name or path.
 - Shows venue, citation trend, references and links for papers it recognises

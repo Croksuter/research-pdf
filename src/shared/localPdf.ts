@@ -5,7 +5,8 @@
 // URLs" enabled. ResearchPDF therefore re-points PDF navigations at its bundled
 // PDF.js page (`pdf-viewer.html`), which can keep drawings and reading position.
 //
-// Two sources reach the viewer:
+// Two sources reach the viewer (top-level ones via the PDF hub, see
+// PDF_HUB_PAGE below):
 //   • local files  — `file:///…pdf`; the background's webNavigation listener
 //     redirects by URL suffix (requires the file-URL access toggle).
 //   • web PDFs     — `http(s)://…`; a declarativeNetRequest rule redirects any
@@ -19,6 +20,8 @@
 
 export const PDF_VIEWER_PAGE = 'pdf-viewer.html';
 export const PDF_VIEWER_FILE_PARAM = 'file';
+// One tab per window that collects every top-level PDF (see ui/pdfHub.ts).
+export const PDF_HUB_PAGE = 'pdf-hub.html';
 
 // Optional host patterns the web-PDF route needs (the viewer fetches the PDF
 // bytes from an extension page, which is CORS-exempt only with host access).
@@ -26,7 +29,8 @@ export const WEB_PDF_HOST_ORIGINS = ['https://*/*', 'http://*/*'] as const;
 
 // Dynamic declarativeNetRequest rule ids for the web-PDF redirect (see
 // buildWebPdfRedirectRules). Fixed so sync can always remove-then-add.
-export const WEB_PDF_REDIRECT_RULE_IDS = [1, 2, 3] as const;
+// Ids 1–3 send top-level PDFs to the hub, 4–6 embedded ones to the viewer.
+export const WEB_PDF_REDIRECT_RULE_IDS = [1, 2, 3, 4, 5, 6] as const;
 
 // Viewer URL length guard: the source URL travels inside a query string.
 const PDF_SOURCE_URL_MAX_CHARS = 4_096;
@@ -129,6 +133,67 @@ export function pdfDisplayName(sourceUrl: string): string {
   return decoded || parsed.host || 'PDF';
 }
 
+// ─── PDF hub URL ───
+//
+// The hub page's own URL is the durable list of its documents, so Chrome's
+// session restore, a reload, and the extension-reload restore all bring back
+// every document. Two shapes:
+//   • `?file=<url>#<hash>` — one document, exactly like the viewer (the
+//     routing redirect and the declarativeNetRequest rule produce this);
+//   • `?a=<active>&f=<url>&f=<url>…` — the canonical multi-document form the
+//     hub rewrites itself to with history.replaceState.
+
+export interface PdfHubDoc {
+  url: string;
+  /** Source fragment such as `#page=3`, or ''. Only meaningful on first open. */
+  hash: string;
+}
+
+export const PDF_HUB_MAX_DOCS = 50;
+const PDF_HUB_ACTIVE_PARAM = 'a';
+const PDF_HUB_FILES_PARAM = 'f';
+
+function sourceOnly(candidate: string): string | null {
+  if (!isPdfViewerSourceUrl(candidate)) return null;
+  const parsed = new URL(candidate);
+  parsed.hash = '';
+  return parsed.href;
+}
+
+/** Hub URL for a single entering document (keeps the source fragment). */
+export function buildPdfHubEntryUrl(sourceUrl: string, hubBaseUrl: string): string {
+  return buildPdfViewerUrl(sourceUrl, hubBaseUrl);
+}
+
+/** Canonical hub URL for a document list; fragments are not persisted. */
+export function buildPdfHubUrl(urls: readonly string[], active: number, hubBaseUrl: string): string {
+  const files = urls.map(sourceOnly).filter((url): url is string => url !== null).slice(0, PDF_HUB_MAX_DOCS);
+  if (files.length === 0) return hubBaseUrl;
+  const params = new URLSearchParams();
+  params.set(PDF_HUB_ACTIVE_PARAM, String(Math.min(Math.max(0, Math.trunc(active) || 0), files.length - 1)));
+  for (const file of files) params.append(PDF_HUB_FILES_PARAM, file);
+  return `${hubBaseUrl}?${params.toString()}`;
+}
+
+/** Reads a hub page's `location.search` + `location.hash` back into documents. */
+export function parsePdfHubUrl(search: string, hash: string): { docs: PdfHubDoc[]; active: number } {
+  const entry = parsePdfViewerFile(search);
+  if (entry) return { docs: [{ url: entry, hash: typeof hash === 'string' && hash.startsWith('#') ? hash : '' }], active: 0 };
+  if (typeof search !== 'string' || !search.startsWith('?')) return { docs: [], active: 0 };
+  const params = new URLSearchParams(search);
+  const seen = new Set<string>();
+  const docs: PdfHubDoc[] = [];
+  for (const raw of params.getAll(PDF_HUB_FILES_PARAM)) {
+    const url = sourceOnly(raw);
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    docs.push({ url, hash: '' });
+    if (docs.length >= PDF_HUB_MAX_DOCS) break;
+  }
+  const active = Number.parseInt(params.get(PDF_HUB_ACTIVE_PARAM) ?? '0', 10);
+  return { docs, active: Number.isInteger(active) && active >= 0 && active < docs.length ? active : 0 };
+}
+
 /**
  * If `url` is our own viewer page carrying an http(s) source, returns that
  * source URL; otherwise null. Used by the sender trust boundary so a web PDF
@@ -157,10 +222,11 @@ export interface WebPdfRedirectRule {
   };
 }
 
-// Every frame kind Chrome would hand to its PDF plugin: top-level tabs,
-// iframes, and <embed>/<object> (which happily display an HTML document, so
-// the redirected viewer renders inline where the PDF was embedded).
-const PDF_RESOURCE_TYPES: WebPdfRedirectRule['condition']['resourceTypes'] = ['main_frame', 'sub_frame', 'object'];
+// Top-level PDFs go to the hub (one tab per window); iframes and
+// <embed>/<object> (which happily display an HTML document) get the viewer
+// inline where the PDF was embedded.
+const TOP_LEVEL_TYPES: WebPdfRedirectRule['condition']['resourceTypes'] = ['main_frame'];
+const EMBEDDED_TYPES: WebPdfRedirectRule['condition']['resourceTypes'] = ['sub_frame', 'object'];
 
 // Content types Chrome's viewer (or common servers) label PDFs with. Header
 // value patterns are glob-like (`*`) and case-insensitive.
@@ -189,20 +255,31 @@ const NOT_ATTACHMENT = { header: 'content-disposition', values: ['attachment*'] 
  * Chrome: with `declarativeNetRequestWithHostAccess` the rules only fire on
  * origins the user granted.
  */
-export function buildWebPdfRedirectRules(viewerBaseUrl: string): WebPdfRedirectRule[] {
+export function buildWebPdfRedirectRules(viewerBaseUrl: string, hubBaseUrl: string): WebPdfRedirectRule[] {
+  return [
+    ...pdfRedirectRuleSet(hubBaseUrl, TOP_LEVEL_TYPES, WEB_PDF_REDIRECT_RULE_IDS.slice(0, 3)),
+    ...pdfRedirectRuleSet(viewerBaseUrl, EMBEDDED_TYPES, WEB_PDF_REDIRECT_RULE_IDS.slice(3, 6)),
+  ];
+}
+
+function pdfRedirectRuleSet(
+  targetBaseUrl: string,
+  resourceTypes: WebPdfRedirectRule['condition']['resourceTypes'],
+  ids: readonly number[],
+): WebPdfRedirectRule[] {
   const action: WebPdfRedirectRule['action'] = {
     type: 'redirect',
     // `\0` is the whole matched request URL, inserted verbatim.
-    redirect: { regexSubstitution: `${viewerBaseUrl}?${PDF_VIEWER_FILE_PARAM}=\\0` },
+    redirect: { regexSubstitution: `${targetBaseUrl}?${PDF_VIEWER_FILE_PARAM}=\\0` },
   };
   const base = {
     isUrlFilterCaseSensitive: false as const,
-    resourceTypes: PDF_RESOURCE_TYPES,
+    resourceTypes,
     excludedRequestMethods: ['post'] as ['post'],
   };
   return [
     {
-      id: WEB_PDF_REDIRECT_RULE_IDS[0],
+      id: ids[0],
       priority: 1,
       action,
       condition: {
@@ -213,7 +290,7 @@ export function buildWebPdfRedirectRules(viewerBaseUrl: string): WebPdfRedirectR
       },
     },
     {
-      id: WEB_PDF_REDIRECT_RULE_IDS[1],
+      id: ids[1],
       priority: 1,
       action,
       condition: {
@@ -224,7 +301,7 @@ export function buildWebPdfRedirectRules(viewerBaseUrl: string): WebPdfRedirectR
       },
     },
     {
-      id: WEB_PDF_REDIRECT_RULE_IDS[2],
+      id: ids[2],
       priority: 1,
       action,
       condition: {

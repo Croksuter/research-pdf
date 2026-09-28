@@ -9,8 +9,8 @@ describe.skipIf(!existsSync(resolve(dist, 'pdfViewer.js')))('production package'
   it('contains only the viewer, its popup, the sync background, and PDF.js assets', () => {
     const files = readdirSync(dist).filter((name) => !name.endsWith('.map')).sort();
     expect(files).toEqual([
-      'background.js', 'icons', 'manifest.json', 'pdf-viewer.html', 'pdfViewer.css', 'pdfViewer.js',
-      'pdfjs', 'popup.css', 'popup.html', 'popup.js', 'tokens.css',
+      'background.js', 'icons', 'manifest.json', 'pdf-hub.html', 'pdf-viewer.html', 'pdfHub.css', 'pdfHub.js',
+      'pdfViewer.css', 'pdfViewer.js', 'pdfjs', 'popup.css', 'popup.html', 'popup.js', 'tokens.css',
     ]);
     for (const dir of ['pdfjs/cmaps', 'pdfjs/standard_fonts', 'pdfjs/wasm', 'pdfjs/iccs', 'pdfjs/images']) {
       expect(existsSync(resolve(dist, dir)), `expected ${dir}/`).toBe(true);
@@ -25,6 +25,12 @@ describe.skipIf(!existsSync(resolve(dist, 'pdfViewer.js')))('production package'
     expect(page).not.toMatch(/<script>[^<]/u);
     const viewer = readFileSync(resolve(dist, 'pdfViewer.js'), 'utf8');
     expect(viewer).toContain('pdfjs/pdf.worker.mjs');
+  });
+
+  it('ships an inline-script-free hub page that loads only its own bundle', () => {
+    const page = readFileSync(resolve(dist, 'pdf-hub.html'), 'utf8');
+    expect(page).toContain('src="pdfHub.js"');
+    expect(page).not.toMatch(/<script>[^<]/u);
   });
 
   it('carries the OAuth client ID and no secret', () => {

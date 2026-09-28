@@ -33,6 +33,7 @@
   "web_accessible_resources": [
     {
       "resources": [
+        "pdf-hub.html",
         "pdf-viewer.html"
       ],
       "matches": [

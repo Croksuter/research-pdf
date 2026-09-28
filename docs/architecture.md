@@ -2,8 +2,8 @@
 
 ResearchPDF is a Chrome extension: the bundled PDF.js viewer, drawings and
 highlights that come back when the same paper is reopened, remembered reading
-position, the paper strip (venue, citations, references), viewer-tab restore,
-and Google Drive sync of the drawings and positions. No content script, no
+position, the paper strip (venue, citations, references), the PDF hub (one tab
+per window holding every open PDF), and Google Drive sync of the drawings and positions. No content script, no
 server, no account of its own.
 
 | | |
@@ -11,19 +11,48 @@ server, no account of its own.
 | build | `npm run build` → `dist/`, `npm run zip` for the store |
 | background | `src/background.ts` + `src/background/*` |
 | popup | `src/ui/popup.*` |
+| hub | `src/ui/pdf-hub.html`, `pdfHub.ts` + `src/background/pdfHub.ts` |
 | viewer | `src/ui/pdf-viewer.html`, `pdfViewer.ts`, `pdfViewer/*` |
 | sync engine | `src/background/pdfSyncService.ts`, `src/shared/pdfSync.ts` |
-| storage | IndexedDB `ResearchPDF` (settings, pdf_annotations) + `chrome.storage.local` (reading positions, viewer tabs) |
+| storage | IndexedDB `ResearchPDF` (settings, pdf_annotations) + `chrome.storage.local` (reading positions, hub tabs) + `chrome.storage.session` (hub registry) |
 
 ## Modules
 
-- `src/background/pdfRouting.ts`: file:// and opt-in web-PDF routing to the
-  viewer, viewer-tab records and restore, and their message handlers.
+- `src/background/pdfRouting.ts`: file:// and opt-in web-PDF routing (top-level
+  PDFs to the hub, embedded ones to the viewer inline), hub-tab records and
+  restore after an extension reload, and their message handlers.
+- `src/background/pdfHub.ts`: which tab is each window's hub (see below).
 - `src/background/messageDispatcher.ts`: the `onMessage` dispatcher and the
   extension-page sender check.
 - `googleAuth.ts`, `googleDriveStore.ts`, `googleDriveAccount.ts`: sign-in,
   the Drive appDataFolder byte store, account pinning.
 - `src/shared/threeWayMerge.ts`: record-level 3-way merge.
+
+## PDF hub
+
+Every top-level PDF lands in `pdf-hub.html`, and each window keeps one such
+tab: an in-page tab strip over one viewer iframe per document, so papers no
+longer scatter across tabs that look like web pages.
+
+- Routing sends the PDF to the hub page **in the tab where it opened**. The
+  page claims with the background (`VOCAB_T_PDF_HUB_CLAIM`), which decides
+  serially per window: no hub and no history → this tab is the hub; no hub
+  but the tab came from a web page → a clean hub tab is created next to it;
+  a hub exists → the documents are handed to it (`VOCAB_T_PDF_HUB_OPEN`
+  broadcast, or queued while a new hub is still loading). A tab that handed
+  its documents over goes back to its page, or closes if it has none. The hub
+  is brought forward only when the PDF opened in the foreground.
+- The hub's own URL (`?a=<active>&f=<url>&f=…`, via `history.replaceState`)
+  is its document list, so reload and Chrome session restore bring every
+  document back; `VOCAB_T_PDF_HUB_STATE` records the same list for recreating
+  hubs after an extension reload. Local files opened from disk are not
+  restorable. Iframes are created the first time a document is shown.
+- Viewer ↔ hub talk over same-origin `postMessage` (`shared/pdfHubProtocol.ts`):
+  document title, Alt+Shift+←/→ and Alt+W, local files opened inside a
+  viewer (they become new hub tabs). "Open in Chrome's viewer" from the hub
+  opens a separate tab so the hub's other documents stay.
+- A top-level `pdf-viewer.html` (old tabs, bookmarks) redirects into the hub;
+  a hub framed by a web page acts as the plain viewer.
 
 ## Sync document
 

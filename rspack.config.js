@@ -8,6 +8,7 @@ module.exports = {
     background: './src/background.ts',
     popup: './src/ui/popup.ts',
     pdfViewer: './src/ui/pdfViewer.ts',
+    pdfHub: './src/ui/pdfHub.ts',
   },
   output: {
     path: path.resolve(__dirname, 'dist'),
@@ -39,6 +40,8 @@ module.exports = {
         { from: 'src/ui/popup.css', to: '.' },
         { from: 'src/ui/pdf-viewer.html', to: '.' },
         { from: 'src/ui/pdfViewer.css', to: '.' },
+        { from: 'src/ui/pdf-hub.html', to: '.' },
+        { from: 'src/ui/pdfHub.css', to: '.' },
         { from: 'src/ui/tokens.css', to: '.' },
         { from: 'src/icons', to: 'icons' },
         // PDF.js runtime assets. The worker runs as a module Worker from the

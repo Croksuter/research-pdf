@@ -4,8 +4,7 @@
 // handler sees it. Type names keep the historical VOCAB_T_ prefix: they are
 // an internal protocol, and renaming would only churn the viewer and tests.
 
-import { isPdfViewerSourceUrl } from './localPdf';
-import { PDF_VIEWER_ZOOM_PATTERN } from './pdfIdentity';
+import { PDF_HUB_MAX_DOCS, isPdfViewerSourceUrl, type PdfHubDoc } from './localPdf';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -41,22 +40,63 @@ export function parseSyncWebPdfRoutingRequest(value: unknown): SyncWebPdfRouting
   return parseEmptyRequest(value, 'VOCAB_T_SYNC_WEB_PDF_ROUTING');
 }
 
-// The PDF viewer page reports its document and view state so the background
-// can recreate the tab after an extension reload (Chrome closes every page of
-// a reloaded extension). `page`/`zoom` feed PDF.js's `#page=…&zoom=…` hash.
-export interface ViewerStateRequest {
-  type: 'VOCAB_T_VIEWER_STATE';
-  sourceUrl: string;
-  page: number | null;
-  zoom: string | null;
+// ─── PDF hub (one tab per window collecting every top-level PDF) ───
+
+function parseHubDocs(value: unknown): PdfHubDoc[] | null {
+  if (!Array.isArray(value) || value.length > PDF_HUB_MAX_DOCS) return null;
+  const docs: PdfHubDoc[] = [];
+  for (const item of value) {
+    if (!isRecord(item) || typeof item.url !== 'string' || !isPdfViewerSourceUrl(item.url)) return null;
+    const hash = typeof item.hash === 'string' && /^(?:#[^\s]{0,512})?$/u.test(item.hash) ? item.hash : '';
+    docs.push({ url: item.url, hash });
+  }
+  return docs;
 }
 
-export function parseViewerStateRequest(value: unknown): ViewerStateRequest | null {
-  if (!isRecord(value) || value.type !== 'VOCAB_T_VIEWER_STATE') return null;
-  if (typeof value.sourceUrl !== 'string' || !isPdfViewerSourceUrl(value.sourceUrl)) return null;
-  const page = typeof value.page === 'number' && Number.isInteger(value.page) && value.page >= 1 && value.page <= 100_000 ? value.page : null;
-  const zoom = typeof value.zoom === 'string' && PDF_VIEWER_ZOOM_PATTERN.test(value.zoom) ? value.zoom : null;
-  return { type: 'VOCAB_T_VIEWER_STATE', sourceUrl: value.sourceUrl, page, zoom };
+// A hub page that just loaded asks whether it is its window's hub or should
+// hand its documents to the existing one and get out of the way.
+export interface PdfHubClaimRequest {
+  type: 'VOCAB_T_PDF_HUB_CLAIM';
+  docs: PdfHubDoc[];
+  canGoBack: boolean;
+}
+
+export function parsePdfHubClaimRequest(value: unknown): PdfHubClaimRequest | null {
+  if (!isRecord(value) || value.type !== 'VOCAB_T_PDF_HUB_CLAIM' || typeof value.canGoBack !== 'boolean') return null;
+  const docs = parseHubDocs(value.docs);
+  return docs ? { type: 'VOCAB_T_PDF_HUB_CLAIM', docs, canGoBack: value.canGoBack } : null;
+}
+
+// The hub reports its URL-backed documents so the background can recreate it
+// after an extension reload (Chrome closes every page of a reloaded
+// extension). Reading positions come back from the per-document records.
+export interface PdfHubStateRequest {
+  type: 'VOCAB_T_PDF_HUB_STATE';
+  urls: string[];
+  active: number;
+}
+
+export function parsePdfHubStateRequest(value: unknown): PdfHubStateRequest | null {
+  if (!isRecord(value) || value.type !== 'VOCAB_T_PDF_HUB_STATE') return null;
+  if (!Array.isArray(value.urls) || value.urls.length > PDF_HUB_MAX_DOCS) return null;
+  if (!value.urls.every((url) => typeof url === 'string' && isPdfViewerSourceUrl(url))) return null;
+  const active = typeof value.active === 'number' && Number.isInteger(value.active) && value.active >= 0 ? value.active : 0;
+  return { type: 'VOCAB_T_PDF_HUB_STATE', urls: value.urls as string[], active };
+}
+
+// Background → hub page broadcast: add these documents to the hub in tab `tabId`.
+export interface PdfHubOpenMessage {
+  type: 'VOCAB_T_PDF_HUB_OPEN';
+  tabId: number;
+  docs: PdfHubDoc[];
+  activate: boolean;
+}
+
+export function parsePdfHubOpenMessage(value: unknown): PdfHubOpenMessage | null {
+  if (!isRecord(value) || value.type !== 'VOCAB_T_PDF_HUB_OPEN') return null;
+  if (typeof value.tabId !== 'number' || !Number.isInteger(value.tabId) || typeof value.activate !== 'boolean') return null;
+  const docs = parseHubDocs(value.docs);
+  return docs ? { type: 'VOCAB_T_PDF_HUB_OPEN', tabId: value.tabId, docs, activate: value.activate } : null;
 }
 
 // Popup button: recreate PDF viewer tabs whose records survived a reload.

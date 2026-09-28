@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PDF · ResearchPDF</title>
+  <link rel="icon" href="icons/icon-32.png">
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="pdfHub.css">
+</head>
+<body>
+  <svg hidden aria-hidden="true">
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  </svg>
+  <nav id="rpdf-strip" class="rpdf-strip" aria-label="열린 PDF">
+    <div id="rpdf-tabs" class="rpdf-tabs" role="tablist"></div>
+    <button id="rpdf-add" class="rpdf-add" type="button" title="PDF 파일 열기" aria-label="PDF 파일 열기"><svg><use href="#i-plus"/></svg></button>
+    <input id="rpdf-file-input" type="file" accept="application/pdf,.pdf" multiple hidden>
+  </nav>
+  <main id="rpdf-frames" class="rpdf-frames"></main>
+  <div id="rpdf-empty" class="rpdf-empty" hidden>
+    <p id="rpdf-empty-text">열린 PDF가 없습니다. PDF 파일을 이 창에 끌어다 놓거나 파일을 여세요.</p>
+    <button id="rpdf-empty-open" class="rpdf-empty-open" type="button">파일 열기…</button>
+  </div>
+  <script src="pdfHub.js"></script>
+</body>
+</html>
