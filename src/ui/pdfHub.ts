@@ -319,9 +319,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ─── Boot ───
 
+// Whether this tab has a page to go back to. `navigation.canGoBack` only sees
+// same-origin entries, so a web page behind us is invisible to it; but a fresh
+// navigation truncates forward history, so after one any other entry is
+// behind us. On reload / back-forward only the same-origin answer is safe.
 function canGoBack(): boolean {
   const nav = (window as unknown as { navigation?: { canGoBack?: boolean } }).navigation;
-  return typeof nav?.canGoBack === 'boolean' ? nav.canGoBack : history.length > 1;
+  if (nav?.canGoBack) return true;
+  const [entry] = performance.getEntriesByType('navigation') as PerformanceNavigationTiming[];
+  return entry?.type === 'navigate' && history.length > 1;
 }
 
 async function boot(): Promise<void> {

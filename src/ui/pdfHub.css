@@ -18,6 +18,9 @@
 
 * { box-sizing: border-box; }
 
+/* The icon sprite: `hidden` alone leaves an SVG at its default 300×150. */
+svg[hidden] { display: none; }
+
 html, body {
   height: 100%;
   margin: 0;

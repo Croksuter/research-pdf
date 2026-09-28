@@ -145,7 +145,13 @@ const sidebar = new Sidebar({
 });
 const annotate = new AnnotationToolbar(pdfViewer, eventBus);
 const presentation = new PresentationMode(container, pdfViewer, eventBus);
-const paperStrip = new PaperStrip(() => eventBus.dispatch('resize', { source: paperStrip }));
+// A paper title resolved by the strip names the document better than the
+// PDF's own metadata or its file name, so it wins once known.
+let hasPaperTitle = false;
+const paperStrip = new PaperStrip(() => eventBus.dispatch('resize', { source: paperStrip }), (title) => {
+  hasPaperTitle = true;
+  setDocTitle(title);
+});
 // Drawings persist per document identity and come back on reopen; when the
 // file itself also carries annotations the user resolves it in a dialog.
 const annotationCache = new AnnotationCache(eventBus, pdfViewer, (conflict) =>
@@ -625,6 +631,7 @@ async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesIn
   hideMessage();
   currentDoc = doc;
   currentFileName = /\.pdf$/iu.test(label) ? label : `${label}.pdf`;
+  hasPaperTitle = false;
   setDocTitle(label);
   fileNameEl.textContent = label;
   // Resolve the identity before the first page renders so `pagesinit` can
@@ -647,7 +654,7 @@ async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesIn
   void paperStrip.show(doc, currentFileUrl);
   void doc.getMetadata().then(({ info }) => {
     const title = (info as { Title?: unknown } | undefined)?.Title;
-    if (typeof title === 'string' && title.trim() && loadingTask === task) setDocTitle(title.trim());
+    if (typeof title === 'string' && title.trim() && loadingTask === task && !hasPaperTitle) setDocTitle(title.trim());
   }).catch(() => { /* metadata is optional */ });
   if (currentByteLength === null) {
     void doc.getData().then((data) => { currentByteLength = data.byteLength; }).catch(() => { /* optional */ });

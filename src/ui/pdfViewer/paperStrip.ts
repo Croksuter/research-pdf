@@ -563,8 +563,10 @@ export class PaperStrip {
    * @param onLayoutChange called whenever the strip appears/disappears; the
    *   viewer container's top edge moves, so PDF.js must re-measure (the host
    *   dispatches its `resize` event, exactly as for the sidebar toggle).
+   * @param onPaperTitle called with the resolved paper title (it names the
+   *   document better than a file name like `2401.12345`).
    */
-  constructor(private readonly onLayoutChange: () => void) {
+  constructor(private readonly onLayoutChange: () => void, private readonly onPaperTitle?: (title: string) => void) {
     this.closeBtn.addEventListener('click', () => this.hide());
   }
 
@@ -674,6 +676,7 @@ export class PaperStrip {
   }
 
   private render(meta: PaperMeta): void {
+    if (meta.title.trim()) this.onPaperTitle?.(meta.title.trim());
     this.body.replaceChildren();
     const segment = (label: string, children: Array<Node | string>, title?: string) => el('span', { className: 'vt-paper-seg', title }, [
       el('span', { className: 'vt-paper-label', textContent: label }),
