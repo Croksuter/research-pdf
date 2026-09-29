@@ -1,6 +1,7 @@
 // ─── ResearchPDF cloud sync (Google Drive appDataFolder) ───
 //
-// One document per Google account, `researchpdf-sync-v1.json` (gzip), holding
+// One document per Google account, `researchpdf-sync-v1.json` (gzip; the file
+// name predates snapshot version 2, which added the library), holding
 // the viewer's durable state (shared/pdfSync.ts). Transport, auth, account
 // pinning and Drive's version-safety emulation are the same modules the
 // vocabulary engine uses; the merge is per document and per drawing.
@@ -29,6 +30,7 @@ import {
   pdfSyncSnapshotDataEquals,
 } from '../shared/pdfSync';
 import { stableJson } from '../shared/threeWayMerge';
+import { mergeIntoPdfLibrary, readPdfLibrary } from './pdfLibraryStore';
 
 export const PDF_SYNC_CONFIG_SETTING_KEY = 'researchPdfSyncConfig';
 export const PDF_SYNC_STATE_SETTING_KEY = 'researchPdfSyncState';
@@ -178,7 +180,7 @@ async function readDocRecords(): Promise<PdfDocRecords> {
 }
 
 export async function exportPdfSyncSnapshot(): Promise<PdfSyncSnapshot> {
-  const [records, rows] = await Promise.all([readDocRecords(), dbGetAll<unknown>(STORE_PDF_ANNOTATIONS)]);
+  const [records, rows, library] = await Promise.all([readDocRecords(), dbGetAll<unknown>(STORE_PDF_ANNOTATIONS), readPdfLibrary()]);
   const annotations = rows
     .map(parsePdfAnnotationCache)
     .filter((cache): cache is PdfAnnotationCache => cache !== null && !isEmptyAnnotationCache(cache));
@@ -187,6 +189,7 @@ export async function exportPdfSyncSnapshot(): Promise<PdfSyncSnapshot> {
     exportedAt: new Date().toISOString(),
     docs: Object.values(records),
     annotations,
+    library: Object.values(library),
   });
 }
 
@@ -233,6 +236,10 @@ async function applyPdfSyncSnapshot(
   });
   if (!guard()) throw new StaleConfigError();
   await chrome.storage.local.set({ [PDF_DOC_STATE_STORAGE_KEY]: next });
+  // The library merge is a join: applying it over whatever the viewer wrote
+  // meanwhile loses nothing, and a row that differs from the base afterwards
+  // is simply pushed by the next sync.
+  await mergeIntoPdfLibrary(merged.library);
 
   const db = await openDB();
   const tx = db.transaction([STORE_PDF_ANNOTATIONS, STORE_SETTINGS], 'readwrite');

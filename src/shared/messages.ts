@@ -5,6 +5,7 @@
 // an internal protocol, and renaming would only churn the viewer and tests.
 
 import { PDF_HUB_MAX_DOCS, isPdfViewerSourceUrl, type PdfHubDoc } from './localPdf';
+import { parsePdfLibraryUpdate, type PdfLibraryUpdate } from './pdfLibrary';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -161,4 +162,15 @@ export interface PdfSyncHintRequest {
 export function parsePdfSyncHintRequest(value: unknown): PdfSyncHintRequest | null {
   if (!isRecord(value) || value.type !== 'VOCAB_T_PDF_SYNC_HINT' || Object.keys(value).length !== 2) return null;
   return value.reason === 'open' || value.reason === 'edit' ? { type: 'VOCAB_T_PDF_SYNC_HINT', reason: value.reason } : null;
+}
+
+export interface PdfLibraryUpdateRequest {
+  type: 'VOCAB_T_PDF_LIBRARY_UPDATE';
+  update: PdfLibraryUpdate;
+}
+
+export function parsePdfLibraryUpdateRequest(value: unknown): PdfLibraryUpdateRequest | null {
+  if (!isRecord(value) || value.type !== 'VOCAB_T_PDF_LIBRARY_UPDATE' || Object.keys(value).length !== 2) return null;
+  const update = parsePdfLibraryUpdate(value.update);
+  return update ? { type: 'VOCAB_T_PDF_LIBRARY_UPDATE', update } : null;
 }

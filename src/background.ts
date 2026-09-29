@@ -1,8 +1,9 @@
 // ─── ResearchPDF service worker ───
 //
 // The PDF viewer's background, and nothing else: viewer routing (file:// and
-// opt-in web PDFs), viewer-tab restore after a reload, and Google Drive sync
-// of drawings + reading positions. No vocabulary, no content script, no
+// opt-in web PDFs), viewer-tab restore after a reload, the library of opened
+// documents, and Google Drive sync of drawings, reading positions and the
+// library. No vocabulary, no content script, no
 // model calls. The sync engine lives in ./background/pdfSyncService.ts.
 
 import { pdfMessageHandlers } from './background/pdfRouting';
@@ -12,6 +13,7 @@ import {
   parseConnectGoogleSyncRequest,
   parseDisconnectGoogleSyncRequest,
   parseGetCloudSyncStatusRequest,
+  parsePdfLibraryUpdateRequest,
   parsePdfSyncHintRequest,
   parseSetPdfSyncEnabledRequest,
   parseSyncCloudNowRequest,
@@ -29,6 +31,7 @@ import {
   setPdfSyncEnabled,
   syncPdfNow,
 } from './background/pdfSyncService';
+import { updatePdfLibrary } from './background/pdfLibraryStore';
 
 initDebugLogging();
 
@@ -60,6 +63,13 @@ const messageHandlers: Record<string, MessageHandler> = {
     if (!request || !isExtensionPageSender(sender)) return { success: false, error: '동기화 힌트 형식이 올바르지 않습니다.' };
     if (request.reason === 'open') return { success: true, ...(await pullPdfSyncForOpen()) };
     requestPdfSyncSoon();
+    return { success: true };
+  },
+  // Opens and detected titles from viewer frames, pins from the hub.
+  VOCAB_T_PDF_LIBRARY_UPDATE: async (m, sender) => {
+    const request = parsePdfLibraryUpdateRequest(m);
+    if (!request || !isExtensionPageSender(sender)) return { success: false, error: '라이브러리 요청 형식이 올바르지 않습니다.' };
+    if (await updatePdfLibrary(request.update)) requestPdfSyncSoon();
     return { success: true };
   },
 };

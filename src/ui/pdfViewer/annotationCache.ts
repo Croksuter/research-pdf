@@ -282,6 +282,11 @@ export class AnnotationCache {
     }, SNAPSHOT_DEBOUNCE_MS);
   }
 
+  /** Stores pending drawings now (the hub is about to unload this frame). */
+  flushNow(): Promise<void> {
+    return this.flush();
+  }
+
   private async flush(): Promise<void> {
     if (this.snapshotTimer) {
       clearTimeout(this.snapshotTimer);

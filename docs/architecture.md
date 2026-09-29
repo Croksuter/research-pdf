@@ -3,8 +3,9 @@
 ResearchPDF is a Chrome extension: the bundled PDF.js viewer, drawings and
 highlights that come back when the same paper is reopened, remembered reading
 position, the paper strip (venue, citations, references), the PDF hub (one tab
-per window holding every open PDF), and Google Drive sync of the drawings and positions. No content script, no
-server, no account of its own.
+per window holding every open PDF, with a library of every PDF it showed and
+pinned documents), and Google Drive sync of the drawings, positions and
+library. No content script, no server, no account of its own.
 
 | | |
 |---|---|
@@ -14,7 +15,7 @@ server, no account of its own.
 | hub | `src/ui/pdf-hub.html`, `pdfHub.ts` + `src/background/pdfHub.ts` |
 | viewer | `src/ui/pdf-viewer.html`, `pdfViewer.ts`, `pdfViewer/*` |
 | sync engine | `src/background/pdfSyncService.ts`, `src/shared/pdfSync.ts` |
-| storage | IndexedDB `ResearchPDF` (settings, pdf_annotations, pdf_files / pdf_file_bytes / pdf_urls) + `chrome.storage.local` (reading positions, hub tabs) + `chrome.storage.session` (hub registry) |
+| storage | IndexedDB `ResearchPDF` (settings, pdf_annotations, pdf_files / pdf_file_bytes / pdf_urls) + `chrome.storage.local` (reading positions, library, hub tabs) + `chrome.storage.session` (hub registry) |
 
 ## Modules
 
@@ -48,9 +49,35 @@ longer scatter across tabs that look like web pages.
   hubs after an extension reload. Local files opened from disk are not
   restorable. Iframes are created the first time a document is shown.
 - Viewer ↔ hub talk over same-origin `postMessage` (`shared/pdfHubProtocol.ts`):
-  document title, Alt+Shift+←/→ and Alt+W, local files opened inside a
-  viewer (they become new hub tabs). "Open in Chrome's viewer" from the hub
-  opens a separate tab so the hub's other documents stay.
+  document title and identity, Alt+Shift+←/→, Alt+W and Alt+Shift+T, local
+  files opened inside a viewer (they become new hub tabs), the sleep
+  handshake. "Open in Chrome's viewer" from the hub opens a separate tab so
+  the hub's other documents stay.
+- **Home** (house button left of the tabs, and what an emptied hub shows):
+  the library — pinned documents, this hub's recently closed tabs, and every
+  document opened in a hub, most recent first, with reading progress, a
+  drawings mark and search over titles, file names and URLs. `s=home` in the
+  hub URL keeps it in front across a reload.
+- **Pins** are a library flag, so a pinned document is a narrow tab at the
+  left of every hub on every device (loaded only when shown; `s=<url>`
+  remembers one in front). Pin/unpin from the tab's context menu or home.
+  A pinned tab has no close button; unpinning one this hub never loaded
+  because another device unpinned it removes the tab.
+- **Recently closed**: a per-hub stack (sessionStorage, 20) with a 5 s undo
+  toast and Alt+Shift+T (Ctrl+Shift+T is Chrome's). Local files reopen while
+  the page lives.
+- **Same document** (`shared/hubTabs.ts`): an incoming URL goes to the tab
+  already showing it — same URL, the same arXiv paper when no version is
+  asked for (or exactly the version asked), or the document the library last
+  opened from that URL. After loading, a tab whose identity another tab
+  already has is merged into it. Two versions of one arXiv paper stay apart
+  with `v1` / `최신` badges.
+- **Sleep**: at most 6 loaded frames, and none unseen for 30 min. The hub asks
+  the frame first (`sleep` → drawings and position stored → `sleep-reply`;
+  presenting, printing or a password prompt refuse for 5 min), then removes
+  it; the tab stays and reloads from the local file cache when shown.
+- **Overflow**: tabs shrink to 112 px, then scroll (wheel works, edges fade);
+  the ▾ button lists every tab and the recently closed ones, with search.
 - A top-level `pdf-viewer.html` (old tabs, bookmarks) redirects into the hub;
   a hub framed by a web page acts as the plain viewer.
 
@@ -88,10 +115,24 @@ next one:
    viewer saves a position only after the reader moves, so a restored
    position is never re-stamped "now" and outranks another device's newer one.
 
+## Library
+
+`shared/pdfLibrary.ts`, `chrome.storage.local` key `rpdfLibrary`: one row per
+document identity opened in a hub (embedded PDFs are not recorded) — up to 5
+source URLs, file name, the PDF's Title, the detected paper title/venue/year,
+page count, last opened, pinned. Positions and drawings are joined in by
+`docId` on the home page, not copied. Viewer frames and the hub send
+`VOCAB_T_PDF_LIBRARY_UPDATE` (`opened` / `meta` / `pin`); the background is
+the only writer (`background/pdfLibraryStore.ts`, one serialized
+read-modify-write), and the sync applies its merge through the same queue.
+Bounded to 1,000 rows (pins kept first, up to 100; others 365 days).
+
 ## Sync document
 
 `researchpdf-sync-v1.json` (gzip) in the account's Drive appDataFolder,
-shape in `src/shared/pdfSync.ts`:
+shape in `src/shared/pdfSync.ts` (snapshot version 2; a version-1 document
+from an older build reads with an empty library, and older builds refuse
+version 2 instead of writing it back without one):
 
 - `docs`: `PdfDocRecord[]`, reading position + zoom per document identity.
   Newest `updatedAt` wins per document.
@@ -101,6 +142,11 @@ shape in `src/shared/pdfSync.ts`:
   removed everywhere once a base exists; a stroke edited on both sides keeps
   the local copy. Presence of a document's cache is decided 3-way too, so
   erasing everything on one device wins over an unchanged peer.
+- `library`: `PdfLibraryEntry[]`, joined per field (`mergePdfLibraryEntries`):
+  the latest open names the row, the latest pin change wins the pin, URLs are
+  unioned. No deletions, so the join can be applied over local rows at any
+  time without losing a concurrent write. A library change never reloads an
+  open document (`changedPdfDocIds` looks at positions and drawings only).
 - The merged set is bounded exactly like local storage (300 documents /
   180 days for positions, 200 documents for drawings), so every device
   converges on the same set. Known edge: beyond those bounds a device's

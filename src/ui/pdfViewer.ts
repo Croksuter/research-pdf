@@ -38,6 +38,7 @@ import { readCachedPdf } from '../db/pdfFileCache';
 import { cachePdfBytes, headValidators, paperAliasesOf, pdfFileCacheEnabled, revalidateCachedPdf } from './pdfFileFetch';
 import { showAnnotationConflictDialog } from './pdfViewer/annotationConflict';
 import type { PdfDocIdentity, PdfDocRecord } from '../shared/pdfIdentity';
+import type { PdfLibraryUpdate } from '../shared/pdfLibrary';
 
 const FIND_STATE_NOT_FOUND = 1;
 const FIND_STATE_PENDING = 3;
@@ -148,9 +149,13 @@ const sidebar = new Sidebar({
 });
 const annotate = new AnnotationToolbar(pdfViewer, eventBus);
 const presentation = new PresentationMode(container, pdfViewer, eventBus);
-// The paper title the strip resolves is shown under the document's own name.
-const paperStrip = new PaperStrip(() => eventBus.dispatch('resize', { source: paperStrip }), (title) => {
-  setTitles({ paper: title });
+// The paper title the strip resolves is shown under the document's own name
+// and names the document in the library.
+const paperStrip = new PaperStrip(() => eventBus.dispatch('resize', { source: paperStrip }), (meta) => {
+  setTitles({ paper: meta.title.trim() });
+  if (currentIdentity) {
+    recordInLibrary({ kind: 'meta', docId: currentIdentity.docId, docTitle: null, title: meta.title, venue: meta.venue, year: meta.year });
+  }
 });
 // Drawings persist per document identity and come back on reopen; when the
 // file itself also carries annotations the user resolves it in a dialog.
@@ -187,6 +192,17 @@ function postToHub(message: ViewerToHubMessage) {
   if (inHub) window.parent.postMessage(message, location.origin);
 }
 
+// The hub's library (shared/pdfLibrary.ts) lists documents opened in the hub;
+// PDFs embedded in web pages are not the user's reading list.
+function recordInLibrary(update: PdfLibraryUpdate) {
+  if (!inHub) return;
+  try {
+    chrome.runtime.sendMessage({ type: 'VOCAB_T_PDF_LIBRARY_UPDATE', update }, () => { void chrome.runtime.lastError; });
+  } catch {
+    /* the library is a convenience */
+  }
+}
+
 // Two names per document: its own (file name, or the PDF's Title metadata)
 // and, for a recognised paper, the detected paper title shown beneath it in
 // the toolbar and the hub's tab. The browser tab title is the hub's; the
@@ -202,7 +218,7 @@ function setTitles(next: { doc?: string; paper?: string | null }) {
   paperTitleEl.textContent = shownPaper ?? '';
   paperTitleEl.hidden = !shownPaper;
   paperTitleEl.title = shownPaper ?? '';
-  postToHub({ tag: HUB_MESSAGE_TAG, kind: 'doc', title: docTitle, paperTitle: shownPaper });
+  postToHub({ tag: HUB_MESSAGE_TAG, kind: 'doc', title: docTitle, paperTitle: shownPaper, docId: currentIdentity?.docId ?? null });
 }
 
 window.addEventListener('message', (event) => {
@@ -210,8 +226,24 @@ window.addEventListener('message', (event) => {
   const message = parseHubToViewerMessage(event.data);
   if (!message) return;
   if (message.kind === 'open-file') void loadFromFile(message.file);
+  else if (message.kind === 'sleep') void prepareForSleep(message.id);
   else if (currentDoc) linkService.setHash(message.hash.slice(1));
 });
+
+// The hub unloads frames it has not shown for a while. Everything durable is
+// stored first; a document the reader never moved in reopens at the page it
+// showed (a link's `#page=`), since nothing else remembers that.
+async function prepareForSleep(id: number): Promise<void> {
+  const busy = presentation.active || isPrinting() || passwordDialog.open;
+  let hash = '';
+  if (!busy) {
+    flushDocState();
+    await annotationCache.flushNow().catch(() => undefined);
+    const page = pdfViewer.currentPageNumber;
+    if (!userTouched && currentDoc && page > 1) hash = `#page=${page}`;
+  }
+  postToHub({ tag: HUB_MESSAGE_TAG, kind: 'sleep-reply', id, ok: !busy, hash });
+}
 
 // In the hub a newly opened local file gets its own hub tab instead of
 // replacing this document.
@@ -470,12 +502,14 @@ for (const type of ['pointerdown', 'keydown', 'wheel'] as const) {
   document.addEventListener(type, () => { if (currentDoc) userTouched = true; }, { capture: true, passive: true });
 }
 let docStateTimer: ReturnType<typeof setTimeout> | null = null;
+let docStateSave: (() => void) | null = null;
 function rememberDocState() {
   const identity = currentIdentity;
   if (!identity || !userTouched) return;
   if (docStateTimer) clearTimeout(docStateTimer);
-  docStateTimer = setTimeout(() => {
+  docStateSave = () => {
     docStateTimer = null;
+    docStateSave = null;
     if (currentIdentity !== identity) return;
     void savePdfDocRecord({
       ...identity,
@@ -485,7 +519,13 @@ function rememberDocState() {
       zoom: pdfViewer.currentScaleValue || null,
       updatedAt: Date.now(),
     });
-  }, 400);
+  };
+  docStateTimer = setTimeout(docStateSave, 400);
+}
+/** Stores a pending position now instead of after the debounce. */
+function flushDocState() {
+  if (docStateTimer) clearTimeout(docStateTimer);
+  docStateSave?.();
 }
 eventBus.on('pagechanging', rememberDocState);
 eventBus.on('scalechanging', rememberDocState);
@@ -666,6 +706,10 @@ async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesIn
     pendingRestore = null;
   }
   if (loadingTask !== task) return doc; // superseded while resolving
+  if (currentIdentity) {
+    setTitles({}); // tells the hub the document's identity
+    recordInLibrary({ kind: 'opened', docId: currentIdentity.docId, url: currentFileUrl, fileName: currentFileName, numPages: doc.numPages });
+  }
   pdfViewer.setDocument(doc);
   linkService.setDocument(doc, null);
   void annotationCache.attach(doc, currentIdentity);
@@ -673,7 +717,9 @@ async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesIn
   void paperStrip.show(doc, currentFileUrl);
   void doc.getMetadata().then(({ info }) => {
     const title = (info as { Title?: unknown } | undefined)?.Title;
-    if (typeof title === 'string' && title.trim() && loadingTask === task) setTitles({ doc: title.trim() });
+    if (typeof title !== 'string' || !title.trim() || loadingTask !== task) return;
+    setTitles({ doc: title.trim() });
+    if (currentIdentity) recordInLibrary({ kind: 'meta', docId: currentIdentity.docId, docTitle: title, title: null, venue: null, year: null });
   }).catch(() => { /* metadata is optional */ });
   if (currentByteLength === null) {
     void doc.getData().then((data) => { currentByteLength = data.byteLength; }).catch(() => { /* optional */ });

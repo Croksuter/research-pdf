@@ -14,16 +14,51 @@
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></symbol>
     <symbol id="i-file-local" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5.5h-5V20H5a1 1 0 0 1-1-1z"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 4h6l-1 5 3 3v2H7v-2l3-3zM12 14v6"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></symbol>
+    <symbol id="i-restore" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4h4"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></symbol>
   </svg>
   <nav id="rpdf-strip" class="rpdf-strip" aria-label="열린 PDF">
+    <button id="rpdf-home-btn" class="rpdf-home-btn" type="button" title="홈 · 라이브러리" aria-label="홈 · 라이브러리" aria-pressed="false"><svg><use href="#i-home"/></svg></button>
     <div id="rpdf-tabs" class="rpdf-tabs" role="tablist"></div>
     <button id="rpdf-add" class="rpdf-add" type="button" title="PDF 파일 열기" aria-label="PDF 파일 열기"><svg><use href="#i-plus"/></svg></button>
+    <span class="rpdf-strip-spacer"></span>
+    <button id="rpdf-list-btn" class="rpdf-list-btn" type="button" title="모든 탭 · 최근 닫은 탭" aria-haspopup="dialog" aria-expanded="false">
+      <span id="rpdf-list-count" class="rpdf-list-count"></span><svg><use href="#i-chevron"/></svg>
+    </button>
     <input id="rpdf-file-input" type="file" accept="application/pdf,.pdf" multiple hidden>
   </nav>
-  <main id="rpdf-frames" class="rpdf-frames"></main>
+  <div id="rpdf-list" class="rpdf-popover" role="dialog" aria-label="모든 탭" hidden>
+    <label class="rpdf-search">
+      <svg aria-hidden="true"><use href="#i-search"/></svg>
+      <input id="rpdf-list-search" type="search" placeholder="열린 탭 찾기" autocomplete="off" spellcheck="false">
+    </label>
+    <div id="rpdf-list-items" class="rpdf-list-items"></div>
+  </div>
+  <div id="rpdf-menu" class="rpdf-menu" role="menu" hidden></div>
+  <main id="rpdf-frames" class="rpdf-frames">
+    <section id="rpdf-home" class="rpdf-home" aria-label="홈 · 라이브러리" hidden>
+      <div class="rpdf-home-inner">
+        <header class="rpdf-home-head">
+          <label class="rpdf-search rpdf-home-search">
+            <svg aria-hidden="true"><use href="#i-search"/></svg>
+            <input id="rpdf-home-search" type="search" placeholder="열었던 PDF 찾기 — 제목, 파일 이름, 주소" autocomplete="off" spellcheck="false">
+          </label>
+          <button id="rpdf-home-open" class="rpdf-primary" type="button">파일 열기…</button>
+        </header>
+        <div id="rpdf-home-sections"></div>
+      </div>
+    </section>
+  </main>
   <div id="rpdf-empty" class="rpdf-empty" hidden>
-    <p id="rpdf-empty-text">열린 PDF가 없습니다. PDF 파일을 이 창에 끌어다 놓거나 파일을 여세요.</p>
-    <button id="rpdf-empty-open" class="rpdf-empty-open" type="button">파일 열기…</button>
+    <p id="rpdf-empty-text"></p>
+  </div>
+  <div id="rpdf-toast" class="rpdf-toast" role="status" hidden>
+    <span id="rpdf-toast-text"></span>
+    <button id="rpdf-toast-action" type="button" hidden></button>
   </div>
   <script src="pdfHub.js"></script>
 </body>

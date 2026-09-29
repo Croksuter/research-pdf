@@ -24,6 +24,7 @@ import {
   parsePdfSyncSnapshot,
 } from '../src/shared/pdfSync';
 import { parsePdfSyncHintRequest, parseSetPdfSyncEnabledRequest } from '../src/shared/messages';
+import { PDF_LIBRARY_STORAGE_KEY, type PdfLibraryEntry } from '../src/shared/pdfLibrary';
 import researchManifest from '../manifest.json';
 import { FakeGoogle, createFakeGoogle } from './fakeGoogleDrive';
 import { clearAllStores } from './helpers';
@@ -49,8 +50,15 @@ function doc(docId: string, page: number, updatedAt: number): PdfDocRecord {
   };
 }
 
-function snapshot(docs: PdfDocRecord[] = [], annotations: PdfAnnotationCache[] = []): PdfSyncSnapshot {
-  return { version: 1, exportedAt: '2026-09-01T00:00:00.000Z', docs, annotations };
+function snapshot(docs: PdfDocRecord[] = [], annotations: PdfAnnotationCache[] = [], library: PdfLibraryEntry[] = []): PdfSyncSnapshot {
+  return { version: 2, exportedAt: '2026-09-01T00:00:00.000Z', docs, annotations, library };
+}
+
+function entry(docId: string, overrides: Partial<PdfLibraryEntry> = {}): PdfLibraryEntry {
+  return {
+    docId, urls: [`https://example.org/${docId.slice(0, 4)}.pdf`], fileName: null, docTitle: null, title: null, venue: null, year: null,
+    numPages: 10, openedAt: ago(60), pinned: false, pinChangedAt: 0, ...overrides,
+  };
 }
 
 const keysOf = (cache: PdfAnnotationCache | undefined) => (cache?.items ?? []).map((entry) => entry.key).sort();
@@ -90,8 +98,31 @@ describe('pdf sync merge', () => {
     expect(merged.docs.map((entry) => [entry.docId, entry.page])).toEqual([[DOC_A, 7], [DOC_B, 1]]);
   });
 
+  it('joins the library: latest open names it, latest pin change wins, URLs union', () => {
+    const local = snapshot([], [], [entry(DOC_A, { openedAt: ago(10), title: 'Local title', urls: ['https://a.org/x.pdf'], pinned: true, pinChangedAt: ago(100) })]);
+    const remote = snapshot([], [], [
+      entry(DOC_A, { openedAt: ago(20), title: 'Remote title', venue: 'NeurIPS', urls: ['https://b.org/x.pdf'], pinned: false, pinChangedAt: ago(50) }),
+      entry(DOC_B),
+    ]);
+    const merged = mergePdfSyncSnapshots(local, remote, null);
+    expect(merged.library.map((e) => e.docId)).toEqual([DOC_A, DOC_B]);
+    const a = merged.library[0];
+    expect(a.title).toBe('Local title');
+    expect(a.venue).toBe('NeurIPS');
+    expect(a.urls).toEqual(['https://a.org/x.pdf', 'https://b.org/x.pdf']);
+    expect(a.pinned).toBe(false); // unpinned later on the other device
+    expect(mergePdfSyncSnapshots(remote, local, null).library).toEqual(merged.library);
+  });
+
+  it('reads an older build\'s version-1 document with an empty library', () => {
+    const parsed = parsePdfSyncSnapshot({ version: 1, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [] });
+    expect(parsed).toEqual({ version: 2, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [] });
+  });
+
   it('refuses a document another build could not read back', () => {
+    expect(parsePdfSyncSnapshot({ version: 3, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [] })).toBeNull();
     expect(parsePdfSyncSnapshot({ version: 2, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [] })).toBeNull();
+    expect(parsePdfSyncSnapshot({ version: 2, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [{ docId: 'x' }] })).toBeNull();
     expect(parsePdfSyncSnapshot({ version: 1, exportedAt: 'nope', docs: [], annotations: [] })).toBeNull();
     expect(parsePdfSyncSnapshot({ version: 1, exportedAt: '2026-01-01T00:00:00.000Z', docs: [{ docId: 'x' }], annotations: [] })).toBeNull();
     expect(parsePdfSyncSnapshot(snapshot([doc(DOC_A, 1, ago(1))], [cache(DOC_A, [item('k')], 1)]))).not.toBeNull();
@@ -154,7 +185,7 @@ describe('drive sync', () => {
 
     expect(google.files.size).toBe(1);
     const body = await google.headBody<PdfSyncSnapshot>();
-    expect(body.version).toBe(1);
+    expect(body.version).toBe(2);
     expect(body.docs.map((entry) => entry.page)).toEqual([4]);
     expect(keysOf(body.annotations[0])).toEqual(['k1']);
     expect(JSON.stringify(body)).not.toContain('perm-main');
@@ -162,6 +193,21 @@ describe('drive sync', () => {
     const before = google.dataRequests().length;
     await expect(syncPdfNow()).resolves.toMatchObject({ success: true, merged: false });
     expect(google.dataRequests().length).toBe(before);
+  });
+
+  it('carries the library both ways: local opens up, another device\'s pin down', async () => {
+    await google.chrome.storage.local.set({ [PDF_LIBRARY_STORAGE_KEY]: { [DOC_A]: entry(DOC_A, { title: 'Mine' }) } });
+    await connect();
+    expect((await google.headBody<PdfSyncSnapshot>()).library.map((e) => e.title)).toEqual(['Mine']);
+
+    google.remoteWrite(snapshot([], [], [entry(DOC_A, { title: 'Mine', pinned: true, pinChangedAt: ago(5) }), entry(DOC_B, { title: 'Theirs' })]));
+    await expect(syncPdfNow()).resolves.toMatchObject({ success: true, merged: true });
+    const local = (await google.chrome.storage.local.get(PDF_LIBRARY_STORAGE_KEY))[PDF_LIBRARY_STORAGE_KEY] as Record<string, PdfLibraryEntry>;
+    expect(local[DOC_A].pinned).toBe(true);
+    expect(local[DOC_B].title).toBe('Theirs');
+    // A library change alone is not a document change: no viewer reloads.
+    google.remoteWrite(snapshot([], [], [entry(DOC_A, { title: 'Mine', pinned: false, pinChangedAt: ago(1) }), entry(DOC_B, { title: 'Theirs' })]));
+    await expect(syncPdfNow()).resolves.toMatchObject({ success: true, changedDocIds: [] });
   });
 
   it('pulls another profile\'s drawings into the same paper and its reading position', async () => {

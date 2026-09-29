@@ -34,19 +34,26 @@ describe('hub URL', () => {
   it('round-trips a document list and the active index through the canonical form', () => {
     const url = buildPdfHubUrl([A, B, LOCAL], 1, HUB);
     expect(url.startsWith(`${HUB}?a=1&f=`)).toBe(true);
-    expect(hubParts(url)).toEqual({ docs: [{ url: A, hash: '' }, { url: B, hash: '' }, { url: LOCAL, hash: '' }], active: 1 });
+    expect(hubParts(url)).toEqual({ docs: [{ url: A, hash: '' }, { url: B, hash: '' }, { url: LOCAL, hash: '' }], active: 1, show: null });
+  });
+
+  it('remembers the home page or a pinned document in front', () => {
+    expect(buildPdfHubUrl([], 0, HUB, 'home')).toBe(HUB);
+    expect(hubParts(buildPdfHubUrl([A], 0, HUB, 'home'))).toEqual({ docs: [{ url: A, hash: '' }], active: 0, show: 'home' });
+    expect(hubParts(buildPdfHubUrl([], 0, HUB, `${B}#page=2`))).toEqual({ docs: [], active: 0, show: B });
+    expect(hubParts(buildPdfHubUrl([A], 0, HUB, 'javascript:alert(1)')).show).toBeNull();
   });
 
   it('reads the single-document entry form, raw (declarativeNetRequest) or encoded, with its fragment', () => {
-    expect(hubParts(buildPdfHubEntryUrl(`${B}#page=3`, HUB))).toEqual({ docs: [{ url: B, hash: '#page=3' }], active: 0 });
+    expect(hubParts(buildPdfHubEntryUrl(`${B}#page=3`, HUB))).toEqual({ docs: [{ url: B, hash: '#page=3' }], active: 0, show: null });
     // The redirect rule inserts the request URL verbatim.
-    expect(parsePdfHubUrl(`?file=${B}`, '#page=2')).toEqual({ docs: [{ url: B, hash: '#page=2' }], active: 0 });
+    expect(parsePdfHubUrl(`?file=${B}`, '#page=2')).toEqual({ docs: [{ url: B, hash: '#page=2' }], active: 0, show: null });
   });
 
   it('drops invalid, duplicate, and excess sources and clamps the active index', () => {
     const search = `?a=9&f=${encodeURIComponent(A)}&f=javascript%3Aalert(1)&f=${encodeURIComponent(A)}&f=${encodeURIComponent(`${B}#x`)}`;
-    expect(parsePdfHubUrl(search, '')).toEqual({ docs: [{ url: A, hash: '' }, { url: B, hash: '' }], active: 0 });
-    expect(parsePdfHubUrl('', '')).toEqual({ docs: [], active: 0 });
+    expect(parsePdfHubUrl(search, '')).toEqual({ docs: [{ url: A, hash: '' }, { url: B, hash: '' }], active: 0, show: null });
+    expect(parsePdfHubUrl('', '')).toEqual({ docs: [], active: 0, show: null });
     const many = Array.from({ length: PDF_HUB_MAX_DOCS + 5 }, (_, i) => `https://a.org/${i}.pdf`);
     expect(hubParts(buildPdfHubUrl(many, 0, HUB)).docs).toHaveLength(PDF_HUB_MAX_DOCS);
     expect(buildPdfHubUrl([], 0, HUB)).toBe(HUB);
@@ -72,7 +79,17 @@ describe('hub messages', () => {
   it('parses frame messages and never trusts untagged or malformed ones', () => {
     const file = new File([new Uint8Array([1])], 'x.pdf', { type: 'application/pdf' });
     expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'doc', title: '1706.03762', paperTitle: ' Attention Is All You Need ' }))
-      .toEqual({ tag: HUB_MESSAGE_TAG, kind: 'doc', title: '1706.03762', paperTitle: 'Attention Is All You Need' });
+      .toEqual({ tag: HUB_MESSAGE_TAG, kind: 'doc', title: '1706.03762', paperTitle: 'Attention Is All You Need', docId: null });
+    expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'doc', title: 'T', paperTitle: null, docId: 'fp:abc:3' }))
+      .toMatchObject({ docId: 'fp:abc:3' });
+    expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'doc', title: 'T', paperTitle: null, docId: 'x'.repeat(500) }))
+      .toMatchObject({ docId: null });
+    expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'sleep-reply', id: 3, ok: true, hash: '#page=7' }))
+      .toEqual({ tag: HUB_MESSAGE_TAG, kind: 'sleep-reply', id: 3, ok: true, hash: '#page=7' });
+    expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'sleep-reply', id: 3, ok: true, hash: 'javascript:x' }))
+      .toMatchObject({ hash: '' });
+    expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'sleep-reply', id: 'a', ok: true, hash: '' })).toBeNull();
+    expect(parseHubToViewerMessage({ tag: HUB_MESSAGE_TAG, kind: 'sleep', id: 4 })).toEqual({ tag: HUB_MESSAGE_TAG, kind: 'sleep', id: 4 });
     expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'doc', title: 'T', paperTitle: null })?.kind).toBe('doc');
     expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'doc', title: 'T', paperTitle: 3 })).toBeNull();
     expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'key', action: 'next' })?.kind).toBe('key');
@@ -91,6 +108,8 @@ describe('hub messages', () => {
     expect(key('ArrowRight', { altKey: true, shiftKey: true })).toBe('next');
     expect(key('ArrowLeft', { altKey: true, shiftKey: true })).toBe('prev');
     expect(key('KeyW', { altKey: true })).toBe('close');
+    expect(key('KeyT', { altKey: true, shiftKey: true })).toBe('reopen');
+    expect(key('KeyT', { ctrlKey: true, shiftKey: true })).toBeNull(); // Chrome's own reopen
     expect(key('ArrowLeft', { altKey: true })).toBeNull(); // Alt+← is the browser's Back
     expect(key('KeyW', { ctrlKey: true })).toBeNull();
     expect(sameTitle('Attention Is All You Need', 'attention is all you need.')).toBe(true);
@@ -223,7 +242,7 @@ describe('hub claims', () => {
       .toEqual({ success: true, role: 'forwarded', dispose: 'back' });
     const created = [...fake.tabs.values()].find((t) => t.id !== 1)!;
     expect(created).toMatchObject({ windowId: 7, index: 5, active: true });
-    expect(hubParts(created.url)).toEqual({ docs: [doc(A, '#page=3')], active: 0 });
+    expect(hubParts(created.url)).toEqual({ docs: [doc(A, '#page=3')], active: 0, show: null });
 
     // Another PDF arrives before the new hub page has loaded: it is queued...
     fake.addTab({ id: 2, windowId: 7, index: 6, active: false });
