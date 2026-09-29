@@ -6,10 +6,13 @@
 // sentence spacing and kerning all drift, and a selection boundary can fall
 // in the middle of a rendered glyph. Our patched worker
 // (scripts/pdfjs-worker-patch.cjs) sends where every character of a run
-// starts (`charStarts`). Here each run is laid out on them: characters whose
-// natural advance already lands on the next start stay plain text, the rest
-// (every word gap, the odd kerning pair) get the exact letter-spacing. The
-// run keeps only its horizontal scale (Tz), so a boundary between two
+// starts (`charStarts`). Here each run is laid out on them. Every word (and
+// every gap between words, and every 24 characters of a run without gaps)
+// is its own piece, placed absolutely at its exact start — so the tiny difference between the canvas measurement below and
+// the browser's own text layout can never add up along a line. Inside a
+// piece, characters whose natural advance already lands on the next start
+// stay plain text and the odd kerning pair gets the exact letter-spacing.
+// The run keeps only its horizontal scale (Tz), so a boundary between two
 // characters is the boundary between their glyphs, at any zoom (all in em).
 //
 // PDF.js's find highlighter rewrites a run's contents; while a match is
@@ -30,15 +33,27 @@ export interface RunSegment {
   spacingEm: number | null;
 }
 
+/** A word or a gap, placed at its own start. */
+export interface RunPiece {
+  /** Start from the run's origin, in unscaled em. */
+  leftEm: number;
+  segments: RunSegment[];
+}
+
 const EPSILON_EM = 0.004;
+// Runs without gaps (CJK text, URLs) are pinned at least this often too.
+const MAX_PIECE_CHARS = 24;
+
+const round = (value: number) => Math.round(value * 10_000) / 10_000;
+const isGap = (ch: string) => /\s/u.test(ch);
 
 /**
- * Splits a run into plain text and characters that need letter-spacing to
- * start the next character where the PDF does. `advance` is a character's
- * natural width in em in the layer's font. Null when the item has no usable
- * positions.
+ * Splits a run into words and gaps, each placed at its start; inside one,
+ * plain text and characters that need letter-spacing to start the next
+ * character where the PDF does. `advance` is a character's natural width in
+ * em in the layer's font. Null when the item has no usable positions.
  */
-export function planRun(item: TextRunItem, advance: (ch: string) => number): { segments: RunSegment[]; scaleX: number } | null {
+export function planRun(item: TextRunItem, advance: (ch: string) => number): { pieces: RunPiece[]; scaleX: number } | null {
   const { str, transform: t, charStarts } = item;
   if (!charStarts || charStarts.length !== str.length + 1 || !Array.isArray(t) || t.length < 4) return null;
   const fontSize = Math.hypot(t[2], t[3]);
@@ -46,21 +61,36 @@ export function planRun(item: TextRunItem, advance: (ch: string) => number): { s
   if (!(fontSize > 0) || !(scaleX > 0) || !charStarts.every(Number.isFinite)) return null;
   // Target positions in the run's unscaled em, from its start.
   const target = (i: number) => (charStarts[i] - charStarts[0]) / fontSize / scaleX;
-  const segments: RunSegment[] = [];
+  const pieces: RunPiece[] = [];
+  let piece: RunPiece | null = null;
+  let pieceIsGap = false;
+  let pieceChars = 0;
   let plain = '';
   let cursor = 0;
+  const flush = () => {
+    if (piece && plain) piece.segments.push({ text: plain, spacingEm: null });
+    plain = '';
+  };
   for (let i = 0; i < str.length;) {
     // A surrogate pair is one character.
     const code = str.charCodeAt(i);
     const width = code >= 0xd800 && code <= 0xdbff && i + 1 < str.length ? 2 : 1;
     const ch = str.slice(i, i + width);
+    if (!piece || isGap(ch) !== pieceIsGap || pieceChars >= MAX_PIECE_CHARS) {
+      flush();
+      cursor = target(i);
+      piece = { leftEm: round(cursor), segments: [] };
+      pieceIsGap = isGap(ch);
+      pieceChars = 0;
+      pieces.push(piece);
+    }
+    pieceChars += 1;
     const natural = advance(ch);
     const next = target(i + width);
     const delta = next - (cursor + natural);
     if (Math.abs(delta) > EPSILON_EM) {
-      if (plain) segments.push({ text: plain, spacingEm: null });
-      plain = '';
-      segments.push({ text: ch, spacingEm: Math.round(delta * 10_000) / 10_000 });
+      flush();
+      piece.segments.push({ text: ch, spacingEm: round(delta) });
       cursor = next;
     } else {
       plain += ch;
@@ -68,8 +98,8 @@ export function planRun(item: TextRunItem, advance: (ch: string) => number): { s
     }
     i += width;
   }
-  if (plain) segments.push({ text: plain, spacingEm: null });
-  return { segments, scaleX };
+  flush();
+  return { pieces, scaleX };
 }
 
 // ─── Items per page (recorded from the text layer's own stream) ───
@@ -119,7 +149,7 @@ function advanceIn(family: string): (ch: string) => number {
 
 interface LaidOutRun {
   item: TextRunItem;
-  segments: RunSegment[];
+  pieces: RunPiece[];
   scaleX: number;
 }
 
@@ -131,20 +161,26 @@ const RUN_SELECTOR = 'span:not(.markedContent):not([role="img"])';
 const observers = new WeakMap<HTMLElement, MutationObserver>();
 
 function render(span: HTMLElement, run: LaidOutRun): void {
-  span.replaceChildren(...run.segments.map((segment) => {
-    if (segment.spacingEm === null) return document.createTextNode(segment.text);
-    const k = document.createElement('i');
-    k.className = 'vt-k';
-    k.textContent = segment.text;
-    k.style.letterSpacing = `${segment.spacingEm}em`;
-    return k;
+  span.replaceChildren(...run.pieces.map((piece) => {
+    const w = document.createElement('i');
+    w.className = 'vt-w';
+    w.style.left = `${piece.leftEm}em`;
+    w.append(...piece.segments.map((segment) => {
+      if (segment.spacingEm === null) return document.createTextNode(segment.text);
+      const k = document.createElement('i');
+      k.className = 'vt-k';
+      k.textContent = segment.text;
+      k.style.letterSpacing = `${segment.spacingEm}em`;
+      return k;
+    }));
+    return w;
   }));
   span.classList.add('vt-exact');
   span.style.setProperty('--vt-scale-x', String(run.scaleX));
 }
 
 function isOurs(span: HTMLElement, run: LaidOutRun): boolean {
-  return span.childNodes.length === run.segments.length && span.textContent === run.item.str;
+  return span.childNodes.length === run.pieces.length && span.textContent === run.item.str;
 }
 
 /** After the find highlighter touched runs: stretch while highlighted, exact again after. */

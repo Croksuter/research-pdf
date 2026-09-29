@@ -667,4 +667,11 @@ body.vt-presenting .vt-sidebar { display: none; }
   font-variant-ligatures: none;
   font-feature-settings: "kern" 0, "liga" 0, "clig" 0;
 }
+/* Each word and gap sits at its own start, so nothing accumulates along a line. */
+.textLayer span.vt-exact > i.vt-w {
+  position: absolute;
+  top: 0;
+  font: inherit;
+  white-space: pre;
+}
 .textLayer i.vt-k { font: inherit; }

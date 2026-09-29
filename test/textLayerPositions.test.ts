@@ -15,30 +15,43 @@ const item = (str: string, charStarts: number[] | null, transform = [10, 0, 0, 1
 describe('laying runs out on glyph positions', () => {
   it('leaves characters that already land right as plain text', () => {
     const plan = planRun(item('abc', [0, 5, 10, 15]), half);
-    expect(plan).toEqual({ scaleX: 1, segments: [{ text: 'abc', spacingEm: null }] });
+    expect(plan).toEqual({ scaleX: 1, pieces: [{ leftEm: 0, segments: [{ text: 'abc', spacingEm: null }] }] });
   });
 
-  it('gives a word gap and a kern exactly the spacing the PDF has', () => {
+  it('pins every word and gap at its own start, kerning inside a word', () => {
     // "ab cd": the gap after "b" is 1.2 em instead of the space's 0.5; "c" is kerned 0.1 em tight.
     const plan = planRun(item('ab cd', [0, 5, 10, 22, 26, 31]), half);
-    expect(plan?.segments).toEqual([
-      { text: 'ab', spacingEm: null },
-      { text: ' ', spacingEm: 0.7 },
-      { text: 'c', spacingEm: -0.1 },
-      { text: 'd', spacingEm: null },
+    expect(plan?.pieces).toEqual([
+      { leftEm: 0, segments: [{ text: 'ab', spacingEm: null }] },
+      { leftEm: 1, segments: [{ text: ' ', spacingEm: 0.7 }] },
+      { leftEm: 2.2, segments: [{ text: 'c', spacingEm: -0.1 }, { text: 'd', spacingEm: null }] },
     ]);
+  });
+
+  it('does not let a measurement error carry past a word', () => {
+    // The font measures 0.51 em where the PDF has 0.5: within a word the
+    // error stays under the threshold, and the next word starts exactly.
+    const plan = planRun(item('aa aa', [0, 5, 10, 15, 20, 25]), () => 0.501);
+    expect(plan?.pieces.map((p) => p.leftEm)).toEqual([0, 1, 1.5]);
+  });
+
+  it('pins long runs without gaps every 24 characters', () => {
+    const str = 'x'.repeat(50);
+    const plan = planRun(item(str, Array.from({ length: 51 }, (_, i) => i * 5)), half);
+    expect(plan?.pieces.map((p) => p.leftEm)).toEqual([0, 12, 24]);
   });
 
   it('keeps the run\'s horizontal scale and measures positions before it', () => {
     // Tz 150 %: advances in the PDF are 1.5 × the font's.
     const plan = planRun(item('ab', [0, 7.5, 15], [15, 0, 0, 10, 0, 0]), half);
-    expect(plan).toEqual({ scaleX: 1.5, segments: [{ text: 'ab', spacingEm: null }] });
+    expect(plan).toEqual({ scaleX: 1.5, pieces: [{ leftEm: 0, segments: [{ text: 'ab', spacingEm: null }] }] });
   });
 
   it('never splits a surrogate pair', () => {
     const plan = planRun(item('a😀b', [0, 5, 20, 20, 25]), (ch) => (ch.length === 2 ? 1 : 0.5));
-    expect(plan?.segments.map((s) => s.text)).toEqual(['a', '😀', 'b']);
-    expect(plan?.segments[1].spacingEm).toBeCloseTo(0.5);
+    const segments = plan?.pieces.flatMap((p) => p.segments) ?? [];
+    expect(segments.map((s) => s.text)).toEqual(['a', '😀', 'b']);
+    expect(segments[1].spacingEm).toBeCloseTo(0.5);
   });
 
   it('refuses items without usable positions', () => {

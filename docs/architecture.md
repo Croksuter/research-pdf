@@ -95,9 +95,10 @@ page itself is a canvas. Three steps make the two agree to the character:
    `pdfViewer/textLayerPositions.ts`): the worker, patched at build time,
    adds `charStarts` — where every character of a run starts, from the same
    glyph walk that computes the run's width (TJ gaps, word spacing, kerning).
-   The viewer gives the characters that would not land there on their own
-   (word gaps, kerning pairs) exact letter-spacing, in em, so it holds at any
-   zoom. The patch fails the build if a PDF.js upgrade moved its anchors
+   The viewer pins every word and gap (and every 24 characters of a run
+   without gaps) absolutely at its start, so the browser's own layout can
+   never drift along a line, and gives kerned characters inside a word exact
+   letter-spacing — all in em, so it holds at any zoom. The patch fails the build if a PDF.js upgrade moved its anchors
    (`test/textLayerPositions.test.ts` checks it against the installed PDF.js).
    While the find bar highlights a match in a run, that run falls back to
    PDF.js's stretch.
