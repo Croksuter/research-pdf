@@ -39,6 +39,7 @@ import { cachePdfBytes, headValidators, paperAliasesOf, pdfFileCacheEnabled, rev
 import { showAnnotationConflictDialog } from './pdfViewer/annotationConflict';
 import type { PdfDocIdentity, PdfDocRecord } from '../shared/pdfIdentity';
 import type { PdfLibraryUpdate } from '../shared/pdfLibrary';
+import { fitTextLayerFonts, useEmbeddedFontsForText } from './pdfViewer/textLayerFonts';
 
 const FIND_STATE_NOT_FOUND = 1;
 const FIND_STATE_PENDING = 3;
@@ -528,6 +529,10 @@ function flushDocState() {
   docStateSave?.();
 }
 eventBus.on('pagechanging', rememberDocState);
+eventBus.on('textlayerrendered', (evt: { source?: { textLayer?: { div?: HTMLElement } } }) => {
+  const div = evt.source?.textLayer?.div;
+  if (div) fitTextLayerFonts(div);
+});
 eventBus.on('scalechanging', rememberDocState);
 window.addEventListener('resize', () => eventBus.dispatch('resize', { source: window }));
 eventBus.on('resize', () => {
@@ -706,6 +711,12 @@ async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesIn
     pendingRestore = null;
   }
   if (loadingTask !== task) return doc; // superseded while resolving
+  // Selectable text in the PDF's own fonts, so a drag selects what it covers.
+  try {
+    useEmbeddedFontsForText(await doc.getPage(1));
+  } catch {
+    /* PDF.js's generic fonts are still selectable */
+  }
   if (currentIdentity) {
     setTitles({}); // tells the hub the document's identity
     recordInLibrary({ kind: 'opened', docId: currentIdentity.docId, url: currentFileUrl, fileName: currentFileName, numPages: doc.numPages });
