@@ -27,6 +27,11 @@ describe.skipIf(!existsSync(resolve(dist, 'pdfViewer.js')))('production package'
     expect(viewer).toContain('pdfjs/pdf.worker.mjs');
   });
 
+  it('ships the PDF.js worker patched to report character positions', () => {
+    const worker = readFileSync(resolve(dist, 'pdfjs/pdf.worker.mjs'), 'utf8');
+    expect(worker).toContain('charStarts');
+  });
+
   it('ships an inline-script-free hub page that loads only its own bundle', () => {
     const page = readFileSync(resolve(dist, 'pdf-hub.html'), 'utf8');
     expect(page).toContain('src="pdfHub.js"');

@@ -656,3 +656,15 @@ body.vt-presenting .vt-sidebar { display: none; }
   background: rgb(26 115 232 / 0.14);
   backdrop-filter: url(#vt-selection-ink);
 }
+
+/* Selectable text laid out on the glyphs' positions (pdfViewer/textLayerPositions.ts):
+ * the run keeps only its horizontal font scale, and the browser adds no kerning
+ * or ligatures of its own — the letter-spacing already says where each
+ * character goes. */
+.textLayer span.vt-exact {
+  transform: rotate(var(--rotate)) scaleX(var(--vt-scale-x, 1)) scale(var(--min-font-size-inv)) !important;
+  font-kerning: none;
+  font-variant-ligatures: none;
+  font-feature-settings: "kern" 0, "liga" 0, "clig" 0;
+}
+.textLayer i.vt-k { font: inherit; }

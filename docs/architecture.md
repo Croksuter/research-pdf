@@ -81,6 +81,31 @@ longer scatter across tabs that look like web pages.
 - A top-level `pdf-viewer.html` (old tabs, bookmarks) redirects into the hub;
   a hub framed by a web page acts as the plain viewer.
 
+## Selectable text
+
+PDF.js's hidden text layer is what a drag selects and what gets copied; the
+page itself is a canvas. Three steps make the two agree to the character:
+
+1. **Fonts** (`pdfViewer/textLayerFonts.ts`): runs are laid out in the PDF's
+   own fonts (the FontFaces PDF.js registered to draw the canvas, named by
+   `loadedName`) instead of a generic family. A font whose runs need large or
+   scattered stretching (glyphs that do not map from Unicode) goes back to
+   the generic family.
+2. **Positions** (`scripts/pdfjs-worker-patch.cjs` +
+   `pdfViewer/textLayerPositions.ts`): the worker, patched at build time,
+   adds `charStarts` — where every character of a run starts, from the same
+   glyph walk that computes the run's width (TJ gaps, word spacing, kerning).
+   The viewer gives the characters that would not land there on their own
+   (word gaps, kerning pairs) exact letter-spacing, in em, so it holds at any
+   zoom. The patch fails the build if a PDF.js upgrade moved its anchors
+   (`test/textLayerPositions.test.ts` checks it against the installed PDF.js).
+   While the find bar highlights a match in a run, that run falls back to
+   PDF.js's stretch.
+3. **Selection ink** (`pdfViewer.css`): PDF.js paints the selection as its
+   own layer over the canvas; a duotone backdrop filter turns the ink under it
+   blue under a faint tint. With 2, a boundary letter is either fully blue
+   (selected, copied) or not at all.
+
 ## Storage layers
 
 Opening a document reads the nearest layer first and never waits for the

@@ -1,5 +1,6 @@
 const path = require('path');
 const { rspack } = require('@rspack/core');
+const { patchPdfWorker } = require('./scripts/pdfjs-worker-patch.cjs');
 
 module.exports = {
   mode: 'development',
@@ -46,8 +47,13 @@ module.exports = {
         { from: 'src/icons', to: 'icons' },
         // PDF.js runtime assets. The worker runs as a module Worker from the
         // extension origin; CMaps/fonts/wasm/ICC are fetched lazily by PDF.js
-        // only for documents that need them.
-        { from: 'node_modules/pdfjs-dist/build/pdf.worker.min.mjs', to: 'pdfjs/pdf.worker.mjs' },
+        // only for documents that need them. The worker is the readable build,
+        // patched to report per-character positions (scripts/pdfjs-worker-patch.cjs).
+        {
+          from: 'node_modules/pdfjs-dist/build/pdf.worker.mjs',
+          to: 'pdfjs/pdf.worker.mjs',
+          transform: (content) => patchPdfWorker(content.toString('utf8')),
+        },
         { from: 'node_modules/pdfjs-dist/web/pdf_viewer.css', to: 'pdfjs/pdf_viewer.css' },
         { from: 'node_modules/pdfjs-dist/web/images', to: 'pdfjs/images' },
         { from: 'node_modules/pdfjs-dist/cmaps', to: 'pdfjs/cmaps' },

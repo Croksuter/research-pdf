@@ -40,6 +40,7 @@ import { showAnnotationConflictDialog } from './pdfViewer/annotationConflict';
 import type { PdfDocIdentity, PdfDocRecord } from '../shared/pdfIdentity';
 import type { PdfLibraryUpdate } from '../shared/pdfLibrary';
 import { fitTextLayerFonts, useEmbeddedFontsForText } from './pdfViewer/textLayerFonts';
+import { placeTextLayerRuns } from './pdfViewer/textLayerPositions';
 
 const FIND_STATE_NOT_FOUND = 1;
 const FIND_STATE_PENDING = 3;
@@ -529,9 +530,12 @@ function flushDocState() {
   docStateSave?.();
 }
 eventBus.on('pagechanging', rememberDocState);
-eventBus.on('textlayerrendered', (evt: { source?: { textLayer?: { div?: HTMLElement } } }) => {
+// Selectable text: the PDF's fonts first, then every character on its glyph.
+eventBus.on('textlayerrendered', (evt: { source?: { textLayer?: { div?: HTMLElement }; pdfPage?: object } }) => {
   const div = evt.source?.textLayer?.div;
-  if (div) fitTextLayerFonts(div);
+  if (!div) return;
+  fitTextLayerFonts(div);
+  placeTextLayerRuns(div, evt.source?.pdfPage);
 });
 eventBus.on('scalechanging', rememberDocState);
 window.addEventListener('resize', () => eventBus.dispatch('resize', { source: window }));

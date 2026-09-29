@@ -20,20 +20,33 @@
 // same width. Pure judgement below; the DOM part is `fitTextLayerFonts`.
 
 import type { PDFPageProxy } from 'pdfjs-dist';
+import { recordTextLayerChunk } from './textLayerPositions';
 
 const patched = new WeakSet<object>();
 
-/** Makes every text-content stream of this document's pages name the PDF's own fonts first. */
+/**
+ * Makes every text-content stream of this document's pages name the PDF's
+ * own fonts first, and keeps the text layer's items (its stream is the one
+ * asking for marked content) for `placeTextLayerRuns`.
+ */
 export function useEmbeddedFontsForText(page: PDFPageProxy): void {
   const proto = Object.getPrototypeOf(page) as { streamTextContent: (...args: unknown[]) => ReadableStream };
   if (patched.has(proto)) return;
   patched.add(proto);
   const original = proto.streamTextContent;
-  proto.streamTextContent = function streamTextContent(this: unknown, ...args: unknown[]): ReadableStream {
+  proto.streamTextContent = function streamTextContent(this: object, ...args: unknown[]): ReadableStream {
     const stream = original.apply(this, args);
+    const page = this;
+    const forTextLayer = (args[0] as { includeMarkedContent?: unknown } | undefined)?.includeMarkedContent === true;
+    let first = true;
     return stream.pipeThrough(new TransformStream({
       transform(chunk: unknown, controller) {
-        controller.enqueue(withEmbeddedFonts(chunk));
+        withEmbeddedFonts(chunk);
+        if (forTextLayer) {
+          recordTextLayerChunk(page, chunk, first);
+          first = false;
+        }
+        controller.enqueue(chunk);
       },
     }));
   };
