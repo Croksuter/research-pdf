@@ -3,7 +3,8 @@
 // The viewer keeps the bytes of every web PDF it opened in IndexedDB
 // (db/pdfFileCache.ts), so reopening a paper — a reload, a restored hub, the
 // same link clicked again, another URL of the same arXiv paper — renders from
-// disk without touching the network. This module decides which URLs share a
+// disk without touching the network. A local arXiv PDF the user already
+// opened is stored the same way and serves that paper's web URLs. This module decides which URLs share a
 // cached file, when a cached copy must be re-checked against the server, and
 // what to evict. No IndexedDB, no fetch: unit-tested.
 
@@ -64,6 +65,25 @@ export function pdfCacheAliases(url: string): string[] {
     if (match) aliases.push(`arxiv:${match[1].toLowerCase()}${match[2]?.toLowerCase() ?? ''}`);
   }
   return aliases;
+}
+
+// arXiv's own watermark down the first page's margin:
+// `arXiv:1706.03762v7 [cs.CL] 2 Aug 2023`. The id, version *and* category
+// bracket are required: a bare `arXiv:…` on page 1 is usually a citation of
+// some other paper, and matching on it would show the wrong file.
+const ARXIV_STAMP = /arXiv:\s*((?:\d{4}\.\d{4,5})|(?:[a-z-]+(?:\.[A-Z]{2})?\/\d{7}))(v\d+)\s*\[[a-z-]+(?:\.[A-Za-z-]+)?\]/u;
+
+/**
+ * Aliases a local file earns from its arXiv watermark, so the web URLs of
+ * that paper find it: the exact version, and the versionless id (which means
+ * "latest" — that match is re-checked against the server before it is
+ * trusted for long; see `needsRevalidation`).
+ */
+export function arxivStampAliases(firstPageText: string): string[] {
+  const match = ARXIV_STAMP.exec(firstPageText);
+  if (!match) return [];
+  const id = match[1].toLowerCase();
+  return [`arxiv:${id}${match[2].toLowerCase()}`, `arxiv:${id}`];
 }
 
 /** True for an alias whose content can never change (a versioned arXiv id). */

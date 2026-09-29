@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   PDF_CACHE_MAX_FILE_BYTES,
+  arxivStampAliases,
   PDF_CACHE_REVALIDATE_BLIND_MS,
   PDF_CACHE_REVALIDATE_MS,
   isImmutableAlias,
@@ -43,6 +44,14 @@ describe('cache aliases', () => {
     expect(pdfCacheAliases('https://arxiv.org/abs/1706.03762')).toHaveLength(1);
     expect(isImmutableAlias('arxiv:1706.03762v7')).toBe(true);
     expect(isImmutableAlias('arxiv:1706.03762')).toBe(false);
+  });
+
+  it('reads arXiv\'s own watermark, not a citation of another paper', () => {
+    expect(arxivStampAliases('Attention Is All You Need arXiv:1706.03762v7 [cs.CL] 2 Aug 2023'))
+      .toEqual(['arxiv:1706.03762v7', 'arxiv:1706.03762']);
+    expect(arxivStampAliases('arXiv:hep-th/9901001v2 [hep-th] 1 Jan 1999')).toEqual(['arxiv:hep-th/9901001v2', 'arxiv:hep-th/9901001']);
+    expect(arxivStampAliases('as shown in arXiv:2001.08361 and arXiv:2001.08361v2')).toEqual([]);
+    expect(arxivStampAliases('')).toEqual([]);
   });
 
   it('re-checks copies on schedule, never a versioned arXiv paper', () => {
@@ -99,6 +108,24 @@ describe('file cache store', () => {
     await storeCachedPdf({ url: 'https://a.org/p.pdf', bytes: data, sha256: SHA_A, etag: null, lastModified: null });
     data.fill(0);
     expect((await readCachedPdf('https://a.org/p.pdf'))?.bytes[0]).toBe(7);
+  });
+
+  it('lets a local arXiv file answer that paper\'s web URLs, without taking over a web copy', async () => {
+    await storeCachedPdf({ url: 'file:///home/me/attention.pdf', paperAliases: ['arxiv:1706.03762v7', 'arxiv:1706.03762'], bytes: bytes(30, 3), sha256: SHA_A, etag: null, lastModified: null, now: 10 });
+    const exact = await readCachedPdf('https://arxiv.org/pdf/1706.03762v7');
+    expect(exact?.sha256).toBe(SHA_A);
+    const latest = await readCachedPdf('https://arxiv.org/pdf/1706.03762');
+    expect(latest?.sha256).toBe(SHA_A);
+    // "Latest" was only inferred from a local file: the first web open re-checks it.
+    expect(needsRevalidation(latest!.entry, Date.now())).toBe(true);
+    expect(needsRevalidation(exact!.entry, Date.now())).toBe(false);
+
+    // A web copy of the newer version keeps the versionless id; a later local
+    // open of the old file does not take it back.
+    await storeCachedPdf({ url: 'https://arxiv.org/pdf/1706.03762', bytes: bytes(40, 4), sha256: SHA_B, etag: '"v8"', lastModified: null, now: 30 });
+    await storeCachedPdf({ url: 'file:///home/me/attention.pdf', paperAliases: ['arxiv:1706.03762v7', 'arxiv:1706.03762'], bytes: bytes(30, 3), sha256: SHA_A, etag: null, lastModified: null, now: 40 });
+    expect((await readCachedPdf('https://export.arxiv.org/pdf/1706.03762'))?.sha256).toBe(SHA_B);
+    expect((await readCachedPdf('https://arxiv.org/pdf/1706.03762v7'))?.sha256).toBe(SHA_A);
   });
 
   it('refuses oversize and local files, and clears on request', async () => {

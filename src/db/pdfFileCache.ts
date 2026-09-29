@@ -3,7 +3,9 @@
 // First layer of the viewer's storage: the bytes of web PDFs this device has
 // opened, so a reopen never waits for the network. Files are stored once by
 // content hash; any number of URL / arXiv aliases point at them (policy in
-// shared/pdfCachePolicy.ts). Only this device reads it: nothing here is ever
+// shared/pdfCachePolicy.ts). Local files are stored the same way — bytes in
+// here — when their arXiv watermark lets that paper's web URLs find them.
+// Only this device reads it: nothing here is ever
 // synced — Drive carries drawings and reading positions, not files.
 
 import { STORE_PDF_FILE_BYTES, STORE_PDF_FILES, STORE_PDF_URLS } from '../shared/constants';
@@ -77,11 +79,15 @@ export async function readCachedPdf(url: string, now = Date.now()): Promise<Cach
 /**
  * Stores `bytes` for `url` (and `alsoUrls`, e.g. the URL a redirect ended
  * at), evicting least-recently-used files to stay within budget. Files over
- * the per-file cap are not cached.
+ * the per-file cap are not cached. `paperAliases` (from the file's arXiv
+ * watermark, `arxivStampAliases`) let that paper's web URLs find a file
+ * opened from disk; they never take over an alias that already leads to a
+ * different file, and a versionless one is re-checked on its first web use.
  */
 export async function storeCachedPdf(input: {
   url: string;
   alsoUrls?: string[];
+  paperAliases?: string[];
   bytes: Uint8Array;
   sha256: string;
   etag: string | null;
@@ -90,8 +96,9 @@ export async function storeCachedPdf(input: {
 }): Promise<boolean> {
   const now = input.now ?? Date.now();
   const aliases = [...new Set([input.url, ...(input.alsoUrls ?? [])].flatMap(pdfCacheAliases))];
+  const paperAliases = (input.paperAliases ?? []).filter((alias) => !aliases.includes(alias));
   const size = input.bytes.byteLength;
-  if (aliases.length === 0 || size === 0 || size > PDF_CACHE_MAX_FILE_BYTES) return false;
+  if (aliases.length + paperAliases.length === 0 || size === 0 || size > PDF_CACHE_MAX_FILE_BYTES) return false;
   const db = await openDB();
   const tx = db.transaction([STORE_PDF_URLS, STORE_PDF_FILES, STORE_PDF_FILE_BYTES], 'readwrite');
   const urls = tx.objectStore(STORE_PDF_URLS);
@@ -113,6 +120,14 @@ export async function storeCachedPdf(input: {
   files.put({ sha256: input.sha256, size, storedAt: existing?.storedAt ?? now, lastUsedAt: now } satisfies PdfFileMeta);
   for (const alias of aliases) {
     urls.put({ alias, sha256: input.sha256, etag: input.etag, lastModified: input.lastModified, validatedAt: now, lastUsedAt: now } satisfies PdfUrlEntry);
+  }
+  for (const alias of paperAliases) {
+    const current = await result(urls.get(alias) as IDBRequest<PdfUrlEntry | undefined>);
+    if (current) {
+      if (current.sha256 === input.sha256) urls.put({ ...current, lastUsedAt: now });
+      continue;
+    }
+    urls.put({ alias, sha256: input.sha256, etag: null, lastModified: null, validatedAt: 0, lastUsedAt: now } satisfies PdfUrlEntry);
   }
   await done(tx);
   return true;

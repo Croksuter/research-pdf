@@ -72,7 +72,12 @@ next one:
    fully downloaded (one HEAD for validators and the redirect target, which
    becomes another alias). Budget 1 GiB / 400 files, LRU; files over 150 MB
    are not kept. The hub prefetches documents behind other tabs while idle.
-   Local `file://` PDFs are not cached. Never synced.
+   Any opened file carrying arXiv's watermark (`arXiv:IDvN [cat] date` on
+   page 1, `arxivStampAliases`) is also stored under `arxiv:IDvN` and, unless
+   a different file already holds it, `arxiv:ID` (re-checked on first web
+   use) — so a paper opened from disk opens instantly from its arXiv URL.
+   Local files are otherwise not cached: a local open always reads the file.
+   Never synced.
 2. **Local state**: reading position (`chrome.storage.local`) and drawings
    (`pdf_annotations`), applied at first render.
 3. **Drive sync**: the open pull runs alongside rendering and answers with

@@ -6,7 +6,8 @@
 // the same access the viewer itself loads PDFs with.
 
 import { DEFAULT_PDF_FILE_CACHE_ENABLED, PDF_FILE_CACHE_ENABLED_SETTING_KEY } from '../shared/constants';
-import { PDF_CACHE_MAX_FILE_BYTES, needsRevalidation } from '../shared/pdfCachePolicy';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { PDF_CACHE_MAX_FILE_BYTES, arxivStampAliases, needsRevalidation } from '../shared/pdfCachePolicy';
 import { sha256Hex } from '../shared/pdfIdentity';
 import { getSetting } from '../db/settingsRepository';
 import { hasCachedPdf, markPdfValidated, storeCachedPdf, type CachedPdf } from '../db/pdfFileCache';
@@ -55,20 +56,36 @@ export async function fetchPdf(url: string, validators?: { etag: string | null; 
   }
 }
 
-/** Stores bytes the viewer already holds (a first open finished downloading). */
-export async function cachePdfBytes(url: string, bytes: Uint8Array, validators?: { etag: string | null; lastModified: string | null; finalUrl?: string }): Promise<string | null> {
+/** Paper aliases from the arXiv watermark on page 1 (see `arxivStampAliases`). */
+export async function paperAliasesOf(doc: PDFDocumentProxy): Promise<string[]> {
+  try {
+    const content = await (await doc.getPage(1)).getTextContent();
+    return arxivStampAliases((content.items as Array<{ str?: unknown }>).map((item) => (typeof item.str === 'string' ? item.str : '')).join(' '));
+  } catch {
+    return [];
+  }
+}
+
+/** Stores bytes the viewer already holds (a first open finished downloading, or a local file). */
+export async function cachePdfBytes(
+  url: string,
+  bytes: Uint8Array,
+  validators?: { etag: string | null; lastModified: string | null; finalUrl?: string },
+  paperAliases: string[] = [],
+): Promise<string | null> {
   if (!(await pdfFileCacheEnabled())) return null;
   try {
     const sha256 = await sha256Hex(bytes);
     const stored = await storeCachedPdf({
       url,
       alsoUrls: validators?.finalUrl && validators.finalUrl !== url ? [validators.finalUrl] : [],
+      paperAliases,
       bytes,
       sha256,
       etag: validators?.etag ?? null,
       lastModified: validators?.lastModified ?? null,
     });
-    debugLog('cache', stored ? 'stored' : 'not stored (too large)', () => ({ url, bytes: bytes.byteLength }));
+    debugLog('cache', stored ? 'stored' : 'not stored', () => ({ url, bytes: bytes.byteLength, paperAliases }));
     return stored ? sha256 : null;
   } catch {
     return null; // quota or a closed database: the cache is an optimisation only

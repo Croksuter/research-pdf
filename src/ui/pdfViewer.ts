@@ -35,7 +35,7 @@ import { derivePdfDocIdentity, inspectPdfBytes, loadPdfDocRecord, savePdfDocReco
 import { AnnotationCache } from './pdfViewer/annotationCache';
 import { requestPdfSync } from './pdfViewer/syncHint';
 import { readCachedPdf } from '../db/pdfFileCache';
-import { cachePdfBytes, headValidators, pdfFileCacheEnabled, revalidateCachedPdf } from './pdfFileFetch';
+import { cachePdfBytes, headValidators, paperAliasesOf, pdfFileCacheEnabled, revalidateCachedPdf } from './pdfFileFetch';
 import { showAnnotationConflictDialog } from './pdfViewer/annotationConflict';
 import type { PdfDocIdentity, PdfDocRecord } from '../shared/pdfIdentity';
 
@@ -739,13 +739,16 @@ async function loadFromFile(file: File) {
   }
 }
 
-// After a network open finishes downloading (PDF.js keeps fetching the rest
-// in the background), the bytes go to the local cache for the next open.
-async function keepLocalCopy(fileUrl: string, doc: PDFDocumentProxy): Promise<void> {
+// Every opened file goes to the local cache once fully loaded (PDF.js keeps
+// fetching the rest in the background): a web PDF under its URL, and any
+// file — local ones included — under its arXiv watermark, so that paper's
+// web URLs open from it. A local file without one could never be looked up
+// (local opens always read the file itself) and is not stored.
+async function keepLocalCopy(fileUrl: string, doc: PDFDocumentProxy, isWeb: boolean): Promise<void> {
   try {
-    const data = await doc.getData();
-    if (currentDoc !== doc) return;
-    await cachePdfBytes(fileUrl, data, await headValidators(fileUrl));
+    const [data, paperAliases] = await Promise.all([doc.getData(), paperAliasesOf(doc)]);
+    if (currentDoc !== doc || (!isWeb && paperAliases.length === 0)) return;
+    await cachePdfBytes(fileUrl, data, isWeb ? await headValidators(fileUrl) : undefined, paperAliases);
   } catch {
     /* the cache is an optimisation only */
   }
@@ -758,6 +761,7 @@ async function loadFromUrl(fileUrl: string) {
   const displayName = pdfDisplayName(fileUrl);
   fileNameEl.title = fileUrl;
   // First layer: this device's copy of the file, if it has one.
+  // (That copy may come from a local file of the same arXiv paper.)
   const cached = isWeb && await pdfFileCacheEnabled() ? await readCachedPdf(fileUrl).catch(() => null) : null;
   if (cached) {
     try {
@@ -777,7 +781,7 @@ async function loadFromUrl(fileUrl: string) {
   }
   try {
     const doc = await openDocument(pdfjsLib.getDocument({ url: fileUrl, ...documentOptions() }), displayName);
-    if (isWeb) void keepLocalCopy(fileUrl, doc);
+    void keepLocalCopy(fileUrl, doc, isWeb);
   } catch (error) {
     setProgress(null);
     const message = error instanceof Error ? error.message : String(error);
