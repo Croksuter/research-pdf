@@ -644,3 +644,15 @@ body.vt-presenting .vt-sidebar { display: none; }
   animation: vt-annot-flash 2s ease-out forwards;
 }
 @keyframes vt-annot-flash { 0%, 60% { opacity: 1; } 100% { opacity: 0; } }
+
+/* ── Text selection ──
+ * PDF.js paints a selection as its own layer over the page canvas (clipped
+ * to the selected runs). A duotone backdrop filter turns the page's own ink
+ * under it blue — the glyphs themselves, pixel for pixel, whatever the hidden
+ * text layer's alignment — and a faint tint still marks the extent. Figures
+ * inside a selection are tinted the same way. */
+.vt-filters { position: absolute; width: 0; height: 0; overflow: hidden; }
+.pdfViewer .page .canvasWrapper .selection {
+  background: rgb(26 115 232 / 0.14);
+  backdrop-filter: url(#vt-selection-ink);
+}

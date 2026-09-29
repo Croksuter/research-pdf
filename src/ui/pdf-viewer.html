@@ -34,6 +34,17 @@
     <symbol id="i-prev" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></symbol>
     <symbol id="i-next" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
   </svg>
+  <!-- Selection ink (pdfViewer.css): under a selection, dark → blue, white stays white.
+       Outside the hidden sprite: a filter in a display:none SVG does not apply. -->
+  <svg class="vt-filters" width="0" height="0" aria-hidden="true" focusable="false">
+    <filter id="vt-selection-ink" color-interpolation-filters="sRGB">
+      <feComponentTransfer>
+        <feFuncR type="table" tableValues="0.10 1"/>
+        <feFuncG type="table" tableValues="0.34 1"/>
+        <feFuncB type="table" tableValues="0.86 1"/>
+      </feComponentTransfer>
+    </filter>
+  </svg>
 
   <header id="vocab-t-pdf-toolbar" class="vt-toolbar" role="toolbar" aria-label="PDF 도구 모음">
     <div class="vt-group vt-left">
