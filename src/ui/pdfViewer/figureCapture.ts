@@ -1,6 +1,6 @@
 // ─── Figure copy: drag a region of a page, get a clean image and its source ───
 //
-// Capture mode (toolbar button, `S`, Ctrl/⌘+Shift+C) or Alt+drag anywhere on a
+// Capture mode (toolbar button, ⌘/Ctrl+Shift+X, `S`) or Alt+drag anywhere on a
 // page draws a region; on release the region is copied at once with the
 // remembered options and a small panel opens beside it: the source line
 // (editable), copy image / copy source / save PNG, and the options.

@@ -173,6 +173,7 @@ const figureCapture = new FigureCapture({
     captureBtn.setAttribute('aria-pressed', String(active));
   },
 });
+captureBtn.title = `그림 복사 (${/Mac/u.test(navigator.platform) ? '⌘⇧X' : 'Ctrl+Shift+X'} · S · Alt+드래그)`;
 captureBtn.addEventListener('click', () => figureCapture.toggleMode());
 // Drawings persist per document identity and come back on reopen; when the
 // file itself also carries annotations the user resolves it in a dialog.
@@ -605,10 +606,10 @@ document.addEventListener('keydown', (e) => {
   const target = e.target as HTMLElement | null;
   const typing = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
   const mod = e.ctrlKey || e.metaKey;
-  // Figure copy: S, or Ctrl/⌘+Shift+C where the browser leaves it to the page
-  // (e.code: the Korean layout reports ㄴ / ㅊ as the key).
+  // Figure copy: S, or ⌘+Shift+X (Ctrl+Shift+X elsewhere). e.code: the Korean
+  // layout reports ㄴ / ㅌ as the key.
   if (!typing && !e.altKey && !presentation.active
-    && ((!mod && !e.shiftKey && e.code === 'KeyS') || (mod && e.shiftKey && e.code === 'KeyC'))) {
+    && ((!mod && !e.shiftKey && e.code === 'KeyS') || (mod && e.shiftKey && e.code === 'KeyX'))) {
     e.preventDefault();
     figureCapture.toggleMode();
     return;
