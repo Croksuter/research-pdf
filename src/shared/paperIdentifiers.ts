@@ -204,9 +204,9 @@ export function formatCount(value: number): string {
 
 // ─── Citation strings ───
 
-interface AuthorName { last: string; initials: string }
+export interface AuthorName { last: string; initials: string }
 
-function splitAuthor(name: string): AuthorName {
+export function splitAuthor(name: string): AuthorName {
   const cleaned = name.replace(/\s+/gu, ' ').trim();
   if (cleaned.includes(',')) {
     const [last, first = ''] = cleaned.split(',').map((s) => s.trim());

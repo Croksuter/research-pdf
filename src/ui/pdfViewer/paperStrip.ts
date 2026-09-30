@@ -570,6 +570,11 @@ export class PaperStrip {
     this.closeBtn.addEventListener('click', () => this.hide());
   }
 
+  /** The resolved paper of the open document, if any. */
+  get paperMeta(): PaperMeta | null {
+    return this.meta;
+  }
+
   hide(): void {
     const wasVisible = !this.root.hidden;
     this.root.hidden = true;

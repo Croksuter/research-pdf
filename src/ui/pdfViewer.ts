@@ -25,6 +25,7 @@ import { debugLog, initDebugLogging } from '../shared/debugLog';
 import { PDF_HUB_PAGE, WEB_PDF_HOST_ORIGINS, buildPdfHubEntryUrl, isWebPdfSourceUrl, parsePdfViewerFile, pdfDisplayName } from '../shared/localPdf';
 import { HUB_MESSAGE_TAG, hubKeyAction, parseHubToViewerMessage, sameTitle, type ViewerToHubMessage } from '../shared/pdfHubProtocol';
 import { AnnotationToolbar, HIGHLIGHT_COLORS } from './pdfViewer/annotate';
+import { FigureCapture } from './pdfViewer/figureCapture';
 import { byId } from './pdfViewer/dom';
 import { PresentationMode } from './pdfViewer/presentation';
 import { isPrinting, printDocument } from './pdfViewer/print';
@@ -87,6 +88,7 @@ const menuPresent = byId<HTMLButtonElement>('vt-menu-present');
 const menuProperties = byId<HTMLButtonElement>('vt-menu-properties');
 const menuOpenFile = byId<HTMLButtonElement>('vt-menu-open-file');
 const openNativeBtn = byId<HTMLButtonElement>('vt-open-native');
+const captureBtn = byId<HTMLButtonElement>('vt-capture');
 const openFileInput = byId<HTMLInputElement>('vt-open-file-input');
 const messageBox = byId<HTMLDivElement>('vocab-t-pdf-message');
 const messageText = byId<HTMLParagraphElement>('vt-message-text');
@@ -159,6 +161,19 @@ const paperStrip = new PaperStrip(() => eventBus.dispatch('resize', { source: pa
     recordInLibrary({ kind: 'meta', docId: currentIdentity.docId, docTitle: null, title: meta.title, venue: meta.venue, year: meta.year });
   }
 });
+// Figure copy: a dragged region rendered again as an image, with its source.
+const figureCapture = new FigureCapture({
+  container,
+  pdfViewer,
+  eventBus,
+  getDoc: () => currentDoc,
+  getSource: () => ({ meta: paperStrip.paperMeta, docTitle: paperTitle ?? docTitle }),
+  onModeChange: (active) => {
+    captureBtn.classList.toggle('is-active', active);
+    captureBtn.setAttribute('aria-pressed', String(active));
+  },
+});
+captureBtn.addEventListener('click', () => figureCapture.toggleMode());
 // Drawings persist per document identity and come back on reopen; when the
 // file itself also carries annotations the user resolves it in a dialog.
 const annotationCache = new AnnotationCache(eventBus, pdfViewer, (conflict) =>
@@ -590,6 +605,14 @@ document.addEventListener('keydown', (e) => {
   const target = e.target as HTMLElement | null;
   const typing = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
   const mod = e.ctrlKey || e.metaKey;
+  // Figure copy: S, or Ctrl/⌘+Shift+C where the browser leaves it to the page
+  // (e.code: the Korean layout reports ㄴ / ㅊ as the key).
+  if (!typing && !e.altKey && !presentation.active
+    && ((!mod && !e.shiftKey && e.code === 'KeyS') || (mod && e.shiftKey && e.code === 'KeyC'))) {
+    e.preventDefault();
+    figureCapture.toggleMode();
+    return;
+  }
   if (mod && !e.altKey) {
     switch (e.key.toLowerCase()) {
       case 'f': e.preventDefault(); openFindBar(); return;
@@ -611,6 +634,7 @@ document.addEventListener('keydown', (e) => {
     case 'Home': e.preventDefault(); pdfViewer.currentPageNumber = 1; break;
     case 'End': e.preventDefault(); pdfViewer.currentPageNumber = pdfViewer.pagesCount; break;
     case 'Escape':
+      if (figureCapture.handleEscape()) break;
       if (!findBar.hidden) closeFindBar();
       else if (annotate.isOpen) annotate.toggle(false);
       break;

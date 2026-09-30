@@ -16,6 +16,10 @@ Google Drive.
   file's own content rather than its name or path.
 - Shows venue, citation trend, references and links for papers it recognises
   (DOI / arXiv), via Semantic Scholar, OpenAlex and Crossref.
+- Copies a figure or table as a sharp image for slides: drag a region (`S`, the
+  toolbar button, or Alt+drag), and it is rendered again at 150–600 dpi, with
+  or without your drawings, next to a ready source line (`Source: Hao et al.
+  (2024). Title. arXiv. Fig. 2.`) read from the caption beside it.
 - Optional Google Drive sync (`drive.appdata` only): one gzip document in the
   app's hidden folder, merged per document and per drawing. PDFs themselves are
   never uploaded. No server, no account, no telemetry.
