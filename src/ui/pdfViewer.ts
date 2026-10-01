@@ -36,7 +36,7 @@ import { derivePdfDocIdentity, inspectPdfBytes, loadPdfDocRecord, savePdfDocReco
 import { AnnotationCache } from './pdfViewer/annotationCache';
 import { requestPdfSync } from './pdfViewer/syncHint';
 import { readCachedPdf } from '../db/pdfFileCache';
-import { cachePdfBytes, headValidators, paperAliasesOf, pdfFileCacheEnabled, revalidateCachedPdf } from './pdfFileFetch';
+import { cachePdfBytes, paperAliasesOf, pdfFileCacheEnabled, resolvePdfUrl, revalidateCachedPdf, type ResolvedPdfUrl } from './pdfFileFetch';
 import { showAnnotationConflictDialog } from './pdfViewer/annotationConflict';
 import type { PdfDocIdentity, PdfDocRecord } from '../shared/pdfIdentity';
 import type { PdfLibraryUpdate } from '../shared/pdfLibrary';
@@ -830,11 +830,11 @@ async function loadFromFile(file: File) {
 // file — local ones included — under its arXiv watermark, so that paper's
 // web URLs open from it. A local file without one could never be looked up
 // (local opens always read the file itself) and is not stored.
-async function keepLocalCopy(fileUrl: string, doc: PDFDocumentProxy, isWeb: boolean): Promise<void> {
+async function keepLocalCopy(fileUrl: string, doc: PDFDocumentProxy, resolved: ResolvedPdfUrl | null): Promise<void> {
   try {
     const [data, paperAliases] = await Promise.all([doc.getData(), paperAliasesOf(doc)]);
-    if (currentDoc !== doc || (!isWeb && paperAliases.length === 0)) return;
-    await cachePdfBytes(fileUrl, data, isWeb ? await headValidators(fileUrl) : undefined, paperAliases);
+    if (currentDoc !== doc || (!resolved && paperAliases.length === 0)) return;
+    await cachePdfBytes(fileUrl, data, resolved ?? undefined, paperAliases);
   } catch {
     /* the cache is an optimisation only */
   }
@@ -866,8 +866,11 @@ async function loadFromUrl(fileUrl: string) {
     }
   }
   try {
-    const doc = await openDocument(pdfjsLib.getDocument({ url: fileUrl, ...documentOptions() }), displayName);
-    void keepLocalCopy(fileUrl, doc, isWeb);
+    // One server for every range request (see resolvePdfUrl); the document
+    // keeps its original URL everywhere else.
+    const resolved = isWeb ? await resolvePdfUrl(fileUrl) : null;
+    const doc = await openDocument(pdfjsLib.getDocument({ url: resolved?.finalUrl ?? fileUrl, ...documentOptions() }), displayName);
+    void keepLocalCopy(fileUrl, doc, resolved);
   } catch (error) {
     setProgress(null);
     const message = error instanceof Error ? error.message : String(error);
