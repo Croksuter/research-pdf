@@ -110,6 +110,8 @@ describe('classifyPaperKind', () => {
     expect(classifyPaperKind({ ...META, venue: 'NeurIPS 2023', venueType: null, workType: 'article' })).toBe('conference');
     expect(classifyPaperKind({ ...META, venue: 'Robotics: Science and Systems', venueType: null, workType: 'article' })).toBe('conference');
     expect(classifyPaperKind({ ...META, venue: 'MIT Technical Report TR-2020-01', venueType: null, workType: 'report' })).toBe('technical');
+    expect(classifyPaperKind({ ...META, venue: null, venueType: null, workType: null, doi: null, arxivId: null })).toBe('technical');
+    expect(classifyPaperKind({ ...META, venue: null, venueType: null, workType: null, arxivId: null })).toBe('journal');
     expect(classifyPaperKind({ ...META, venue: null, venueType: null, workType: 'dissertation' })).toBe('technical');
     expect(classifyPaperKind({ ...META, venue: 'arXiv (Cornell University)', venueType: 'repository', workType: 'preprint', doi: null, arxivId: '2503.02881' })).toBe('preprint');
     expect(classifyPaperKind({ ...META, venue: null, venueType: null, workType: null, doi: null, arxivId: '2503.02881' })).toBe('preprint');

@@ -183,7 +183,10 @@ export function classifyPaperKind(meta: PaperMeta): PaperKind {
   if (venueType === 'journal' || workType === 'journal-article' || /\b(journal|transactions|letters|magazine)\b|^ieee\b|^acm\b|^nature\b|^science\b/iu.test(venue)) return 'journal';
   if (workType === 'preprint' || isRepositoryVenue || (!venue && meta.arxivId)) return 'preprint';
   if (venue) return 'journal';
-  return meta.arxivId ? 'preprint' : 'journal';
+  if (meta.arxivId) return 'preprint';
+  // No venue, DOI or arXiv id: never formally published (course projects,
+  // reports, theses indexed only by Semantic Scholar).
+  return meta.doi ? 'journal' : 'technical';
 }
 
 export function bestCitationCount(meta: PaperMeta): number | null {

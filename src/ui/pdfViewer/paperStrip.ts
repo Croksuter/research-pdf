@@ -327,6 +327,18 @@ async function semanticScholarByIds(ids: PaperIdentifiers, backoff: number[] = S
   return fetchJson<S2Paper>(`${SEMANTIC_SCHOLAR}/paper/${encodeURIComponent(key)}?fields=${S2_FIELDS}`, 10_000, backoff, s2Headers());
 }
 
+/**
+ * Title lookup for papers only Semantic Scholar indexes (course reports,
+ * workshop papers without DOIs). Its match endpoint answers with the single
+ * closest title, which must still clear the usual similarity threshold.
+ */
+async function semanticScholarByTitle(title: string, backoff: number[] = [2_000, 5_000]): Promise<S2Paper | null> {
+  lastRateLimited = false;
+  const url = `${SEMANTIC_SCHOLAR}/paper/search/match?query=${encodeURIComponent(title)}&fields=${S2_FIELDS}`;
+  const page = await fetchJson<{ data?: S2Paper[] }>(url, 10_000, backoff, s2Headers());
+  return pickByTitle(title, page?.data ?? [], (p) => p.title ?? '', (p) => p.citationCount ?? 0);
+}
+
 function metaFromS2(paper: S2Paper, ids: PaperIdentifiers): PaperMeta {
   const doi = paper.externalIds?.DOI ? normalizeDoi(paper.externalIds.DOI) : null;
   const arxivFromDoi = doi ? arxivIdFromDoi(doi) : null;
@@ -335,7 +347,7 @@ function metaFromS2(paper: S2Paper, ids: PaperIdentifiers): PaperMeta {
     title: paper.title ?? '',
     year: paper.year ?? null,
     authors: (paper.authors ?? []).map((a) => a.name ?? '').filter(Boolean),
-    venue: paper.publicationVenue?.name ?? paper.venue ?? null,
+    venue: paper.publicationVenue?.name || paper.venue || null,
     venueType,
     workType: doi && !arxivFromDoi ? 'article' : (ids.arxivId || paper.externalIds?.ArXiv ? 'preprint' : null),
     doi: doi && !arxivFromDoi ? doi : (ids.doi ?? null),
@@ -448,6 +460,12 @@ async function resolvePrimary(ids: PaperIdentifiers, titles: string[]): Promise<
     if (oa) return { meta: metaFromOpenAlex(oa, ids), openAlexWork: oa };
     const cr = await crossrefByTitle(title);
     if (cr) return { meta: metaFromCrossref(cr, ids), openAlexWork: null };
+  }
+  // Last resort, after every title missed the open databases: Semantic
+  // Scholar's pool is rate-limited, so it is asked once per title only here.
+  for (const title of titles) {
+    const s2 = await semanticScholarByTitle(title);
+    if (s2) return { meta: metaFromS2(s2, ids), openAlexWork: null, s2 };
   }
   return null;
 }
@@ -608,7 +626,7 @@ export class PaperStrip {
       const titles = [fromMeta.title, page.bigTitle].filter((t): t is string => !!t);
       debugLog('paper', 'detection', () => ({ ids, titles, textSample: page.text.slice(0, 160) }));
       if (!ids.doi && !ids.arxivId && titles.length === 0) return;
-      const what = ids.doi ? `DOI ${ids.doi}` : ids.arxivId ? `arXiv:${ids.arxivId}` : `제목 "${titles[0].slice(0, 60)}"`;
+      const what = ids.doi ? `DOI ${ids.doi}` : ids.arxivId ? `arXiv:${ids.arxivId}` : `제목 "${titles[0].length > 60 ? `${titles[0].slice(0, 60).trimEnd()}…` : titles[0]}"`;
       this.renderStatus('loading', `${what} 조회 중…`);
 
       const key = ids.doi ?? (ids.arxivId ? `arxiv:${ids.arxivId}` : `title:${normalizeTitle(titles[0])}`);
@@ -634,9 +652,11 @@ export class PaperStrip {
       if (!primary) {
         this.renderStatus('failed', networkFailures > 0
           ? `${what}: OpenAlex·Crossref·Semantic Scholar 조회가 실패했습니다 (네트워크 지연 또는 요청 제한).`
-          : (ids.doi || ids.arxivId)
-            ? `${what}: 어느 데이터베이스(OpenAlex·Crossref·Semantic Scholar)에도 없습니다.`
-            : `${what}: 제목 검색에서 일치하는 논문을 못 찾았습니다.`, () => { void this.show(doc, sourceUrl); });
+          : lastRateLimited
+            ? `${what}: OpenAlex·Crossref에 없고, Semantic Scholar는 요청 제한(429)으로 확인하지 못했습니다. 설정에 Semantic Scholar API 키를 넣으면 안정적으로 조회됩니다.`
+            : (ids.doi || ids.arxivId)
+              ? `${what}: 어느 데이터베이스(OpenAlex·Crossref·Semantic Scholar)에도 없습니다.`
+              : `${what}: 제목 검색에서 일치하는 논문을 못 찾았습니다.`, () => { void this.show(doc, sourceUrl); });
         return;
       }
       this.meta = primary.meta;
