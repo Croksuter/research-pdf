@@ -895,6 +895,8 @@ async function loadFromUrl(fileUrl: string) {
     } else {
       // XHR to file:// is refused when the extension lacks file-URL access;
       // that is the one failure a user can fix without touching the file.
+      // (The toggle only unlocks what the manifest's `file:///*` host
+      // permission asks for; without it every local load fails here.)
       const fileAccess = await chrome.extension.isAllowedFileSchemeAccess();
       if (!fileAccess) {
         showMessage(
