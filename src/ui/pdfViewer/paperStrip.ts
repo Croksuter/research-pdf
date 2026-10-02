@@ -558,6 +558,14 @@ async function readCache(key: string): Promise<PaperMeta | null> {
   }
 }
 
+async function dropCache(key: string): Promise<void> {
+  try {
+    await chrome.storage.local.remove(CACHE_PREFIX + key);
+  } catch {
+    /* cache is best-effort */
+  }
+}
+
 async function writeCache(key: string, meta: PaperMeta): Promise<void> {
   try {
     await chrome.storage.local.set({ [CACHE_PREFIX + key]: { fetchedAt: Date.now(), meta } satisfies CacheEntry });
@@ -572,7 +580,9 @@ export class PaperStrip {
   private readonly root = byId<HTMLElement>('vocab-t-pdf-paper');
   private readonly body = byId<HTMLDivElement>('vt-paper-body');
   private readonly closeBtn = byId<HTMLButtonElement>('vt-paper-close');
+  private readonly reparseBtn = byId<HTMLButtonElement>('vt-paper-reparse');
   private generation = 0;
+  private current: { doc: PDFDocumentProxy; sourceUrl: string | null } | null = null;
   private meta: PaperMeta | null = null;
   private bibtexCache: string | null = null;
   private readonly refs = new ReferenceList();
@@ -586,6 +596,9 @@ export class PaperStrip {
    */
   constructor(private readonly onLayoutChange: () => void, private readonly onPaperMeta?: (meta: PaperMeta) => void) {
     this.closeBtn.addEventListener('click', () => this.hide());
+    this.reparseBtn.addEventListener('click', () => {
+      if (this.current) void this.show(this.current.doc, this.current.sourceUrl, { fresh: true });
+    });
   }
 
   /** The resolved paper of the open document, if any. */
@@ -608,9 +621,14 @@ export class PaperStrip {
     else this.refs.unavailable(meta.openalexId ? 'OpenAlex·Semantic Scholar에 이 논문의 참고문헌 목록이 없습니다.' : '이 논문을 OpenAlex·Semantic Scholar에서 못 찾아 참고문헌 목록을 만들 수 없습니다.');
   }
 
-  /** Detects whether `doc` is a paper and, if so, renders the strip. */
-  async show(doc: PDFDocumentProxy, sourceUrl: string | null): Promise<void> {
+  /**
+   * Detects whether `doc` is a paper and renders the strip: the paper's data,
+   * or a quiet "not a paper" note — reading never depends on it. `fresh`
+   * (the 재파싱 button) skips and drops the cached lookup.
+   */
+  async show(doc: PDFDocumentProxy, sourceUrl: string | null, { fresh = false } = {}): Promise<void> {
     const gen = ++this.generation;
+    this.current = { doc, sourceUrl };
     this.hide();
     this.meta = null;
     this.bibtexCache = null;
@@ -625,12 +643,16 @@ export class PaperStrip {
       const ids = mergeIdentifiers(sourceUrl ? identifiersFromUrl(sourceUrl) : {}, fromMeta.ids, identifiersFromText(page.text));
       const titles = [fromMeta.title, page.bigTitle].filter((t): t is string => !!t);
       debugLog('paper', 'detection', () => ({ ids, titles, textSample: page.text.slice(0, 160) }));
-      if (!ids.doi && !ids.arxivId && titles.length === 0) return;
+      if (!ids.doi && !ids.arxivId && titles.length === 0) {
+        this.renderStatus('none', '논문으로 인식되지 않았습니다.', '첫 페이지와 문서 정보에서 DOI·arXiv ID·제목을 찾지 못했습니다.');
+        return;
+      }
       const what = ids.doi ? `DOI ${ids.doi}` : ids.arxivId ? `arXiv:${ids.arxivId}` : `제목 "${titles[0].length > 60 ? `${titles[0].slice(0, 60).trimEnd()}…` : titles[0]}"`;
       this.renderStatus('loading', `${what} 조회 중…`);
 
       const key = ids.doi ?? (ids.arxivId ? `arxiv:${ids.arxivId}` : `title:${normalizeTitle(titles[0])}`);
-      const cached = await readCache(key);
+      if (fresh) await dropCache(key);
+      const cached = fresh ? null : await readCache(key);
       if (cached) {
         debugLog('paper', 'resolved (cache)', () => ({ key, meta: cached }));
         if (gen !== this.generation) return;
@@ -650,13 +672,17 @@ export class PaperStrip {
       debugLog('paper', primary ? 'resolved (primary)' : 'no match', () => ({ key, meta: primary?.meta }));
       if (gen !== this.generation) return;
       if (!primary) {
-        this.renderStatus('failed', networkFailures > 0
-          ? `${what}: OpenAlex·Crossref·Semantic Scholar 조회가 실패했습니다 (네트워크 지연 또는 요청 제한).`
-          : lastRateLimited
-            ? `${what}: OpenAlex·Crossref에 없고, Semantic Scholar는 요청 제한(429)으로 확인하지 못했습니다. 설정에 Semantic Scholar API 키를 넣으면 안정적으로 조회됩니다.`
-            : (ids.doi || ids.arxivId)
-              ? `${what}: 어느 데이터베이스(OpenAlex·Crossref·Semantic Scholar)에도 없습니다.`
-              : `${what}: 제목 검색에서 일치하는 논문을 못 찾았습니다.`, () => { void this.show(doc, sourceUrl); });
+        // A transient failure or a DOI/arXiv id nobody knows is worth a
+        // warning; a title nobody knows most likely just isn't a paper.
+        if (networkFailures > 0) {
+          this.renderStatus('failed', `${what}: OpenAlex·Crossref·Semantic Scholar 조회가 실패했습니다 (네트워크 지연 또는 요청 제한).`);
+        } else if (lastRateLimited) {
+          this.renderStatus('failed', `${what}: OpenAlex·Crossref에 없고, Semantic Scholar는 요청 제한(429)으로 확인하지 못했습니다. 설정에 Semantic Scholar API 키를 넣으면 안정적으로 조회됩니다.`);
+        } else if (ids.doi || ids.arxivId) {
+          this.renderStatus('failed', `${what}: 어느 데이터베이스(OpenAlex·Crossref·Semantic Scholar)에도 없습니다.`);
+        } else {
+          this.renderStatus('none', '논문으로 인식되지 않았습니다.', `${what}(으)로 OpenAlex·Crossref·Semantic Scholar를 찾아봤지만 일치하는 논문이 없습니다.`);
+        }
         return;
       }
       this.meta = primary.meta;
@@ -674,24 +700,25 @@ export class PaperStrip {
     } catch (error) {
       debugError('paper', 'paper strip failed', () => ({ error: error instanceof Error ? error.message : String(error) }));
       if (gen === this.generation) {
-        this.renderStatus('failed', `논문 정보를 처리하는 중 오류: ${error instanceof Error ? error.message : String(error)}`, () => { void this.show(doc, sourceUrl); });
+        this.renderStatus('failed', `논문 정보를 처리하는 중 오류: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }
 
-  /** Strip with only the 논문정보 label and a status (조회 중 / ⚠︎ reason + 다시 시도). */
-  private renderStatus(kind: 'loading' | 'failed', text: string, retry?: () => void): void {
+  /**
+   * Strip with only the 논문정보 label and a status: 조회 중, ⚠︎ reason, or a
+   * neutral "not a paper" note (`detail` on hover). Retrying is the 재파싱
+   * button's job.
+   */
+  private renderStatus(kind: 'loading' | 'failed' | 'none', text: string, detail?: string): void {
     this.body.replaceChildren();
-    const value = el('span', { className: 'vt-paper-value vt-paper-status' });
+    const value = el('span', { className: 'vt-paper-value vt-paper-status', title: detail });
     if (kind === 'loading') {
       value.append(el('span', { className: 'vt-paper-spinner', 'aria-hidden': 'true' }), text);
-    } else {
+    } else if (kind === 'failed') {
       value.append(el('span', { className: 'vt-warn-inline', textContent: '⚠︎ ' }), text);
-      if (retry) {
-        const btn = el('button', { type: 'button', className: 'vt-btn vt-btn-text vt-paper-copy', textContent: '다시 시도' });
-        btn.addEventListener('click', retry);
-        value.append(' ', btn);
-      }
+    } else {
+      value.append(text);
     }
     this.body.append(el('span', { className: 'vt-paper-seg' }, [el('span', { className: 'vt-paper-label', textContent: '논문정보' }), value]));
     const wasHidden = this.root.hidden;
