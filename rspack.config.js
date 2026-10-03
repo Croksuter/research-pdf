@@ -23,6 +23,13 @@ module.exports = {
   module: {
     rules: [
       {
+        // ONNX Runtime refers to its wasm with `new URL(…, import.meta.url)`;
+        // the copies under ort/ are what it loads (wasmPaths), so the bundler
+        // must not emit a second, hashed copy.
+        test: /node_modules[\\/]onnxruntime-web[\\/]/,
+        parser: { url: false },
+      },
+      {
         test: /\.ts$/,
         exclude: /node_modules/,
         // Transpile-only (SWC); types are enforced by `npm run typecheck`.
@@ -60,6 +67,11 @@ module.exports = {
         { from: 'node_modules/pdfjs-dist/standard_fonts', to: 'pdfjs/standard_fonts' },
         { from: 'node_modules/pdfjs-dist/wasm', to: 'pdfjs/wasm' },
         { from: 'node_modules/pdfjs-dist/iccs', to: 'pdfjs/iccs' },
+        // Figure auto-detect: the layout model and ONNX Runtime's wasm, both
+        // loaded only when auto-detect first runs (src/ui/pdfViewer/layoutModel.ts).
+        { from: 'assets/models', to: 'models' },
+        { from: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm', to: 'ort/ort-wasm-simd-threaded.wasm' },
+        { from: 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs', to: 'ort/ort-wasm-simd-threaded.mjs' },
       ],
     }),
   ],

@@ -15,6 +15,7 @@
   },
   "license": "MIT",
   "devDependencies": {
+    "@napi-rs/canvas": "^1.0.10",
     "@rspack/cli": "^2.1.7",
     "@rspack/core": "^2.1.7",
     "@types/chrome": "^0.1.37",
@@ -23,6 +24,7 @@
     "vitest": "^4.1.9"
   },
   "dependencies": {
+    "onnxruntime-web": "^1.30.0",
     "pdfjs-dist": "6.3.289"
   }
 }

@@ -26,9 +26,11 @@ Google Drive.
   shared per network).
 - Copies a figure or table as a sharp image for slides. The capture key (`S`,
   ⌘+Shift+X / Ctrl+Shift+X or the toolbar button) cycles: drag a region → the
-  page's figures and tables outlined (detected from its drawing operations and
-  captions; one click copies one) → off; Alt+drag works anytime. The region is
-  rendered again at 150–600 dpi, with
+  page's figures and tables outlined (one click copies one) → off; Alt+drag
+  works anytime. Detection runs a small layout model on the page, on the
+  device (PP-DocLayout-S, Apache-2.0, via ONNX Runtime Web; loaded on first
+  use), and names and trims what it finds with the PDF's own captions and
+  graphics. The region is rendered again at 150–600 dpi, with
   or without your drawings, next to a ready source line (`Source: Hao et al.
   (2024). Title. arXiv. Fig. 2.`) read from the caption beside it.
 - Optional Google Drive sync (`drive.appdata` only): one gzip document in the

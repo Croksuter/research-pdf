@@ -6,12 +6,16 @@ const dist = resolve(__dirname, '../dist');
 
 // Artifact test: `npm run test:bundle` builds first. Ordinary runs skip it.
 describe.skipIf(!existsSync(resolve(dist, 'pdfViewer.js')))('production package', () => {
-  it('contains only the viewer, its popup, the sync background, and PDF.js assets', () => {
+  it('contains only the viewer, its popup, the sync background, PDF.js assets and the layout model', () => {
     const files = readdirSync(dist).filter((name) => !name.endsWith('.map')).sort();
     expect(files).toEqual([
-      'background.js', 'icons', 'manifest.json', 'pdf-hub.html', 'pdf-viewer.html', 'pdfHub.css', 'pdfHub.js',
+      'background.js', 'icons', 'manifest.json', 'models', 'ort', 'ort.js', 'pdf-hub.html', 'pdf-viewer.html', 'pdfHub.css', 'pdfHub.js',
       'pdfViewer.css', 'pdfViewer.js', 'pdfjs', 'popup.css', 'popup.html', 'popup.js', 'tokens.css',
     ]);
+    // Figure auto-detect: the model with its license, and ONNX Runtime's wasm (loaded on first use).
+    for (const file of ['models/pp-doclayout-s.onnx', 'models/LICENSE-Apache-2.0.txt', 'models/NOTICE.md', 'ort/ort-wasm-simd-threaded.wasm', 'ort/ort-wasm-simd-threaded.mjs']) {
+      expect(existsSync(resolve(dist, file)), `expected ${file}`).toBe(true);
+    }
     for (const dir of ['pdfjs/cmaps', 'pdfjs/standard_fonts', 'pdfjs/wasm', 'pdfjs/iccs', 'pdfjs/images']) {
       expect(existsSync(resolve(dist, dir)), `expected ${dir}/`).toBe(true);
     }

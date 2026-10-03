@@ -40,6 +40,8 @@ import {
 } from '../../shared/figureSource';
 import type { PaperMeta } from '../../shared/paperIdentifiers';
 import { detectFigures, graphicBoxes, type DetectedFigure, type OpsLike } from '../../shared/figureDetect';
+import { combineLayout } from '../../shared/layoutDetect';
+import { detectLayout } from './layoutModel';
 import { debugLog } from '../../shared/debugLog';
 import { el } from './dom';
 
@@ -195,8 +197,14 @@ export class FigureCapture {
         const vp = page.getViewport({ scale: 1 });
         const [lines, ops] = await Promise.all([this.pageLinesOf(doc, pageNumber), page.getOperatorList()]);
         const boxes = graphicBoxes(ops.fnArray, ops.argsArray, OPS as unknown as OpsLike, vp.transform);
-        const figures = detectFigures(lines, boxes, { width: vp.width, height: vp.height });
-        debugLog('viewer', 'figures detected', () => ({ page: pageNumber, graphics: boxes.length, figures }));
+        const size = { width: vp.width, height: vp.height };
+        const ruleBased = detectFigures(lines, boxes, size);
+        // The layout model finds them in any layout; the PDF's own text and
+        // graphics name them and make the edges exact. Without the model
+        // (failed to load), the rules alone.
+        const dets = await detectLayout(page);
+        const figures = dets ? combineLayout({ dets, lines, graphics: boxes, page: size, ruleBased }) : ruleBased;
+        debugLog('viewer', 'figures detected', () => ({ page: pageNumber, graphics: boxes.length, model: dets !== null, figures }));
         return figures.map((f) => {
           const [ax, ay] = vp.convertToPdfPoint(f.box.left, f.box.top);
           const [bx, by] = vp.convertToPdfPoint(f.box.right, f.box.bottom);
