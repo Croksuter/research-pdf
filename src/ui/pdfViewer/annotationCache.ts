@@ -71,7 +71,7 @@ interface RemovableEditor {
 }
 interface PageViewLike {
   div: HTMLDivElement;
-  viewport: { convertToViewportRectangle(rect: number[]): number[] };
+  viewport: { convertToViewportPoint(x: number, y: number): number[] };
   annotationLayer?: { div?: HTMLDivElement | null } | null;
 }
 
@@ -459,7 +459,9 @@ export class AnnotationCache {
     const view = this.pageView(pageIndex);
     if (!view) return;
     document.querySelectorAll('.vt-annot-flash').forEach((elm) => elm.remove());
-    const [x1, y1, x2, y2] = view.viewport.convertToViewportRectangle(rect);
+    // (PDF.js 6 has no convertToViewportRectangle.)
+    const [x1, y1] = view.viewport.convertToViewportPoint(rect[0], rect[1]);
+    const [x2, y2] = view.viewport.convertToViewportPoint(rect[2], rect[3]);
     const box = document.createElement('div');
     box.className = 'vt-annot-flash';
     box.style.left = `${Math.min(x1, x2)}px`;

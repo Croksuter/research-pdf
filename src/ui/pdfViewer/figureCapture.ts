@@ -1,9 +1,12 @@
 // ─── Figure copy: drag a region of a page, get a clean image and its source ───
 //
-// Capture mode (toolbar button, ⌘/Ctrl+Shift+X, `S`) or Alt+drag anywhere on a
-// page draws a region; on release the region is copied at once with the
-// remembered options and a small panel opens beside it: the source line
-// (editable), copy image / copy source / save PNG, and the options.
+// The capture key (`S`, ⌘/Ctrl+Shift+X, the toolbar button) cycles three
+// states: free capture (drag a region), auto-detect (the figures and tables
+// of each rendered page are outlined, shared/figureDetect.ts — one click
+// copies one, and dragging still works), and off. Alt+drag works anytime.
+// The region is copied at once with the remembered options and a small panel
+// opens beside it: the source line (editable), copy image / copy source /
+// save PNG, and the options.
 //
 // The image is not a screenshot: the region is rendered again by PDF.js at the
 // chosen DPI, so it is sharp at any zoom, and the reader's drawings go in or
@@ -18,7 +21,7 @@
 // the gesture while the rendering finishes.
 
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
-import { AnnotationMode, Util } from 'pdfjs-dist';
+import { AnnotationMode, OPS, Util } from 'pdfjs-dist';
 import type { EventBus, PDFViewer } from 'pdfjs-dist/web/pdf_viewer.mjs';
 import { getSetting, setSetting } from '../../db/settingsRepository';
 import {
@@ -36,6 +39,7 @@ import {
   normalizeFigureCopyOptions,
 } from '../../shared/figureSource';
 import type { PaperMeta } from '../../shared/paperIdentifiers';
+import { detectFigures, graphicBoxes, type DetectedFigure, type OpsLike } from '../../shared/figureDetect';
 import { debugLog } from '../../shared/debugLog';
 import { el } from './dom';
 
@@ -46,8 +50,21 @@ const CSS_DPI = 96;
 
 interface PageViewLike {
   div: HTMLElement;
-  viewport: { rotation: number; convertToPdfPoint(x: number, y: number): number[] };
+  viewport: {
+    rotation: number;
+    width: number;
+    height: number;
+    convertToPdfPoint(x: number, y: number): number[];
+    convertToViewportPoint(x: number, y: number): number[];
+  };
 }
+
+export type CaptureMode = 'off' | 'free' | 'auto';
+
+const HINTS: Record<Exclude<CaptureMode, 'off'>, string> = {
+  free: '복사할 영역을 드래그하세요 · S: 그림·표 자동 인식 · Esc 취소',
+  auto: '그림·표를 누르면 복사됩니다 · 드래그로 직접 지정 · S: 끄기 · Esc 취소',
+};
 
 /** A captured region, in PDF points of its page. */
 interface Region {
@@ -63,12 +80,14 @@ export interface FigureCaptureDeps {
   eventBus: EventBus;
   getDoc: () => PDFDocumentProxy | null;
   getSource: () => { meta: PaperMeta | null; docTitle: string };
-  onModeChange: (active: boolean) => void;
+  onModeChange: (mode: CaptureMode) => void;
 }
 
 export class FigureCapture {
   private options: FigureCopyOptions = DEFAULT_FIGURE_COPY_OPTIONS;
-  private mode = false;
+  private mode: CaptureMode = 'off';
+  /** Detected figures per page of `linesDoc`, in PDF points. */
+  private detected = new Map<number, Promise<Array<DetectedFigure & { pdf: [number, number, number, number] }>>>();
   private region: Region | null = null;
   private label: FigureLabel | null = null;
   private sourceEdited = false;
@@ -76,9 +95,7 @@ export class FigureCapture {
   private linesDoc: PDFDocumentProxy | null = null;
   private generation = 0;
 
-  private readonly hint = el('div', { className: 'vt-capture-hint', role: 'status', hidden: true }, [
-    '복사할 영역을 드래그하세요 · 언제든 Alt+드래그 · Esc 취소',
-  ]);
+  private readonly hint = el('div', { className: 'vt-capture-hint', role: 'status', hidden: true });
   private readonly panel = el('div', { id: 'vocab-t-pdf-capture', className: 'vt-capture-panel', role: 'dialog', 'aria-label': '그림 복사', hidden: true });
   private readonly status = el('span', { className: 'vt-capture-status', 'aria-live': 'polite' });
   private readonly sourceInput = el('textarea', { className: 'vt-capture-source', rows: '2', spellcheck: 'false', 'aria-label': '출처' });
@@ -108,26 +125,143 @@ export class FigureCapture {
       if (this.region && !this.panel.contains(e.target as Node)) this.close();
     }, { capture: true });
     for (const name of ['scalechanging', 'rotationchanging', 'pagesdestroy']) deps.eventBus.on(name, () => this.close());
+    // Auto-detect outlines follow the pages as they render (scroll, zoom).
+    deps.eventBus.on('pagerendered', (evt: { pageNumber: number }) => {
+      if (this.mode === 'auto') void this.outlinePage(evt.pageNumber).catch((error: unknown) => debugLog('viewer', 'outline failed', () => ({ error: String(error) })));
+    });
+    deps.eventBus.on('pagesdestroy', () => { this.setMode('off'); this.detected.clear(); });
   }
 
   get isModeOn(): boolean {
+    return this.mode !== 'off';
+  }
+
+  get currentMode(): CaptureMode {
     return this.mode;
   }
 
-  toggleMode(on = !this.mode): void {
-    if (on && !this.deps.getDoc()) return;
-    this.mode = on;
-    if (on) this.close();
-    this.hint.hidden = !on;
-    document.body.classList.toggle('vt-capturing', on);
-    this.deps.onModeChange(on);
+  /** The capture key: free → auto-detect → off. */
+  cycleMode(): void {
+    this.setMode(this.mode === 'off' ? 'free' : this.mode === 'free' ? 'auto' : 'off');
+  }
+
+  toggleMode(on = this.mode === 'off'): void {
+    this.setMode(on ? 'free' : 'off');
+  }
+
+  setMode(mode: CaptureMode): void {
+    if (mode !== 'off' && !this.deps.getDoc()) return;
+    this.mode = mode;
+    if (mode !== 'off') this.close();
+    this.hint.hidden = mode === 'off';
+    this.hint.textContent = mode === 'off' ? '' : HINTS[mode];
+    document.body.classList.toggle('vt-capturing', mode !== 'off');
+    document.body.classList.toggle('vt-capture-auto', mode === 'auto');
+    this.clearOutlines();
+    if (mode === 'auto') this.outlineRenderedPages();
+    this.deps.onModeChange(mode);
   }
 
   /** Esc: leaves capture mode, else closes the panel. True when it did something. */
   handleEscape(): boolean {
-    if (this.mode) { this.toggleMode(false); return true; }
+    if (this.mode !== 'off') { this.setMode('off'); return true; }
     if (this.region) { this.close(); return true; }
     return false;
+  }
+
+  // ─── Auto-detect ───
+
+  private outlineRenderedPages(): void {
+    const count = this.deps.getDoc()?.numPages ?? 0;
+    for (let i = 0; i < count; i += 1) {
+      const view = this.deps.pdfViewer.getPageView(i) as unknown as (PageViewLike & { canvas?: HTMLCanvasElement | null }) | undefined;
+      if (view?.div.querySelector('canvas')) void this.outlinePage(i + 1).catch((error: unknown) => debugLog('viewer', 'outline failed', () => ({ error: String(error) })));
+    }
+  }
+
+  private clearOutlines(): void {
+    this.deps.container.querySelectorAll('.vt-figure-box').forEach((node) => node.remove());
+  }
+
+  /** The figures and tables of a page (cached per document). */
+  private detect(pageNumber: number): Promise<Array<DetectedFigure & { pdf: [number, number, number, number] }>> {
+    const doc = this.deps.getDoc();
+    if (!doc) return Promise.resolve([]);
+    if (this.linesDoc !== doc) { this.linesDoc = doc; this.lines.clear(); this.detected.clear(); }
+    let found = this.detected.get(pageNumber);
+    if (!found) {
+      found = (async () => {
+        const page = await doc.getPage(pageNumber);
+        const vp = page.getViewport({ scale: 1 });
+        const [lines, ops] = await Promise.all([this.pageLinesOf(doc, pageNumber), page.getOperatorList()]);
+        const boxes = graphicBoxes(ops.fnArray, ops.argsArray, OPS as unknown as OpsLike, vp.transform);
+        const figures = detectFigures(lines, boxes, { width: vp.width, height: vp.height });
+        debugLog('viewer', 'figures detected', () => ({ page: pageNumber, graphics: boxes.length, figures }));
+        return figures.map((f) => {
+          const [ax, ay] = vp.convertToPdfPoint(f.box.left, f.box.top);
+          const [bx, by] = vp.convertToPdfPoint(f.box.right, f.box.bottom);
+          return { ...f, pdf: [Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by)] as [number, number, number, number] };
+        });
+      })().catch((error: unknown) => {
+        debugLog('viewer', 'figure detection failed', () => ({ page: pageNumber, error: error instanceof Error ? error.message : String(error) }));
+        return [];
+      });
+      this.detected.set(pageNumber, found);
+    }
+    return found;
+  }
+
+  private async outlinePage(pageNumber: number): Promise<void> {
+    const figures = await this.detect(pageNumber);
+    debugLog('viewer', 'outline page', () => ({ pageNumber, figures: figures.length, mode: this.mode }));
+    if (this.mode !== 'auto') return;
+    const view = this.deps.pdfViewer.getPageView(pageNumber - 1) as unknown as PageViewLike | undefined;
+    if (!view) return;
+    view.div.querySelectorAll('.vt-figure-box').forEach((node) => node.remove());
+    const { width, height } = view.viewport;
+    for (const figure of figures) {
+      const [x0, y0] = view.viewport.convertToViewportPoint(figure.pdf[0], figure.pdf[1]);
+      const [x1, y1] = view.viewport.convertToViewportPoint(figure.pdf[2], figure.pdf[3]);
+      const box = el('button', {
+        type: 'button',
+        className: 'vt-figure-box',
+        title: '눌러서 이 영역 복사',
+        'aria-label': `${figure.label ? (figure.label.kind === 'figure' ? `그림 ${figure.label.number}` : `표 ${figure.label.number}`) : '그림'} 복사`,
+      }, [el('span', { className: 'vt-figure-chip', textContent: figure.label ? (figure.label.kind === 'figure' ? `그림 ${figure.label.number}` : `표 ${figure.label.number}`) : '그림' })]);
+      // In percent of the page, so a zoom keeps them in place until the re-render redraws them.
+      Object.assign(box.style, {
+        left: `${(Math.min(x0, x1) / width) * 100}%`,
+        top: `${(Math.min(y0, y1) / height) * 100}%`,
+        width: `${(Math.abs(x1 - x0) / width) * 100}%`,
+        height: `${(Math.abs(y1 - y0) / height) * 100}%`,
+      });
+      box.dataset.page = String(pageNumber);
+      box.dataset.pdf = figure.pdf.join(',');
+      view.div.append(box);
+    }
+  }
+
+  /** A click on an outline: copy that figure as if it had been dragged. */
+  private captureOutline(box: HTMLElement): void {
+    const pageNumber = Number(box.dataset.page);
+    const pdf = (box.dataset.pdf ?? '').split(',').map(Number) as [number, number, number, number];
+    const view = this.deps.pdfViewer.getPageView(pageNumber - 1) as unknown as PageViewLike | undefined;
+    if (!view || pdf.length !== 4 || pdf.some((v) => !Number.isFinite(v))) return;
+    const rectEl = el('div', { className: 'vt-capture-rect' });
+    Object.assign(rectEl.style, { left: box.style.left, top: box.style.top, width: box.style.width, height: box.style.height });
+    view.div.append(rectEl);
+    this.setMode('off');
+    this.open({ pageNumber, pdf, rotation: view.viewport.rotation, rectEl });
+  }
+
+  private pageLinesOf(doc: PDFDocumentProxy, pageNumber: number): Promise<TextLine[]> {
+    if (this.linesDoc !== doc) { this.linesDoc = doc; this.lines.clear(); this.detected.clear(); }
+    let lines = this.lines.get(pageNumber);
+    if (!lines) {
+      lines = doc.getPage(pageNumber).then(pageLines).catch(() => []);
+      this.lines.set(pageNumber, lines);
+    }
+    return lines;
   }
 
   close(): void {
@@ -140,7 +274,14 @@ export class FigureCapture {
   // ─── Drawing the region ───
 
   private onPointerDown(e: PointerEvent): void {
-    if (e.button !== 0 || !(this.mode || e.altKey)) return;
+    if (e.button !== 0 || !(this.mode !== 'off' || e.altKey)) return;
+    const outline = this.mode === 'auto' ? (e.target as HTMLElement | null)?.closest<HTMLElement>('.vt-figure-box') : null;
+    if (outline) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.captureOutline(outline);
+      return;
+    }
     const pageEl = (e.target as HTMLElement | null)?.closest<HTMLElement>('.page');
     const pageNumber = Number(pageEl?.dataset.pageNumber);
     if (!pageEl || !Number.isFinite(pageNumber) || !this.deps.getDoc()) return;
@@ -184,7 +325,7 @@ export class FigureCapture {
       if (!view) { rectEl.remove(); return; }
       const [ax, ay] = view.viewport.convertToPdfPoint(rect.x, rect.y);
       const [bx, by] = view.viewport.convertToPdfPoint(rect.x + rect.w, rect.y + rect.h);
-      if (this.mode) this.toggleMode(false);
+      if (this.mode !== 'off') this.setMode('off');
       this.open({
         pageNumber,
         pdf: [Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by)],
@@ -331,13 +472,7 @@ export class FigureCapture {
   private findLabel(region: Region): Promise<FigureLabel | null> {
     const doc = this.deps.getDoc();
     if (!doc) return Promise.resolve(null);
-    if (this.linesDoc !== doc) { this.linesDoc = doc; this.lines.clear(); }
-    let lines = this.lines.get(region.pageNumber);
-    if (!lines) {
-      lines = doc.getPage(region.pageNumber).then(pageLines).catch(() => []);
-      this.lines.set(region.pageNumber, lines);
-    }
-    return lines.then(async (list) => {
+    return this.pageLinesOf(doc, region.pageNumber).then(async (list) => {
       const page = await doc.getPage(region.pageNumber);
       const vp = page.getViewport({ scale: 1 });
       const [ax, ay] = vp.convertToViewportPoint(region.pdf[0], region.pdf[1]);

@@ -168,13 +168,14 @@ const figureCapture = new FigureCapture({
   eventBus,
   getDoc: () => currentDoc,
   getSource: () => ({ meta: paperStrip.paperMeta, docTitle: paperTitle ?? docTitle }),
-  onModeChange: (active) => {
-    captureBtn.classList.toggle('is-active', active);
-    captureBtn.setAttribute('aria-pressed', String(active));
+  onModeChange: (mode) => {
+    captureBtn.classList.toggle('is-active', mode !== 'off');
+    captureBtn.dataset.mode = mode;
+    captureBtn.setAttribute('aria-pressed', String(mode !== 'off'));
   },
 });
-captureBtn.title = `그림 복사 (${/Mac/u.test(navigator.platform) ? '⌘⇧X' : 'Ctrl+Shift+X'} · S · Alt+드래그)`;
-captureBtn.addEventListener('click', () => figureCapture.toggleMode());
+captureBtn.title = `그림 복사 (${/Mac/u.test(navigator.platform) ? '⌘⇧X' : 'Ctrl+Shift+X'} · S) — 한 번: 직접 지정 · 두 번: 그림·표 자동 인식 · 세 번: 끄기 · 언제든 Alt+드래그`;
+captureBtn.addEventListener('click', () => figureCapture.cycleMode());
 // Drawings persist per document identity and come back on reopen; when the
 // file itself also carries annotations the user resolves it in a dialog.
 const annotationCache = new AnnotationCache(eventBus, pdfViewer, (conflict) =>
@@ -611,7 +612,7 @@ document.addEventListener('keydown', (e) => {
   if (!typing && !e.altKey && !presentation.active
     && ((!mod && !e.shiftKey && e.code === 'KeyS') || (mod && e.shiftKey && e.code === 'KeyX'))) {
     e.preventDefault();
-    figureCapture.toggleMode();
+    figureCapture.cycleMode();
     return;
   }
   if (mod && !e.altKey) {

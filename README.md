@@ -24,8 +24,11 @@ Google Drive.
   reference list falls back to the one printed in the PDF. Optional API keys
   for Semantic Scholar and OpenAlex (OpenAlex's keyless use is a daily budget
   shared per network).
-- Copies a figure or table as a sharp image for slides: drag a region (⌘+Shift+X /
-  Ctrl+Shift+X, `S`, the toolbar button, or Alt+drag), and it is rendered again at 150–600 dpi, with
+- Copies a figure or table as a sharp image for slides. The capture key (`S`,
+  ⌘+Shift+X / Ctrl+Shift+X or the toolbar button) cycles: drag a region → the
+  page's figures and tables outlined (detected from its drawing operations and
+  captions; one click copies one) → off; Alt+drag works anytime. The region is
+  rendered again at 150–600 dpi, with
   or without your drawings, next to a ready source line (`Source: Hao et al.
   (2024). Title. arXiv. Fig. 2.`) read from the caption beside it.
 - Optional Google Drive sync (`drive.appdata` only): one gzip document in the

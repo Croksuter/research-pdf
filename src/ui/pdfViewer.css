@@ -693,6 +693,40 @@ body.vt-capture-dragging #viewerContainer .textLayer { user-select: none; }
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.18);
   pointer-events: none;
 }
+/* Auto-detect: an outline per figure / table; one click copies it. */
+.vt-figure-box {
+  position: absolute;
+  z-index: 29;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  border: 2px dashed rgba(138, 180, 248, 0.85);
+  border-radius: 3px;
+  background: rgba(138, 180, 248, 0.06);
+  font: inherit;
+}
+body.vt-capturing #viewerContainer .page .vt-figure-box { cursor: pointer !important; }
+.vt-figure-box:hover,
+.vt-figure-box:focus-visible {
+  border-style: solid;
+  border-color: var(--vt-accent);
+  background: rgba(138, 180, 248, 0.16);
+  outline: none;
+}
+.vt-figure-chip {
+  position: absolute;
+  bottom: 100%;
+  left: -2px;
+  padding: 0 6px;
+  border-radius: 4px 4px 0 0;
+  background: var(--vt-accent);
+  color: #0b1220;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  pointer-events: none;
+}
+#vt-capture[data-mode="auto"] { box-shadow: inset 0 0 0 2px var(--vt-accent); }
 .vt-capture-hint {
   position: fixed;
   top: calc(var(--vt-toolbar-height) + 12px);
