@@ -1,10 +1,15 @@
 // Reference list for the paper strip: the works this paper cites, resolved
 // in the background from OpenAlex (batches of ids), each with its link,
 // citation count, venue and the venue's 2-year mean citedness. Rendered into
-// the 참고문헌 hover panel as batches arrive; cached for a week.
+// the 참고문헌 hover panel as batches arrive; cached for a week. Without an
+// OpenAlex list: Semantic Scholar's, and failing that the list printed in the
+// PDF itself (shared/pdfReferences.ts), linked to OpenAlex by DOI, arXiv id
+// or title where it can be.
 
 import { debugLog } from '../../shared/debugLog';
-import { formatCount } from '../../shared/paperIdentifiers';
+import { formatCount, titleSimilarity } from '../../shared/paperIdentifiers';
+import type { PdfReference } from '../../shared/pdfReferences';
+import { isOpenAlexUrl, noteOpenAlex429, openAlexBudgetSpent, openAlexUrl } from './openAlexAccess';
 import { el } from './dom';
 
 const OPENALEX = 'https://api.openalex.org';
@@ -18,6 +23,10 @@ const CACHE_PREFIX = 'vtPaperRefs:v2:';
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 12_000;
 const WORK_SELECT = 'id,display_name,publication_year,cited_by_count,doi,primary_location,authorships';
+// Linking the PDF's own list: titles are searched one by one, politely.
+const TITLE_LOOKUPS_MAX = 120;
+const TITLE_GAP_MS = 150;
+const TITLE_MATCH = 0.9;
 
 export interface RefEntry {
   id: string;
@@ -29,6 +38,8 @@ export interface RefEntry {
   citations: number | null;
   impact: number | null;
   url: string;
+  /** From the PDF's own list and not found in OpenAlex. */
+  unlinked?: boolean;
 }
 
 interface RefWork {
@@ -47,10 +58,13 @@ async function fetchJson<T>(url: string, headers?: Record<string, string>): Prom
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
   try {
-    const res = await fetch(url, { signal: ctrl.signal, headers });
+    const openAlex = isOpenAlexUrl(url);
+    if (openAlex && openAlexBudgetSpent()) return null;
+    const res = await fetch(openAlex ? openAlexUrl(url) : url, { signal: ctrl.signal, headers });
+    if (res.status === 429 && openAlex && noteOpenAlex429(await res.clone().text().catch(() => ''))) return null;
     if (res.status === 429) {
       await new Promise((r) => setTimeout(r, 2_000));
-      const again = await fetch(url, { signal: ctrl.signal, headers });
+      const again = await fetch(openAlex ? openAlexUrl(url) : url, { signal: ctrl.signal, headers });
       return again.ok ? await again.json() as T : null;
     }
     return res.ok ? await res.json() as T : null;
@@ -74,6 +88,8 @@ export class ReferenceList {
   private expected = 0;
   private generation = 0;
   private sourceNote: string | null = null;
+  /** Told how many references the PDF itself lists, when that is the source. */
+  onPdfCount: ((count: number) => void) | null = null;
 
   constructor() {
     this.header = el('div', { className: 'vt-refs-header' });
@@ -84,6 +100,11 @@ export class ReferenceList {
 
   get element(): HTMLElement {
     return this.panel;
+  }
+
+  /** How many references the list shows now. */
+  get size(): number {
+    return this.entries.length;
   }
 
   /** Cancels any in-flight load and clears the panel. */
@@ -97,6 +118,13 @@ export class ReferenceList {
     this.renderHeader();
   }
 
+  /** This source had nothing; the strip tries the next one (no ⚠︎ yet). */
+  private nextSource(): void {
+    this.reset();
+    this.status = 'loading';
+    this.renderHeader();
+  }
+
   /** Marks the list as unavailable with a short reason (⚠︎ in the header). */
   unavailable(reason: string): void {
     this.reset();
@@ -104,22 +132,23 @@ export class ReferenceList {
     this.renderHeader(reason);
   }
 
-  async load(workIds: string[], cacheKey: string): Promise<void> {
+  /** True when a list was shown (false: nothing usable, the caller tries the next source). */
+  async load(workIds: string[], cacheKey: string): Promise<boolean> {
     this.reset();
     const gen = this.generation;
     const ids = workIds.slice(0, MAX_REFS).map(shortId);
     this.expected = ids.length;
     if (ids.length === 0) {
-      this.unavailable('OpenAlex에 이 논문의 참고문헌 목록이 없습니다.');
-      return;
+      this.nextSource();
+      return false;
     }
     const cached = await this.readCache(cacheKey);
-    if (gen !== this.generation) return;
+    if (gen !== this.generation) return true;
     if (cached) {
       this.entries = cached;
       this.status = 'done';
       this.renderAll();
-      return;
+      return true;
     }
     this.status = 'loading';
     this.renderHeader();
@@ -129,7 +158,7 @@ export class ReferenceList {
       const page = await fetchJson<{ results?: RefWork[] }>(
         `${OPENALEX}/works?filter=ids.openalex:${chunk.join('|')}&per-page=${BATCH}&select=${encodeURIComponent(WORK_SELECT)}`,
       );
-      if (gen !== this.generation) return;
+      if (gen !== this.generation) return true;
       if (page?.results) {
         works.push(...page.results);
         this.entries = works.map((w) => this.toEntry(w));
@@ -138,10 +167,19 @@ export class ReferenceList {
       if (i + BATCH < ids.length) await new Promise((r) => setTimeout(r, BATCH_GAP_MS));
     }
     if (works.length === 0) {
-      this.unavailable('참고문헌을 OpenAlex에서 불러오지 못했습니다.');
-      return;
+      this.nextSource();
+      return false;
     }
-    // Venue impact (2-year mean citedness) for the distinct sources.
+    if (!(await this.fillImpact(gen))) return true;
+    this.status = 'done';
+    this.renderAll();
+    void this.writeCache(cacheKey, this.entries);
+    debugLog('paper', `references loaded: ${this.entries.length}/${this.expected}`);
+    return true;
+  }
+
+  /** Venue impact (2-year mean citedness) for the distinct sources; false if superseded. */
+  private async fillImpact(gen: number): Promise<boolean> {
     const sourceIds = [...new Set(this.entries.map((e) => e.sourceId).filter((s): s is string => !!s))];
     const impact = new Map<string, number>();
     for (let i = 0; i < sourceIds.length; i += BATCH) {
@@ -149,7 +187,7 @@ export class ReferenceList {
       const page = await fetchJson<{ results?: Array<{ id?: string; summary_stats?: { '2yr_mean_citedness'?: number } }> }>(
         `${OPENALEX}/sources?filter=ids.openalex:${chunk.join('|')}&per-page=${BATCH}&select=id,summary_stats`,
       );
-      if (gen !== this.generation) return;
+      if (gen !== this.generation) return false;
       for (const src of page?.results ?? []) {
         const v = src.summary_stats?.['2yr_mean_citedness'];
         if (src.id && typeof v === 'number') impact.set(shortId(src.id), v);
@@ -157,10 +195,77 @@ export class ReferenceList {
       if (i + BATCH < sourceIds.length) await new Promise((r) => setTimeout(r, BATCH_GAP_MS));
     }
     this.entries = this.entries.map((e) => ({ ...e, impact: e.sourceId ? impact.get(e.sourceId) ?? null : null }));
-    this.status = 'done';
+    return true;
+  }
+
+  /**
+   * The list printed in the PDF, shown at once and then linked to OpenAlex
+   * (citations, venue) by DOI or arXiv id in batches, then by title.
+   */
+  async loadFromPdf(refs: PdfReference[], cacheKey: string, reason: string): Promise<boolean> {
+    this.reset();
+    const gen = this.generation;
+    if (refs.length === 0) { this.unavailable(reason); return false; }
+    this.onPdfCount?.(refs.length);
+    const cached = await this.readCache(`${cacheKey}:pdf`);
+    if (gen !== this.generation) return true;
+    if (cached && cached.length === refs.length) {
+      this.entries = cached; this.expected = cached.length; this.status = 'done'; this.sourceNote = pdfNote(cached); this.renderAll();
+      return true;
+    }
+    this.entries = refs.map(entryFromPdf);
+    this.expected = refs.length;
+    this.status = 'loading';
+    this.sourceNote = 'PDF 본문의 목록 기준';
     this.renderAll();
-    void this.writeCache(cacheKey, this.entries);
-    debugLog('paper', `references loaded: ${this.entries.length}/${this.expected}`);
+    const arxivDoi = (id: string) => `10.48550/arxiv.${id.toLowerCase()}`;
+    const keyOf = (r: PdfReference) => (r.doi ? r.doi.toLowerCase() : r.arxivId ? arxivDoi(r.arxivId) : null);
+    const withIds = refs.map((r, i) => ({ i, key: keyOf(r) })).filter((x): x is { i: number; key: string } => !!x.key);
+    for (let at = 0; at < withIds.length; at += BATCH) {
+      const chunk = withIds.slice(at, at + BATCH);
+      const page = await fetchJson<{ results?: RefWork[] }>(
+        `${OPENALEX}/works?filter=doi:${chunk.map((c) => encodeURIComponent(c.key)).join('|')}&per-page=${BATCH}&select=${encodeURIComponent(WORK_SELECT)}`,
+      );
+      if (gen !== this.generation) return true;
+      for (const work of page?.results ?? []) {
+        const doi = (work.doi ?? '').replace(/^https?:\/\/doi\.org\//iu, '').toLowerCase();
+        for (const c of chunk) if (c.key === doi) this.entries[c.i] = this.linked(this.entries[c.i], work);
+      }
+      this.renderAll();
+    }
+    let lookups = 0;
+    for (const [i, ref] of refs.entries()) {
+      if (openAlexBudgetSpent()) break;
+      if (!this.entries[i].unlinked || !ref.title || lookups >= TITLE_LOOKUPS_MAX) continue;
+      lookups += 1;
+      const page = await fetchJson<{ results?: RefWork[] }>(
+        `${OPENALEX}/works?search=${encodeURIComponent(ref.title)}&per-page=3&select=${encodeURIComponent(WORK_SELECT)}`,
+      );
+      if (gen !== this.generation) return true;
+      const match = (page?.results ?? []).find((w) => titleSimilarity(ref.title ?? '', w.display_name ?? '') >= TITLE_MATCH
+        && (!ref.year || !w.publication_year || Math.abs(ref.year - w.publication_year) <= 1));
+      if (match) { this.entries[i] = this.linked(this.entries[i], match); this.renderAll(); }
+      await new Promise((r) => setTimeout(r, TITLE_GAP_MS));
+    }
+    if (!(await this.fillImpact(gen))) return true;
+    this.status = 'done';
+    this.sourceNote = pdfNote(this.entries);
+    this.renderAll();
+    if (!openAlexBudgetSpent()) void this.writeCache(`${cacheKey}:pdf`, this.entries);
+    debugLog('paper', `references from the PDF: ${this.entries.length}, linked ${this.entries.filter((e) => !e.unlinked).length}`);
+    return true;
+  }
+
+  /** A PDF entry with what OpenAlex knows about it; the PDF keeps its link if it had a DOI or arXiv id. */
+  private linked(entry: RefEntry, work: RefWork): RefEntry {
+    const found = this.toEntry(work);
+    return {
+      ...found,
+      authors: found.authors.length ? found.authors : entry.authors,
+      year: found.year ?? entry.year,
+      url: /doi\.org|arxiv\.org/u.test(entry.url) ? entry.url : found.url,
+      unlinked: false,
+    };
   }
 
   /**
@@ -168,12 +273,12 @@ export class ReferenceList {
    * Semantic Scholar's `/references`, which carries each cited paper's
    * citation count and DOI but no venue impact figure.
    */
-  async loadFromSemanticScholar(paperId: string, cacheKey: string, headers?: Record<string, string>): Promise<void> {
+  async loadFromSemanticScholar(paperId: string, cacheKey: string, headers?: Record<string, string>): Promise<boolean> {
     this.reset();
     const gen = this.generation;
     const cached = await this.readCache(`${cacheKey}:s2`);
-    if (gen !== this.generation) return;
-    if (cached) { this.entries = cached; this.expected = cached.length; this.status = 'done'; this.renderAll(); return; }
+    if (gen !== this.generation) return true;
+    if (cached) { this.entries = cached; this.expected = cached.length; this.status = 'done'; this.renderAll(); return true; }
     this.status = 'loading';
     this.renderHeader();
     interface S2Ref { citedPaper?: { paperId?: string; title?: string; year?: number | null; venue?: string | null; citationCount?: number; externalIds?: { DOI?: string }; authors?: Array<{ name?: string }> } }
@@ -185,9 +290,9 @@ export class ReferenceList {
         if (delay) await new Promise((r) => setTimeout(r, delay));
         page = await fetchJson<{ data?: S2Ref[]; next?: number }>(url, headers);
         if (page) break;
-        if (gen !== this.generation) return;
+        if (gen !== this.generation) return true;
       }
-      if (gen !== this.generation) return;
+      if (gen !== this.generation) return true;
       if (!page) break;
       for (const ref of page.data ?? []) {
         const c = ref.citedPaper;
@@ -210,11 +315,12 @@ export class ReferenceList {
       this.renderAll();
       if (page.next === undefined || page.next === null) break;
     }
-    if (entries.length === 0) { this.unavailable('참고문헌 목록을 Semantic Scholar에서 불러오지 못했습니다 (요청 제한일 수 있음 — 설정의 Semantic Scholar API 키 참고).'); return; }
+    if (entries.length === 0) { this.nextSource(); return false; }
     this.status = 'done';
     this.sourceNote = 'Semantic Scholar 기준 · 게재처 IF 지표는 OpenAlex 전용';
     this.renderAll();
     void this.writeCache(`${cacheKey}:s2`, entries);
+    return true;
   }
 
   private toEntry(w: RefWork): RefEntry {
@@ -241,8 +347,8 @@ export class ReferenceList {
       this.header.append(el('span', { className: 'vt-warn-inline', textContent: '⚠︎ ' }), el('span', { textContent: reason ?? '참고문헌 목록을 못 찾았습니다.' }));
       return;
     }
-    if (this.status === 'idle') {
-      this.header.append(el('span', { textContent: '참고문헌 목록 준비 중…' }));
+    if (this.status === 'idle' || (this.status === 'loading' && n === 0 && this.expected === 0)) {
+      this.header.append(el('span', { textContent: this.status === 'idle' ? '참고문헌 목록 준비 중…' : '참고문헌 목록 찾는 중…' }));
       return;
     }
     const label = this.status === 'loading' ? `불러오는 중 ${n}/${this.expected}` : `${n}편 · 인용 많은 순`;
@@ -264,7 +370,7 @@ export class ReferenceList {
         e.venue,
       ].filter(Boolean).join(' · ');
       const stats = el('span', { className: 'vt-ref-stats' }, [
-        el('span', { textContent: typeof e.citations === 'number' ? `인용 ${formatCount(e.citations)}` : '⚠︎ 인용 수 없음' }),
+        el('span', { textContent: typeof e.citations === 'number' ? `인용 ${formatCount(e.citations)}` : e.unlinked ? 'OpenAlex에서 못 찾음' : '⚠︎ 인용 수 없음' }),
         el('span', { textContent: typeof e.impact === 'number' ? ` · IF≈${e.impact.toFixed(1)}` : '', title: typeof e.impact === 'number' ? '게재처 2년 평균 피인용 (OpenAlex)' : '' }),
       ]);
       const link = el('a', { className: 'vt-ref', href: e.url, target: '_blank', rel: 'noopener noreferrer' }, [
@@ -294,4 +400,29 @@ export class ReferenceList {
       /* best effort */
     }
   }
+}
+
+function entryFromPdf(ref: PdfReference): RefEntry {
+  const shown = ref.title ?? (ref.raw.length > 160 ? `${ref.raw.slice(0, 160).trimEnd()}…` : ref.raw);
+  const url = ref.doi ? `https://doi.org/${ref.doi}`
+    : ref.arxivId ? `https://arxiv.org/abs/${ref.arxivId}`
+      : `https://scholar.google.com/scholar?q=${encodeURIComponent(ref.title ?? ref.raw.slice(0, 200))}`;
+  return {
+    id: `pdf:${ref.index}`,
+    title: shown,
+    year: ref.year,
+    authors: ref.authors,
+    venue: null,
+    sourceId: null,
+    citations: null,
+    impact: null,
+    url,
+    unlinked: true,
+  };
+}
+
+function pdfNote(entries: readonly RefEntry[]): string {
+  const linked = entries.filter((e) => !e.unlinked).length;
+  const spent = openAlexBudgetSpent() ? ' (OpenAlex 일일 한도 소진 — 설정에 API 키를 넣으면 연결됩니다)' : '';
+  return `PDF 본문의 목록 기준 · OpenAlex 연결 ${linked}/${entries.length}${spent}`;
 }

@@ -121,6 +121,38 @@ last open with (layout: URLs, active, what was in front).
   default project.
 - Documents a project refers to are never pruned from the library.
 
+## Paper strip
+
+`ui/pdfViewer/paperStrip.ts` (lookup), `paperRefs.ts` (reference list),
+`shared/paperIdentifiers.ts` (pure rules), `shared/pdfReferences.ts`.
+
+- **Detection**: DOI / arXiv id from the URL (bioRxiv versions and `.pdf` tails
+  dropped), metadata and first page (a DOI broken at a line end rejoined,
+  `arXiv:submit/…` stamps ignored); titles from metadata (placeholders such
+  as "PowerPoint Presentation" ignored) and the first page's largest text.
+- **Primary record**: by DOI (Crossref + OpenAlex), by arXiv id (OpenAlex,
+  then arXiv's own API), Semantic Scholar by id, then by title. A record
+  found by id must be this document — its title matches the PDF's, or its
+  words are on the first page — and not a whole volume (a proceedings DOI);
+  OpenAlex's arXiv records are dated by the arXiv id and their non-arXiv DOI
+  is only a candidate.
+- **Published version**: DOI candidates (from that record, Semantic Scholar,
+  a Crossref title search) are adopted only when the record is an article
+  with the same title and first author, dated from a year before to five
+  after the preprint; then its venue and year replace the preprint's.
+- **Citations**: total = the largest source; "2년" from OpenAlex's per-year
+  counts only when OpenAlex knows at least half of them (under two years old:
+  the total).
+- **References**: OpenAlex's list, Semantic Scholar's, else the list printed
+  in the PDF (section after the last References heading, numbered or
+  author–year, margin line numbers dropped), linked to OpenAlex by DOI, arXiv
+  id or title. A database list under 60 % of the paper's count is replaced by
+  a longer PDF list. Count: Crossref's (the publisher's) when present.
+- **Limits**: OpenAlex without a key counts against a daily budget shared by
+  the network; once spent (429 "budget") the strip says so and stops asking
+  OpenAlex until reload, and nothing is cached. Semantic Scholar without a key
+  is often 429. Both keys are optional settings (popup).
+
 ## Selectable text
 
 PDF.js's hidden text layer is what a drag selects and what gets copied; the

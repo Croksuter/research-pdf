@@ -24,6 +24,7 @@ export const PAPER_INFO_ENABLED_SETTING_KEY = 'paperInfoEnabled';
 export const DEFAULT_PAPER_INFO_ENABLED = true;
 // Optional user-supplied key; never synced or exported.
 export const SEMANTIC_SCHOLAR_API_KEY_SETTING_KEY = 'semanticScholarApiKey';
+export const OPENALEX_API_KEY_SETTING_KEY = 'openAlexApiKey';
 
 // Google Drive sync. The OAuth client ID is public by design (it identifies
 // the app, it is not a credential): tokens are only ever delivered to the

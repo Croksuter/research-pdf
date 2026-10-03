@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   type PaperMeta,
   arxivIdFromDoi,
+  arxivIdYear,
   bestCitationCount,
+  cleanMetaText,
+  doiFromUrlPath,
+  isGenericTitle,
+  normalizeAuthorName,
+  recordMatchesDocument,
+  tidyPaperMeta,
   bestReferenceCount,
   citationHistory,
   classifyPaperKind,
@@ -100,6 +107,8 @@ const META: PaperMeta = {
   landingUrl: 'https://doi.org/10.1109/tpami.2016.2577031',
 };
 
+const meta = (): PaperMeta => structuredClone(META);
+
 describe('classifyPaperKind', () => {
   it('maps resolved metadata to the five reader-facing kinds', () => {
     expect(classifyPaperKind(META)).toBe('journal');
@@ -167,10 +176,10 @@ describe('citation formatting', () => {
 });
 
 describe('derived values', () => {
-  it('picks the largest citation count across sources and a positive reference count', () => {
+  it('picks the largest citation count across sources and the publisher\'s reference count', () => {
     expect(bestCitationCount(META)).toBe(75398);
     expect(bestCitationCount({ ...META, citations: { openalex: 0, crossref: null, semanticScholar: 195 } })).toBe(195);
-    expect(bestReferenceCount(META)).toBe(60);
+    expect(bestReferenceCount(META)).toBe(40); // the publisher's own count
     expect(bestReferenceCount({ ...META, references: { openalex: 0, crossref: null, semanticScholar: 72 } })).toBe(72);
     expect(bestCitationCount({ ...META, citations: { openalex: null, crossref: null, semanticScholar: null } })).toBeNull();
     expect(bestReferenceCount({ ...META, references: { openalex: 0, crossref: null, semanticScholar: null } })).toBeNull();
@@ -204,5 +213,60 @@ describe('derived values', () => {
     expect(scholarLinks(META).map((l) => l.label)).toEqual(['OpenAlex', 'Semantic Scholar', 'DOI', 'Google Scholar']);
     expect(scholarLinks({ ...META, arxivId: '2503.02881', doi: null }).map((l) => l.label))
       .toEqual(['OpenAlex', 'arXiv', 'Semantic Scholar', 'Google Scholar']);
+  });
+});
+
+describe('paper strip audit fixes', () => {
+  it('detects identifiers the way papers actually print them', () => {
+    // An unannounced submission stamp is not an arXiv id.
+    expect(identifiersFromText('arXiv:submit/4812508 [cs.CL] 27 Mar 2023').arxivId).toBeUndefined();
+    expect(identifiersFromUrl('https://arxiv.org/abs/submit/4812508').arxivId).toBeUndefined();
+    // bioRxiv/medRxiv URLs carry the version and file after the DOI.
+    expect(identifiersFromUrl('https://www.biorxiv.org/content/10.1101/2020.11.25.393017v7.full.pdf').doi).toBe('10.1101/2020.11.25.393017');
+    expect(identifiersFromUrl('https://link.springer.com/content/pdf/10.1007/s11263-015-0816-y.pdf').doi).toBe('10.1007/s11263-015-0816-y');
+    expect(identifiersFromUrl('https://onlinelibrary.wiley.com/doi/pdf/10.1002/anie.201915678').doi).toBe('10.1002/anie.201915678');
+    expect(doiFromUrlPath('10.1371/journal.pone.0130140')).toBe('10.1371/journal.pone.0130140');
+    // A DOI broken at a line end.
+    expect(identifiersFromText('https://doi.org/10.1145/3788646. 3789535 Permission to make').doi).toBe('10.1145/3788646.3789535');
+    expect(identifiersFromText('doi:10.1000/182. 2019 was a year').doi).toBe('10.1000/182');
+    expect(arxivIdYear('1706.03762')).toBe(2017);
+    expect(arxivIdYear('hep-th/9711200')).toBe(1997);
+    expect(arxivIdYear('math/0211159')).toBe(2002);
+  });
+
+  it('ignores placeholder metadata titles', () => {
+    for (const t of ['PowerPoint Presentation', 'Microsoft Word - final_v3.docx', 'Untitled', 'main.tex', 'Slide 1']) expect(isGenericTitle(t)).toBe(true);
+    expect(isGenericTitle('Metrics for Improved Reanalyses in Polar Regions')).toBe(false);
+  });
+
+  it('tells whether a looked-up record is the open document', () => {
+    const page = 'The entropy formula for the Ricci flow and its geometric applications Grisha Perelman We present a monotonic expression';
+    expect(recordMatchesDocument('The entropy formula for the Ricci flow and its geometric applications', [], page)).toBe(true);
+    expect(recordMatchesDocument('Análisis Comparativo y Refutación Determinista de la Incertidumbre Cuántica', [], page)).toBe(false);
+    expect(recordMatchesDocument('Dark Matter as a Topological Vacuum Condensate', ['Planck 2018 results. VI. Cosmological parameters'], 'Planck 2018 results. VI. Cosmological parameters Planck Collaboration')).toBe(false);
+  });
+
+  it('cleans metadata text and names', () => {
+    expect(cleanMetaText('Journal of Business &amp; Economic Statistics')).toBe('Journal of Business & Economic Statistics');
+    expect(cleanMetaText('The Large $N$ Limit of <i>Superconformal</i> Field Theories')).toBe('The Large N Limit of Superconformal Field Theories');
+    expect(normalizeAuthorName('JUAN M. MALDACENA')).toBe('Juan M. Maldacena');
+    expect(normalizeAuthorName('Aidan N.Gomez')).toBe('Aidan N. Gomez');
+    expect(normalizeAuthorName('Ruslan Salakhutdinov')).toBe('Ruslan Salakhutdinov');
+    const tidy = tidyPaperMeta({ ...meta(), venue: 'arXiv (Cornell University)', authors: ['Yushuo Chen', 'Peiyu Liu', 'Yushuo  Chen'] });
+    expect(tidy.venue).toBe('arXiv');
+    expect(tidy.authors).toEqual(['Yushuo Chen', 'Peiyu Liu']);
+  });
+
+  it('formats names, groups and conference papers in APA / BibTeX', () => {
+    const m = { ...meta(), authors: ['Neil P. Chue Hong', 'Klaus-Robert Müller', 'Planck Collaboration'], authorFamilies: ['Chue Hong', 'Müller', null] };
+    expect(formatApa(m)).toMatch(/^Chue Hong, N\. P\., Müller, K\.-R\., & Planck Collaboration \(/u);
+    const conf = formatBibtex({ ...meta(), arxivId: null, doi: null, venue: 'Neural Information Processing Systems', venueType: 'conference' });
+    expect(conf).toMatch(/^@inproceedings\{/u);
+    expect(conf).toContain('booktitle = {Neural Information Processing Systems}');
+  });
+
+  it('prefers the publisher\'s reference count', () => {
+    expect(bestReferenceCount({ ...meta(), references: { crossref: 46, openalex: 50, semanticScholar: 61 } })).toBe(46);
+    expect(bestReferenceCount({ ...meta(), references: { crossref: null, openalex: 2, semanticScholar: 46 } })).toBe(46);
   });
 });

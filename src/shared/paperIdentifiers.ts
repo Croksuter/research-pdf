@@ -19,8 +19,9 @@ const DOI_TRAILING = /[.,;:)\]}>]+$/u;
 // arXiv new-style ids (YYMM.NNNNN, optional vN) and old-style (archive/YYMMNNN).
 const ARXIV_NEW = /(\d{4}\.\d{4,5})(?:v\d+)?/u;
 const ARXIV_OLD = /([a-z-]+(?:\.[A-Z]{2})?\/\d{7})(?:v\d+)?/u;
-const ARXIV_URL = /arxiv\.org\/(?:abs|pdf|html)\/(?:(\d{4}\.\d{4,5})|([a-z-]+(?:\.[A-Z]{2})?\/\d{7}))(?:v\d+)?/iu;
-const ARXIV_TEXT = /arXiv:\s?(?:(\d{4}\.\d{4,5})|([a-z-]+(?:\.[A-Z]{2})?\/\d{7}))(?:v\d+)?/u;
+// `submit/NNNNNNN` is the stamp of a submission not yet announced, not an id.
+const ARXIV_URL = /arxiv\.org\/(?:abs|pdf|html)\/(?:(\d{4}\.\d{4,5})|((?!submit\/)[a-z-]+(?:\.[A-Z]{2})?\/\d{7}))(?:v\d+)?/iu;
+const ARXIV_TEXT = /arXiv:\s?(?:(\d{4}\.\d{4,5})|((?!submit\/)[a-z-]+(?:\.[A-Z]{2})?\/\d{7}))(?:v\d+)?/u;
 // arXiv DOIs registered via DataCite.
 const ARXIV_DOI = /^10\.48550\/arxiv\.(.+)$/iu;
 
@@ -65,13 +66,28 @@ export function identifiersFromUrl(url: string): PaperIdentifiers {
   const arxiv = ARXIV_URL.exec(`${host}${decoded}`);
   if (arxiv) out.arxivId = arxiv[1] ?? arxiv[2];
   const doi = normalizeDoi(decoded);
-  if (doi && !ARXIV_DOI.test(doi)) out.doi = doi;
+  const clean = doi ? doiFromUrlPath(doi) : null;
+  if (clean && !ARXIV_DOI.test(clean)) out.doi = clean;
   return out;
+}
+
+/**
+ * A DOI read from a URL path without the file or view parts publishers put
+ * after it (`/full`, `.full.pdf`, `.pdf`) and, for bioRxiv/medRxiv, the
+ * version (`v7`), which is not part of the DOI.
+ */
+export function doiFromUrlPath(doi: string): string {
+  let value = doi.replace(/\/(?:full|pdf|epdf|abstract|fulltext|full-text|reader|download)(?:\/.*)?$/iu, '');
+  value = value.replace(/(?:\.full)?(?:\.pdf|\.html?)?(?:\+html)?$/iu, '').replace(/\.full$/iu, '');
+  if (/^10\.1101\//u.test(value)) value = value.replace(/v\d+$/u, '');
+  return value;
 }
 
 /** DOI / arXiv id printed in the page text (first page usually carries both). */
 export function identifiersFromText(text: string): PaperIdentifiers {
   const out: PaperIdentifiers = {};
+  // A DOI broken at the end of a line ("10.1145/3788646." / "3789535").
+  text = text.replace(/(10\.\d{4,9}\/[^\s"'<>]*\.)\s+(\d{5,})/gu, '$1$2');
   const arxiv = ARXIV_TEXT.exec(text);
   if (arxiv) out.arxivId = arxiv[1] ?? arxiv[2];
   // Prefer an explicit "doi:" / doi.org mention; fall back to a bare DOI.
@@ -79,6 +95,14 @@ export function identifiersFromText(text: string): PaperIdentifiers {
   const doi = normalizeDoi(explicit ? explicit[1] : text);
   if (doi && !ARXIV_DOI.test(doi)) out.doi = doi;
   return out;
+}
+
+/** The year an arXiv id was first posted: 1706.03762 → 2017, hep-th/9711200 → 1997. */
+export function arxivIdYear(id: string): number | null {
+  const m = /^(\d{2})\d{2}\.\d{4,5}$/u.exec(id) ?? /\/(\d{2})\d{5}$/u.exec(id);
+  if (!m) return null;
+  const yy = Number(m[1]);
+  return yy >= 91 ? 1900 + yy : 2000 + yy;
 }
 
 /** An arXiv id embedded in a DataCite arXiv DOI (10.48550/arXiv.<id>). */
@@ -94,6 +118,54 @@ export function mergeIdentifiers(...sources: PaperIdentifiers[]): PaperIdentifie
     if (!out.arxivId && s.arxivId) out.arxivId = s.arxivId;
   }
   return out;
+}
+
+// ─── Text from metadata sources ───
+
+const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', ndash: '–', mdash: '—' };
+
+/** Decodes HTML entities, drops markup (<i>, <sub>) and TeX math dollars, collapses spaces. */
+export function cleanMetaText(value: string): string {
+  return value
+    .replace(/<\/?[a-z][a-z0-9:-]*(?:\s[^>]*)?>/giu, '')
+    .replace(/&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/giu, (whole, dec: string | undefined, hex: string | undefined, name: string | undefined) => {
+      if (dec) return String.fromCodePoint(Number(dec));
+      if (hex) return String.fromCodePoint(parseInt(hex, 16));
+      return ENTITIES[(name ?? '').toLowerCase()] ?? whole;
+    })
+    .replace(/\$([^$]{1,60})\$/gu, (_, inner: string) => inner.replace(/[{}\\]/gu, ''))
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+/** An author name as a person would write it: not ALL CAPS, a space after initials. */
+export function normalizeAuthorName(name: string): string {
+  let value = cleanMetaText(name).replace(/\b(\p{Lu})\.(?=\p{Lu}\p{Ll})/gu, '$1. ');
+  if (/\p{Lu}{2}/u.test(value) && value === value.toUpperCase() && /\s/u.test(value)) {
+    value = value.toLowerCase().replace(/(^|[\s'’-])(\p{Ll})/gu, (_, sep: string, ch: string) => sep + ch.toUpperCase());
+  }
+  return value;
+}
+
+/** Placeholder titles that tools write into PDF metadata. */
+export function isGenericTitle(title: string): boolean {
+  const t = title.trim();
+  return /^(?:microsoft\s+(?:word|powerpoint)\s*-|powerpoint\s+presentation$|presentation\d*$|slide\s*\d*$|untitled|title$|paper\s+title|document\d*$|layout\s*\d+$|template|draft$|manuscript$|main$|article$|thesis$|report$|\(?anonymous\)?|arxiv$|preprint$|arxiv:)/iu.test(t)
+    || /\.(?:docx?|pptx?|tex|dvi|indd|qxd)$/iu.test(t);
+}
+
+/**
+ * Whether a looked-up record is the document: its title matches a title
+ * found in the PDF, or (when those are missing or unreliable) its words are
+ * on the first page.
+ */
+export function recordMatchesDocument(recordTitle: string, detectedTitles: readonly string[], firstPageText: string): boolean {
+  if (detectedTitles.some((t) => titleSimilarity(recordTitle, t) >= 0.6)) return true;
+  const words = normalizeTitle(recordTitle).split(' ').filter((w) => w.length > 2);
+  if (words.length === 0) return false;
+  const page = ` ${normalizeTitle(firstPageText)} `;
+  const found = words.filter((w) => page.includes(` ${w} `)).length;
+  return found / words.length >= 0.75;
 }
 
 // ─── Title matching ───
@@ -149,6 +221,31 @@ export interface PaperMeta {
   landingUrl: string | null;
   /** OpenAlex ids (W…) of the works this paper cites, when OpenAlex knows them. */
   referencedWorks?: string[];
+  /** Surnames aligned with `authors`, when the source splits names (Crossref). */
+  authorFamilies?: Array<string | null>;
+}
+
+/** Titles, venue and names cleaned of markup and entities; authors as people write them, once each. */
+export function tidyPaperMeta(meta: PaperMeta): PaperMeta {
+  const seen = new Set<string>();
+  const authors: string[] = [];
+  const families: Array<string | null> = [];
+  meta.authors.forEach((raw, i) => {
+    const name = normalizeAuthorName(raw);
+    const key = normalizeTitle(name);
+    if (!name || seen.has(key)) return;
+    seen.add(key);
+    authors.push(name);
+    families.push(meta.authorFamilies?.[i] ? normalizeAuthorName(meta.authorFamilies[i] as string) : null);
+  });
+  const venue = meta.venue ? cleanMetaText(meta.venue) : null;
+  return {
+    ...meta,
+    title: cleanMetaText(meta.title),
+    venue: venue && /^arxiv\b/iu.test(venue) ? 'arXiv' : venue,
+    authors,
+    authorFamilies: meta.authorFamilies ? families : undefined,
+  };
 }
 
 /**
@@ -195,8 +292,38 @@ export function bestCitationCount(meta: PaperMeta): number | null {
   return values.length ? Math.max(...values) : null;
 }
 
+/** What a DOI's record says, enough to tell whether it is a paper's published version. */
+export interface WorkSummary {
+  title: string;
+  year: number | null;
+  /** Crossref or OpenAlex work type. */
+  type: string | null;
+  /** Hosted by a repository (arXiv, Zenodo, SSRN…), not a venue. */
+  repository: boolean;
+}
+
+/**
+ * Whether `candidate` (a DOI Semantic Scholar attached to a preprint) is the
+ * published version of it: the same title, published around the preprint's
+ * time or in the following years, and an article — not another preprint, a
+ * repository copy or a re-post (Semantic Scholar does attach such DOIs).
+ */
+export function isPublishedVersion(preprint: { title: string; year: number | null }, candidate: WorkSummary): boolean {
+  if (titleSimilarity(preprint.title, candidate.title) < 0.85) return false;
+  if (candidate.repository) return false;
+  if (candidate.type && /^(?:posted-content|preprint|dataset|peer-review|component|other|paratext|erratum|retraction|report|standard)$/iu.test(candidate.type)) return false;
+  if (preprint.year && candidate.year && (candidate.year < preprint.year - 1 || candidate.year > preprint.year + 5)) return false;
+  return true;
+}
+
+/**
+ * Crossref's count is what the publisher deposited — the paper's own list —
+ * so it wins when present; otherwise the largest of the indexes' counts
+ * (each misses works it does not know).
+ */
 export function bestReferenceCount(meta: PaperMeta): number | null {
-  const values = [meta.references.crossref, meta.references.openalex, meta.references.semanticScholar]
+  if (typeof meta.references.crossref === 'number' && meta.references.crossref > 0) return meta.references.crossref;
+  const values = [meta.references.openalex, meta.references.semanticScholar]
     .filter((v): v is number => typeof v === 'number' && v > 0);
   return values.length ? Math.max(...values) : null;
 }
@@ -209,8 +336,12 @@ export function formatCount(value: number): string {
 
 export interface AuthorName { last: string; initials: string }
 
+const GROUP_AUTHOR = /\b(?:collaboration|consortium|group|team|committee|project|initiative|organi[sz]ation|association|society|council|network|alliance|investigators|authors)\b/iu;
+
 export function splitAuthor(name: string): AuthorName {
   const cleaned = name.replace(/\s+/gu, ' ').trim();
+  // "Planck Collaboration" is not Collaboration, P.
+  if (GROUP_AUTHOR.test(cleaned)) return { last: cleaned, initials: '' };
   if (cleaned.includes(',')) {
     const [last, first = ''] = cleaned.split(',').map((s) => s.trim());
     return { last, initials: initialsOf(first) };
@@ -222,11 +353,20 @@ export function splitAuthor(name: string): AuthorName {
 }
 
 function initialsOf(first: string): string {
+  // "Klaus-Robert" → "K.-R.", as APA keeps the hyphen.
   return first
-    .split(/[\s-]+/u)
+    .split(/\s+/u)
     .filter(Boolean)
-    .map((p) => `${p[0].toUpperCase()}.`)
+    .map((word) => word.split('-').filter(Boolean).map((p) => `${p[0].toUpperCase()}.`).join('-'))
     .join(' ');
+}
+
+/** Surname and initials, using the source's own surname when it gave one ("Neil P. Chue Hong"). */
+function authorWithFamily(name: string, family: string | null | undefined): AuthorName {
+  if (family && !name.includes(',') && name.endsWith(family) && name.length > family.length) {
+    return { last: family, initials: initialsOf(name.slice(0, -family.length).trim()) };
+  }
+  return splitAuthor(name);
 }
 
 /** Removes repeated author names (Crossref sometimes lists a corresponding author twice). */
@@ -240,8 +380,9 @@ export function dedupeAuthors(authors: string[]): string[] {
   });
 }
 
-function apaAuthors(authors: string[]): string {
-  const names = dedupeAuthors(authors).map(splitAuthor).map((a) => (a.initials ? `${a.last}, ${a.initials}` : a.last));
+function apaAuthors(authors: string[], families?: Array<string | null>): string {
+  const kept = dedupeAuthors(authors);
+  const names = kept.map((name) => authorWithFamily(name, families?.[authors.indexOf(name)])).map((a) => (a.initials ? `${a.last}, ${a.initials}` : a.last));
   if (names.length === 0) return '';
   if (names.length === 1) return names[0];
   if (names.length <= 20) return `${names.slice(0, -1).join(', ')}, & ${names[names.length - 1]}`;
@@ -250,7 +391,7 @@ function apaAuthors(authors: string[]): string {
 
 /** APA 7th-style reference. */
 export function formatApa(meta: PaperMeta): string {
-  const authors = apaAuthors(meta.authors);
+  const authors = apaAuthors(meta.authors, meta.authorFamilies);
   const year = meta.year ? `(${meta.year}).` : '(n.d.).';
   const title = meta.title.replace(/\.?$/u, '.');
   let source = '';
@@ -286,7 +427,8 @@ function bibEscape(value: string): string {
 export function formatBibtex(meta: PaperMeta): string {
   const lines: string[] = [];
   const isPreprint = !!meta.arxivId && (!meta.venue || /arxiv/iu.test(meta.venue));
-  lines.push(`@${isPreprint ? 'misc' : 'article'}{${bibKey(meta)},`);
+  const inProceedings = !isPreprint && classifyPaperKind(meta) === 'conference';
+  lines.push(`@${isPreprint ? 'misc' : inProceedings ? 'inproceedings' : 'article'}{${bibKey(meta)},`);
   lines.push(`  title = {${bibEscape(meta.title)}},`);
   const authors = dedupeAuthors(meta.authors);
   if (authors.length) lines.push(`  author = {${authors.map(bibEscape).join(' and ')}},`);
@@ -297,7 +439,7 @@ export function formatBibtex(meta: PaperMeta): string {
     lines.push(`  doi = {10.48550/arXiv.${meta.arxivId}},`);
     lines.push(`  url = {https://arxiv.org/abs/${meta.arxivId}},`);
   } else {
-    if (meta.venue) lines.push(`  journal = {${bibEscape(meta.venue)}},`);
+    if (meta.venue) lines.push(`  ${inProceedings ? 'booktitle' : 'journal'} = {${bibEscape(meta.venue)}},`);
     if (meta.volume) lines.push(`  volume = {${meta.volume}},`);
     if (meta.issue) lines.push(`  number = {${meta.issue}},`);
     if (meta.firstPage) lines.push(`  pages = {${meta.firstPage}${meta.lastPage ? `--${meta.lastPage}` : ''}},`);

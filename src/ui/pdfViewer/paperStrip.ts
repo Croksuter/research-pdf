@@ -13,7 +13,7 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { getSetting } from '../../db/settingsRepository';
 import { debugError, debugLog } from '../../shared/debugLog';
-import { DEFAULT_PAPER_INFO_ENABLED, PAPER_INFO_ENABLED_SETTING_KEY, SEMANTIC_SCHOLAR_API_KEY_SETTING_KEY } from '../../shared/constants';
+import { DEFAULT_PAPER_INFO_ENABLED, OPENALEX_API_KEY_SETTING_KEY, PAPER_INFO_ENABLED_SETTING_KEY, SEMANTIC_SCHOLAR_API_KEY_SETTING_KEY } from '../../shared/constants';
 import {
   type PaperIdentifiers,
   type PaperMeta,
@@ -34,11 +34,20 @@ import {
   recentCitationSeries,
   recentTwoYearCitations,
   scholarLinks,
+  arxivIdYear,
+  isGenericTitle,
+  isPublishedVersion,
+  recordMatchesDocument,
+  splitAuthor,
+  tidyPaperMeta,
   titleSimilarity,
+  type WorkSummary,
 } from '../../shared/paperIdentifiers';
 import { byId, el } from './dom';
 import { buildCitationChart } from './paperChart';
 import { ReferenceList } from './paperRefs';
+import { OPENALEX_BUDGET_REASON, isOpenAlexUrl, noteOpenAlex429, openAlexBudgetSpent, openAlexUrl, setOpenAlexApiKey } from './openAlexAccess';
+import { pdfReferences } from './pdfText';
 
 const OPENALEX = 'https://api.openalex.org';
 const CROSSREF = 'https://api.crossref.org';
@@ -78,7 +87,13 @@ async function fetchJson<T>(url: string, timeoutMs = FETCH_TIMEOUT_MS, retry: bo
   // `retry`: true = one 1.5 s retry on 429; an array = remaining backoff delays.
   const backoff = retry === true ? [1_500] : retry === false ? [] : retry;
   try {
-    const res = await fetch(url, { signal: ctrl.signal, headers });
+    if (isOpenAlexUrl(url) && openAlexBudgetSpent()) return null;
+    const res = await fetch(isOpenAlexUrl(url) ? openAlexUrl(url) : url, { signal: ctrl.signal, headers });
+    // OpenAlex's spent daily budget does not come back by retrying.
+    if (res.status === 429 && isOpenAlexUrl(url) && noteOpenAlex429(await res.clone().text().catch(() => ''))) {
+      debugLog('paper', `fetch 429 (OpenAlex daily budget spent): ${label}`);
+      return null;
+    }
     if (res.status === 429 && backoff.length > 0) {
       debugLog('paper', `fetch 429, retrying in ${backoff[0]}ms: ${label}`);
       await new Promise((r) => setTimeout(r, backoff[0]));
@@ -159,15 +174,19 @@ function metaFromOpenAlex(work: OpenAlexWork, ids: PaperIdentifiers): PaperMeta 
   const doi = doiRaw ? normalizeDoi(doiRaw) : null;
   const arxivFromDoi = doi ? arxivIdFromDoi(doi) : null;
   const source = work.primary_location?.source ?? null;
+  // A repository (arXiv, a university's, RePEc) hosts a copy; it is not where
+  // the paper appeared.
+  const repository = source?.type === 'repository';
+  const arxivId = ids.arxivId ?? arxivFromDoi;
   return {
     title: work.display_name ?? '',
     year: work.publication_year ?? null,
     authors: (work.authorships ?? []).map((a) => a.author?.display_name ?? '').filter(Boolean),
-    venue: source?.display_name ?? null,
+    venue: repository ? (arxivId || /arxiv/iu.test(source?.display_name ?? '') ? 'arXiv' : null) : source?.display_name ?? null,
     venueType: source?.type ?? null,
     workType: work.type ?? null,
     doi: doi && !arxivFromDoi ? doi : (ids.doi ?? null),
-    arxivId: ids.arxivId ?? arxivFromDoi,
+    arxivId,
     openalexId: (work.ids?.openalex ?? work.id ?? '').split('/').pop() || null,
     citations: { openalex: work.cited_by_count ?? null, crossref: null, semanticScholar: null },
     citationsByYear: (work.counts_by_year ?? []).map((c) => ({ year: c.year, count: c.cited_by_count })),
@@ -218,6 +237,9 @@ interface CrossrefWork {
   DOI?: string;
   title?: string[];
   author?: Array<{ given?: string; family?: string; name?: string }>;
+  'article-number'?: string;
+  institution?: Array<{ name?: string }>;
+  'group-title'?: string;
   issued?: { 'date-parts'?: number[][] };
   published?: { 'date-parts'?: number[][] };
   'container-title'?: string[];
@@ -250,7 +272,10 @@ function metaFromCrossref(work: CrossrefWork, ids: PaperIdentifiers): PaperMeta 
     title: work.title?.[0] ?? '',
     year: typeof year === 'number' ? year : null,
     authors: (work.author ?? []).map((a) => a.name ?? [a.given, a.family].filter(Boolean).join(' ')).filter(Boolean),
-    venue: work['container-title']?.[0] ?? null,
+    // The surname as the publisher split it ("Chue Hong"), for APA.
+    authorFamilies: (work.author ?? []).filter((a) => a.name ?? [a.given, a.family].filter(Boolean).join(' ')).map((a) => a.family ?? null),
+    // A posted preprint has no container; its server is the venue (bioRxiv, medRxiv…).
+    venue: work['container-title']?.[0] ?? (work.type === 'posted-content' ? work.institution?.[0]?.name ?? work['group-title'] ?? null : null),
     venueType: kind.venueType,
     workType: kind.workType,
     doi,
@@ -262,8 +287,9 @@ function metaFromCrossref(work: CrossrefWork, ids: PaperIdentifiers): PaperMeta 
     venueTwoYearMeanCitedness: null,
     volume: work.volume ?? null,
     issue: work.issue ?? null,
-    firstPage: firstPage || null,
-    lastPage: lastPage || null,
+    // Article-numbered journals (Nature family, PLOS) have no pages.
+    firstPage: firstPage || work['article-number'] || null,
+    lastPage: firstPage ? lastPage || null : null,
     landingUrl: work.URL ?? (doi ? `https://doi.org/${doi}` : null),
   };
 }
@@ -339,9 +365,17 @@ async function semanticScholarByTitle(title: string, backoff: number[] = [2_000,
   return pickByTitle(title, page?.data ?? [], (p) => p.title ?? '', (p) => p.citationCount ?? 0);
 }
 
-function metaFromS2(paper: S2Paper, ids: PaperIdentifiers): PaperMeta {
+// Semantic Scholar's DOI for a paper is only a candidate: enrich() adopts it
+// once its record checks out as the published version (isPublishedVersion).
+function s2Doi(paper: S2Paper): string | null {
   const doi = paper.externalIds?.DOI ? normalizeDoi(paper.externalIds.DOI) : null;
-  const arxivFromDoi = doi ? arxivIdFromDoi(doi) : null;
+  return doi && !arxivIdFromDoi(doi) ? doi : null;
+}
+
+function metaFromS2(paper: S2Paper, ids: PaperIdentifiers): PaperMeta {
+  const raw = paper.externalIds?.DOI ? normalizeDoi(paper.externalIds.DOI) : null;
+  const arxivFromDoi = raw ? arxivIdFromDoi(raw) : null;
+  const doi = ids.doi ?? null;
   const venueType = paper.publicationVenue?.type ?? null;
   return {
     title: paper.title ?? '',
@@ -349,8 +383,8 @@ function metaFromS2(paper: S2Paper, ids: PaperIdentifiers): PaperMeta {
     authors: (paper.authors ?? []).map((a) => a.name ?? '').filter(Boolean),
     venue: paper.publicationVenue?.name || paper.venue || null,
     venueType,
-    workType: doi && !arxivFromDoi ? 'article' : (ids.arxivId || paper.externalIds?.ArXiv ? 'preprint' : null),
-    doi: doi && !arxivFromDoi ? doi : (ids.doi ?? null),
+    workType: doi ? 'article' : (ids.arxivId || paper.externalIds?.ArXiv || arxivFromDoi ? 'preprint' : null),
+    doi,
     arxivId: ids.arxivId ?? paper.externalIds?.ArXiv ?? arxivFromDoi,
     openalexId: null,
     citations: { openalex: null, crossref: null, semanticScholar: paper.citationCount ?? null },
@@ -361,24 +395,75 @@ function metaFromS2(paper: S2Paper, ids: PaperIdentifiers): PaperMeta {
     issue: null,
     firstPage: null,
     lastPage: null,
-    landingUrl: doi && !arxivFromDoi ? `https://doi.org/${doi}` : null,
+    landingUrl: doi ? `https://doi.org/${doi}` : null,
     s2PaperId: paper.paperId ?? null,
   };
 }
 
-/** Folds Semantic Scholar counts (and its published-version DOI) into an existing meta. */
+/** Folds Semantic Scholar counts into an existing meta (its DOI is checked separately). */
 function enrichWithS2(meta: PaperMeta, paper: S2Paper): PaperMeta {
-  const doi = paper.externalIds?.DOI ? normalizeDoi(paper.externalIds.DOI) : null;
-  const publishedDoi = doi && !arxivIdFromDoi(doi) ? doi : null;
   return {
     ...meta,
-    doi: meta.doi ?? publishedDoi,
     citations: { ...meta.citations, semanticScholar: paper.citationCount ?? null },
     references: { ...meta.references, semanticScholar: paper.referenceCount ?? null },
     s2PaperId: paper.paperId ?? meta.s2PaperId ?? null,
+    ...(meta.venue && !/arxiv/iu.test(meta.venue) || !paper.publicationVenue?.name ? {} : {
+      // The published venue Semantic Scholar knows (conference / journal), with its kind.
+      venueType: paper.publicationVenue.type ?? meta.venueType,
+      workType: paper.publicationVenue.type === 'conference' || paper.publicationVenue.type === 'journal' ? 'article' : meta.workType,
+    }),
     venue: meta.venue && !/arxiv/iu.test(meta.venue) ? meta.venue : (paper.publicationVenue?.name ?? meta.venue),
     year: meta.year ?? paper.year ?? null,
   };
+}
+
+// ─── arXiv's own API (fallback for arXiv ids) ───
+
+const ARXIV_API = 'https://export.arxiv.org/api/query';
+
+async function arxivById(id: string): Promise<PaperMeta | null> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${ARXIV_API}?id_list=${encodeURIComponent(id)}&max_results=1`, { signal: ctrl.signal });
+    debugLog('paper', `fetch ${res.status}: ${ARXIV_API}`);
+    if (!res.ok) return null;
+    const xml = new DOMParser().parseFromString(await res.text(), 'application/xml');
+    const entry = xml.getElementsByTagName('entry')[0];
+    const text = (parent: Element, tag: string) => parent.getElementsByTagName(tag)[0]?.textContent?.replace(/\s+/gu, ' ').trim() || null;
+    const title = entry ? text(entry, 'title') : null;
+    if (!entry || !title || /^error$/iu.test(title)) return null;
+    const published = text(entry, 'published');
+    const journalRef = text(entry, 'arxiv:journal_ref');
+    const doiRaw = text(entry, 'arxiv:doi');
+    const doi = doiRaw ? normalizeDoi(doiRaw.split(/\s+/u)[0]) : null;
+    const year = published ? Number(published.slice(0, 4)) : NaN;
+    return {
+      title,
+      year: Number.isFinite(year) ? year : null,
+      authors: Array.from(entry.getElementsByTagName('author')).map((a) => text(a, 'name') ?? '').filter(Boolean),
+      venue: journalRef ?? 'arXiv',
+      venueType: journalRef ? null : 'repository',
+      workType: doi ? 'article' : 'preprint',
+      doi,
+      arxivId: id,
+      openalexId: null,
+      citations: { openalex: null, crossref: null, semanticScholar: null },
+      citationsByYear: [],
+      references: { openalex: null, crossref: null, semanticScholar: null },
+      venueTwoYearMeanCitedness: null,
+      volume: null,
+      issue: null,
+      firstPage: null,
+      lastPage: null,
+      landingUrl: `https://arxiv.org/abs/${id}`,
+    };
+  } catch {
+    networkFailures += 1;
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ─── Detection from the PDF itself ───
@@ -434,32 +519,61 @@ async function metadataIdentifiers(doc: PDFDocumentProxy): Promise<{ ids: PaperI
 // rendered immediately); `enrich` then folds in OpenAlex's per-year citations
 // and the venue's 2-year mean citedness when available.
 
-interface Resolved { meta: PaperMeta; openAlexWork: OpenAlexWork | null; s2?: S2Paper | null }
+interface Resolved {
+  meta: PaperMeta;
+  openAlexWork: OpenAlexWork | null;
+  s2?: S2Paper | null;
+  /** A DOI the record carries that may be the published version (checked in enrich). */
+  candidateDoi?: string | null;
+}
 /** Transient (never cached): Semantic Scholar could not be consulted, so the total may be low. */
 const s2Unavailable = new WeakSet<PaperMeta>();
 
-async function resolvePrimary(ids: PaperIdentifiers, titles: string[]): Promise<Resolved | null> {
+// Crossref records that are a whole volume or series, not one paper: a DOI
+// cut at a line break often lands on the proceedings itself.
+const CONTAINER_TYPES = /^(?:proceedings|journal|journal-issue|journal-volume|book-series|proceedings-series|book-set|report-series|component|database)$/iu;
+
+/** What the PDF itself says, to check looked-up records against. */
+interface DocumentEvidence { titles: string[]; pageText: string }
+
+/** A record found by id is trusted only if it is this document (PDFs without text cannot tell). */
+function isThisDocument(title: string, evidence: DocumentEvidence): boolean {
+  if (evidence.pageText.trim().length < 200 && evidence.titles.length === 0) return true;
+  return recordMatchesDocument(title, evidence.titles, evidence.pageText);
+}
+
+async function resolvePrimary(ids: PaperIdentifiers, titles: string[], evidence: DocumentEvidence): Promise<Resolved | null> {
   if (ids.doi) {
     const [cr, oa] = await Promise.all([crossrefByDoi(ids.doi), openAlexByDoi(ids.doi)]);
-    if (cr) return { meta: oa ? enrichWithOpenAlex(metaFromCrossref(cr, ids), oa) : metaFromCrossref(cr, ids), openAlexWork: oa };
-    if (oa) return { meta: metaFromOpenAlex(oa, ids), openAlexWork: oa };
+    const title = cr?.title?.[0] ?? oa?.display_name ?? '';
+    if ((cr || oa) && (CONTAINER_TYPES.test(cr?.type ?? '') || !isThisDocument(title, evidence))) {
+      debugLog('paper', 'ignored a DOI whose record is not this document', () => ({ doi: ids.doi, title, type: cr?.type }));
+    } else {
+      if (cr) return { meta: oa ? enrichWithOpenAlex(metaFromCrossref(cr, ids), oa) : metaFromCrossref(cr, ids), openAlexWork: oa };
+      if (oa) return { meta: metaFromOpenAlex(oa, ids), openAlexWork: oa };
+    }
   }
   if (ids.arxivId) {
     const oa = await openAlexByDoi(`10.48550/arXiv.${ids.arxivId}`);
-    if (oa) return { meta: metaFromOpenAlex(oa, ids), openAlexWork: oa };
+    if (oa && isThisDocument(oa.display_name ?? '', evidence)) return arxivRecord(metaFromOpenAlex(oa, ids), oa);
+    if (oa) debugLog('paper', 'ignored an OpenAlex arXiv record that is not this document', () => ({ title: oa.display_name }));
+    // arXiv itself: always there for an arXiv id, no daily budget, and it
+    // carries the DOI the authors gave for the published version.
+    const ax = await arxivById(ids.arxivId);
+    if (ax) return { meta: ax, openAlexWork: null };
   }
   if (ids.doi || ids.arxivId) {
     // As a last-resort primary source (Crossref and OpenAlex both missed the
     // id) retry only briefly: an unknown id is the likely reason, and a long
     // backoff would just delay the "not found" verdict.
     const s2 = await semanticScholarByIds(ids, [2_000]);
-    if (s2) return { meta: metaFromS2(s2, ids), openAlexWork: null, s2 };
+    if (s2 && isThisDocument(s2.title ?? '', evidence)) return { meta: metaFromS2(s2, ids), openAlexWork: null, s2 };
   }
   for (const title of titles) {
     const oa = await openAlexByTitle(title);
     if (oa) return { meta: metaFromOpenAlex(oa, ids), openAlexWork: oa };
     const cr = await crossrefByTitle(title);
-    if (cr) return { meta: metaFromCrossref(cr, ids), openAlexWork: null };
+    if (cr && !CONTAINER_TYPES.test(cr.type ?? '')) return { meta: metaFromCrossref(cr, ids), openAlexWork: null };
   }
   // Last resort, after every title missed the open databases: Semantic
   // Scholar's pool is rate-limited, so it is asked once per title only here.
@@ -468,6 +582,50 @@ async function resolvePrimary(ids: PaperIdentifiers, titles: string[]): Promise<
     if (s2) return { meta: metaFromS2(s2, ids), openAlexWork: null, s2 };
   }
   return null;
+}
+
+/**
+ * OpenAlex's record of an arXiv paper, repaired: the year is the arXiv
+ * posting year (records get re-dated by later copies), and a non-arXiv DOI
+ * on it is only a candidate for the published version — OpenAlex merges
+ * re-posts and spam copies into arXiv records.
+ */
+function arxivRecord(meta: PaperMeta, work: OpenAlexWork): Resolved {
+  const idYear = meta.arxivId ? arxivIdYear(meta.arxivId) : null;
+  const year = idYear && (!meta.year || meta.year > idYear) ? idYear : meta.year;
+  if (!meta.doi) return { meta: { ...meta, year }, openAlexWork: work };
+  return {
+    meta: { ...meta, year, doi: null, workType: 'preprint', landingUrl: meta.arxivId ? `https://arxiv.org/abs/${meta.arxivId}` : meta.landingUrl },
+    openAlexWork: work,
+    candidateDoi: meta.doi,
+  };
+}
+
+/** The record a candidate DOI points to, in the form the published-version check reads. */
+async function workSummary(doi: string): Promise<{ summary: WorkSummary | null; openAlex: OpenAlexWork | null; firstAuthor: string | null }> {
+  const published = await openAlexByDoi(doi);
+  if (published) {
+    return {
+      summary: { title: published.display_name ?? '', year: published.publication_year ?? null, type: published.type ?? null, repository: published.primary_location?.source?.type === 'repository' },
+      openAlex: published,
+      firstAuthor: published.authorships?.[0]?.author?.display_name ?? null,
+    };
+  }
+  const record = await crossrefByDoi(doi);
+  if (!record) return { summary: null, openAlex: null, firstAuthor: null };
+  return {
+    summary: { title: record.title?.[0] ?? '', year: record.issued?.['date-parts']?.[0]?.[0] ?? null, type: record.type ?? null, repository: false },
+    openAlex: null,
+    firstAuthor: record.author?.[0] ? record.author[0].family ?? record.author[0].name ?? null : null,
+  };
+}
+
+/** Same first author (by surname), when both sides name one. */
+function sameFirstAuthor(authors: readonly string[], other: string | null): boolean {
+  if (!authors[0] || !other) return true;
+  const a = normalizeTitle(splitAuthor(authors[0]).last);
+  const b = normalizeTitle(other);
+  return !!a && (b.includes(a) || a.includes(b.split(' ').pop() ?? b));
 }
 
 async function enrich(resolved: Resolved): Promise<PaperMeta> {
@@ -483,12 +641,33 @@ async function enrich(resolved: Resolved): Promise<PaperMeta> {
     : null);
   if (s2) meta = enrichWithS2(meta, s2);
   else if (!resolved.s2 && meta.citations.semanticScholar === null && lastRateLimited) s2Failed = true;
+  // A preprint's published version: a DOI the records name, or Crossref's
+  // best title match — each adopted only if it checks out.
+  let published = false;
+  if (!meta.doi) {
+    const candidates = [resolved.candidateDoi ?? null, s2 ? s2Doi(s2) : null].filter((d): d is string => !!d);
+    if (meta.arxivId || meta.workType === 'preprint') {
+      const byTitle = meta.title ? await crossrefByTitle(meta.title) : null;
+      const doi = byTitle?.DOI ? normalizeDoi(byTitle.DOI) : null;
+      if (doi && !arxivIdFromDoi(doi) && /^(?:journal-article|proceedings-article|book-chapter)$/u.test(byTitle?.type ?? '')) candidates.push(doi);
+    }
+    for (const candidate of [...new Set(candidates)]) {
+      const found = await workSummary(candidate);
+      if (found.summary && isPublishedVersion({ title: meta.title, year: meta.year }, found.summary) && sameFirstAuthor(meta.authors, found.firstAuthor)) {
+        meta = { ...meta, doi: candidate, landingUrl: `https://doi.org/${candidate}` };
+        published = true;
+        if (found.openAlex) { work = found.openAlex; meta = enrichWithOpenAlex(meta, found.openAlex); }
+        break;
+      }
+      debugLog('paper', 'ignored a DOI that is not the published version', () => ({ candidate, summary: found.summary }));
+    }
+  }
   const isPreprintWork = !work || work.type === 'preprint' || /arxiv/iu.test(work.primary_location?.source?.display_name ?? '');
   if (meta.doi && (!work || (isPreprintWork && (work.doi ?? '').toLowerCase().includes('arxiv')))) {
-    const published = await openAlexByDoi(meta.doi);
-    if (published) { work = published; meta = enrichWithOpenAlex(meta, published); }
+    const record = await openAlexByDoi(meta.doi);
+    if (record) { work = record; meta = enrichWithOpenAlex(meta, record); }
   }
-  const sourceId = work?.primary_location?.source?.id;
+  const sourceId = work?.primary_location?.source?.type === 'repository' ? null : work?.primary_location?.source?.id;
   const [twoYear, crossref] = await Promise.all([
     sourceId ? openAlexSourceStats(sourceId) : Promise.resolve(null),
     meta.doi && meta.citations.crossref === null ? crossrefByDoi(meta.doi) : Promise.resolve(null),
@@ -496,15 +675,18 @@ async function enrich(resolved: Resolved): Promise<PaperMeta> {
   if (twoYear !== null) meta = { ...meta, venueTwoYearMeanCitedness: twoYear };
   if (crossref) {
     const cr = metaFromCrossref(crossref, { doi: meta.doi ?? undefined, arxivId: meta.arxivId ?? undefined });
+    const wasPreprint = !meta.venue || meta.venueType === 'repository' || /arxiv/iu.test(meta.venue);
+    // A preprint that turned out to be published: the published venue AND
+    // its year, so the strip, APA and BibTeX agree.
+    const usePublished = (published || wasPreprint) && !!cr.venue;
     meta = {
       ...meta,
       citations: { ...meta.citations, crossref: crossref['is-referenced-by-count'] ?? null },
       references: { ...meta.references, crossref: crossref['reference-count'] ?? null },
-      // A preprint that turned out to be published: show the published venue.
-      venue: meta.venue && !/arxiv/iu.test(meta.venue) ? meta.venue : (cr.venue ?? meta.venue),
-      venueType: meta.venueType && meta.venueType !== 'repository' ? meta.venueType : (cr.venueType ?? meta.venueType),
+      venue: usePublished ? cr.venue : meta.venue,
+      venueType: usePublished ? cr.venueType : (meta.venueType ?? cr.venueType),
       workType: cr.workType ?? meta.workType,
-      year: meta.year ?? cr.year,
+      year: usePublished ? cr.year ?? meta.year : meta.year ?? cr.year,
       volume: meta.volume ?? cr.volume,
       issue: meta.issue ?? cr.issue,
       firstPage: meta.firstPage ?? cr.firstPage,
@@ -616,9 +798,40 @@ export class PaperStrip {
 
   /** Kicks off the background reference lookup for a fully resolved meta. */
   private startReferences(meta: PaperMeta, key: string): void {
-    if (meta.referencedWorks && meta.referencedWorks.length > 0) void this.refs.load(meta.referencedWorks, key);
-    else if (meta.s2PaperId) void this.refs.loadFromSemanticScholar(meta.s2PaperId, key, s2Headers());
-    else this.refs.unavailable(meta.openalexId ? 'OpenAlex·Semantic Scholar에 이 논문의 참고문헌 목록이 없습니다.' : '이 논문을 OpenAlex·Semantic Scholar에서 못 찾아 참고문헌 목록을 만들 수 없습니다.');
+    void this.loadReferences(meta, key, this.generation);
+  }
+
+  /**
+   * OpenAlex's list, else Semantic Scholar's (skipped when it was just rate
+   * limited: the retries would only delay the next step), else the list
+   * printed in the PDF.
+   */
+  private async loadReferences(meta: PaperMeta, key: string, gen: number): Promise<void> {
+    // A database list far shorter than the paper's count (OpenAlex knowing 2
+    // of 65) is replaced by the PDF's own list when that one is longer.
+    const expected = bestReferenceCount(meta);
+    const enough = () => this.refs.size > 0 && (expected === null || this.refs.size >= expected * 0.6);
+    let loaded = false;
+    if (meta.referencedWorks && meta.referencedWorks.length > 0) loaded = await this.refs.load(meta.referencedWorks, key);
+    if (gen !== this.generation) return;
+    const s2Limited = s2Unavailable.has(meta);
+    if ((!loaded || !enough()) && meta.s2PaperId && !s2Limited) {
+      const before = loaded ? this.refs.size : 0;
+      const s2 = await this.refs.loadFromSemanticScholar(meta.s2PaperId, key, s2Headers());
+      if (s2 && this.refs.size < before && meta.referencedWorks?.length) await this.refs.load(meta.referencedWorks, key);
+      loaded = loaded || s2;
+    }
+    if (gen !== this.generation || !this.current) return;
+    if (loaded && enough()) return;
+    const refs = await pdfReferences(this.current.doc);
+    if (gen !== this.generation) return;
+    if (loaded && refs.length <= this.refs.size) return;
+    const databases = openAlexBudgetSpent()
+      ? 'OpenAlex는 일일 무료 한도가 소진돼 조회하지 못했고' + (s2Limited ? ' Semantic Scholar는 요청 제한(429)에 걸렸으며' : '')
+      : s2Limited
+      ? 'OpenAlex에 참고문헌 목록이 없고 Semantic Scholar는 요청 제한(429)으로 확인하지 못했으며'
+      : meta.openalexId || meta.s2PaperId ? 'OpenAlex·Semantic Scholar에 참고문헌 목록이 없고' : '이 논문을 OpenAlex·Semantic Scholar에서 못 찾았고';
+    await this.refs.loadFromPdf(refs, key, `${databases}, PDF에서도 참고문헌 절을 찾지 못했습니다.`);
   }
 
   /**
@@ -638,10 +851,12 @@ export class PaperStrip {
         return;
       }
       s2ApiKey = (await getSetting<string>(SEMANTIC_SCHOLAR_API_KEY_SETTING_KEY, '')).trim();
+      setOpenAlexApiKey(await getSetting<string>(OPENALEX_API_KEY_SETTING_KEY, ''));
       const [fromMeta, page] = await Promise.all([metadataIdentifiers(doc), firstPageText(doc)]);
       if (gen !== this.generation) return;
       const ids = mergeIdentifiers(sourceUrl ? identifiersFromUrl(sourceUrl) : {}, fromMeta.ids, identifiersFromText(page.text));
-      const titles = [fromMeta.title, page.bigTitle].filter((t): t is string => !!t);
+      const titles = [fromMeta.title, page.bigTitle].filter((t): t is string => !!t && !isGenericTitle(t));
+      const evidence = { titles, pageText: page.text };
       debugLog('paper', 'detection', () => ({ ids, titles, textSample: page.text.slice(0, 160) }));
       if (!ids.doi && !ids.arxivId && titles.length === 0) {
         this.renderStatus('none', '논문으로 인식되지 않았습니다.', '첫 페이지와 문서 정보에서 DOI·arXiv ID·제목을 찾지 못했습니다.');
@@ -656,25 +871,27 @@ export class PaperStrip {
       if (cached) {
         debugLog('paper', 'resolved (cache)', () => ({ key, meta: cached }));
         if (gen !== this.generation) return;
-        this.meta = cached;
-        this.render(cached);
-        this.startReferences(cached, key);
+        this.meta = tidyPaperMeta(cached);
+        this.render(this.meta);
+        this.startReferences(this.meta, key);
         return;
       }
       networkFailures = 0;
-      let primary = await resolvePrimary(ids, titles);
+      let primary = await resolvePrimary(ids, titles, evidence);
       if (!primary && networkFailures > 0) {
         debugLog('paper', `lookup hit ${networkFailures} network failure(s); retrying in ${NETWORK_RETRY_DELAY_MS}ms`);
         await new Promise((r) => setTimeout(r, NETWORK_RETRY_DELAY_MS));
         if (gen !== this.generation) return;
-        primary = await resolvePrimary(ids, titles);
+        primary = await resolvePrimary(ids, titles, evidence);
       }
       debugLog('paper', primary ? 'resolved (primary)' : 'no match', () => ({ key, meta: primary?.meta }));
       if (gen !== this.generation) return;
       if (!primary) {
         // A transient failure or a DOI/arXiv id nobody knows is worth a
         // warning; a title nobody knows most likely just isn't a paper.
-        if (networkFailures > 0) {
+        if (openAlexBudgetSpent()) {
+          this.renderStatus('failed', `${what}: ${OPENALEX_BUDGET_REASON}`);
+        } else if (networkFailures > 0) {
           this.renderStatus('failed', `${what}: OpenAlex·Crossref·Semantic Scholar 조회가 실패했습니다 (네트워크 지연 또는 요청 제한).`);
         } else if (lastRateLimited) {
           this.renderStatus('failed', `${what}: OpenAlex·Crossref에 없고, Semantic Scholar는 요청 제한(429)으로 확인하지 못했습니다. 설정에 Semantic Scholar API 키를 넣으면 안정적으로 조회됩니다.`);
@@ -685,9 +902,11 @@ export class PaperStrip {
         }
         return;
       }
-      this.meta = primary.meta;
-      this.render(primary.meta);
-      const enriched = await enrich(primary);
+      this.meta = tidyPaperMeta(primary.meta);
+      this.render(this.meta);
+      const raw = await enrich(primary);
+      const enriched = tidyPaperMeta(raw);
+      if (s2Unavailable.has(raw)) s2Unavailable.add(enriched);
       if (gen !== this.generation) return;
       debugLog('paper', 'enriched', () => ({ key, meta: enriched }));
       this.meta = enriched;
@@ -696,7 +915,7 @@ export class PaperStrip {
       this.startReferences(enriched, key);
       // A lookup that Semantic Scholar rate-limited is incomplete: leave it
       // uncached so the next open tries again.
-      if (!s2Unavailable.has(enriched)) void writeCache(key, enriched);
+      if (!s2Unavailable.has(enriched) && !openAlexBudgetSpent()) void writeCache(key, enriched);
     } catch (error) {
       debugError('paper', 'paper strip failed', () => ({ error: error instanceof Error ? error.message : String(error) }));
       if (gen === this.generation) {
@@ -762,7 +981,17 @@ export class PaperStrip {
 
     // ── 2년/전체 인용수 + sparkline (hover → detailed chart)
     const total = bestCitationCount(meta);
-    const twoYear = recentTwoYearCitations(meta);
+    // The 2-year figure comes from OpenAlex's per-year counts. When OpenAlex
+    // knows only a small share of the citations (an arXiv-only record of a
+    // famous paper) it would sit next to another source's total as nonsense.
+    const openAlexShare = total && typeof meta.citations.openalex === 'number' ? meta.citations.openalex / total : null;
+    const partial = openAlexShare !== null && openAlexShare < 0.5;
+    const recent = meta.year !== null && meta.year >= new Date().getFullYear() - 1;
+    // A paper under two years old: every citation is a recent one.
+    const twoYear = partial ? null : recentTwoYearCitations(meta) ?? (recent ? total : null);
+    const twoYearWarning = openAlexBudgetSpent() ? OPENALEX_BUDGET_REASON
+      : partial ? `OpenAlex가 이 논문의 인용을 일부만 알고 있어(전체의 ${Math.round((openAlexShare ?? 0) * 100)}%) 최근 2년 인용을 계산하지 않았습니다.`
+        : '연도별 인용 데이터가 없어 최근 2년 인용을 계산하지 못했습니다 (OpenAlex).';
     const history = citationHistory(meta);
     const sourcesDetail = [
       typeof meta.citations.semanticScholar === 'number' ? `Semantic Scholar ${formatCount(meta.citations.semanticScholar)}` : null,
@@ -770,7 +999,7 @@ export class PaperStrip {
       typeof meta.citations.crossref === 'number' ? `Crossref ${formatCount(meta.citations.crossref)}` : null,
     ].filter(Boolean).join(' · ');
     const cites = segment('2년/전체 인용수', [
-      twoYear === null ? warn('연도별 인용 데이터가 없어 최근 2년 인용을 계산하지 못했습니다 (OpenAlex).') : formatCount(twoYear),
+      twoYear === null ? warn(twoYearWarning) : formatCount(twoYear),
       '/',
       total === null ? warn('인용 수를 Semantic Scholar·OpenAlex·Crossref 어디서도 못 찾았습니다.') : formatCount(total),
       ...(s2Unavailable.has(meta) ? [' ', warn('Semantic Scholar 조회가 요청 제한(429)으로 실패해 실제보다 낮을 수 있습니다. 설정에 Semantic Scholar API 키를 넣으면 안정적으로 조회됩니다.')] : []),
@@ -792,7 +1021,16 @@ export class PaperStrip {
 
     // ── 참고문헌 (hover → resolved reference list)
     const references = bestReferenceCount(meta);
-    const refs = segment('참고문헌', [references === null ? warn('참고문헌 수를 Crossref·OpenAlex 어디서도 못 찾았습니다.') : formatCount(references)]);
+    const refs = segment('참고문헌', [references === null ? warn('참고문헌 수를 Crossref·OpenAlex·Semantic Scholar 어디서도 못 찾았습니다.') : formatCount(references)]);
+    // No database count: the PDF's own list gives it, once read.
+    // No publisher count: the PDF's own list gives it, once read, when it is
+    // more than the indexes know.
+    this.refs.onPdfCount = meta.references.crossref ? null : (count) => {
+      const value = refs.querySelector('.vt-paper-value');
+      if (!value || this.meta !== meta || (references !== null && count <= references)) return;
+      value.replaceChildren(formatCount(count));
+      refs.title = 'PDF 본문의 참고문헌 목록에서 센 수 (데이터베이스의 수보다 많음)';
+    };
     refs.classList.add('vt-paper-refs');
     refs.setAttribute('tabindex', '0');
     refs.append(this.refs.element);

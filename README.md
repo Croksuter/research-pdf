@@ -20,7 +20,10 @@ Google Drive.
 - Remembers drawings and the last page/zoom per document, identified by the
   file's own content rather than its name or path.
 - Shows venue, citation trend, references and links for papers it recognises
-  (DOI / arXiv), via Semantic Scholar, OpenAlex and Crossref.
+  (DOI / arXiv / title), via OpenAlex, Crossref, arXiv and Semantic Scholar; the
+  reference list falls back to the one printed in the PDF. Optional API keys
+  for Semantic Scholar and OpenAlex (OpenAlex's keyless use is a daily budget
+  shared per network).
 - Copies a figure or table as a sharp image for slides: drag a region (⌘+Shift+X /
   Ctrl+Shift+X, `S`, the toolbar button, or Alt+drag), and it is rendered again at 150–600 dpi, with
   or without your drawings, next to a ready source line (`Source: Hao et al.

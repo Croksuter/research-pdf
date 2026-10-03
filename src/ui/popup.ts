@@ -13,6 +13,7 @@ import {
   PAPER_INFO_ENABLED_SETTING_KEY,
   PDF_FILE_CACHE_ENABLED_SETTING_KEY,
   SEMANTIC_SCHOLAR_API_KEY_SETTING_KEY,
+  OPENALEX_API_KEY_SETTING_KEY,
   WEB_PDF_VIEWER_ENABLED_SETTING_KEY,
 } from '../shared/constants';
 import { getSetting, setSetting } from '../db/settingsRepository';
@@ -38,6 +39,8 @@ const webPdfInput = byId<HTMLInputElement>('web-pdf-viewer-enabled');
 const paperInfoInput = byId<HTMLInputElement>('paper-info-enabled');
 const s2KeyInput = byId<HTMLInputElement>('s2-api-key-input');
 const s2KeySaveButton = byId<HTMLButtonElement>('s2-api-key-save');
+const openAlexKeyInput = byId<HTMLInputElement>('openalex-api-key-input');
+const openAlexKeySaveButton = byId<HTMLButtonElement>('openalex-api-key-save');
 const restoreTabsButton = byId<HTMLButtonElement>('restore-viewer-tabs');
 const settingsStatus = byId<HTMLParagraphElement>('settings-status');
 const fileCacheInput = byId<HTMLInputElement>('pdf-file-cache-enabled');
@@ -231,6 +234,15 @@ s2KeySaveButton.addEventListener('click', () => {
   });
 });
 
+openAlexKeySaveButton.addEventListener('click', () => {
+  const key = openAlexKeyInput.value.trim();
+  void setSetting(OPENALEX_API_KEY_SETTING_KEY, key).then(() => {
+    openAlexKeyInput.value = '';
+    openAlexKeyInput.placeholder = key ? '저장됨 (바꾸려면 새 키 입력)' : '없으면 네트워크 공용 일일 한도 사용';
+    settingsStatus.textContent = key ? 'OpenAlex API 키를 저장했습니다.' : 'OpenAlex API 키를 삭제했습니다.';
+  });
+});
+
 restoreTabsButton.addEventListener('click', () => {
   restoreTabsButton.disabled = true;
   void send<{ success: boolean; restored?: number; open?: number }>({ type: 'VOCAB_T_RESTORE_VIEWER_TABS' }).then((response) => {
@@ -250,13 +262,15 @@ restoreTabsButton.addEventListener('click', () => {
 // ─── Boot ───
 
 async function loadSettings(): Promise<void> {
-  const [localPdf, webPdf, paperInfo, s2Key, fileCache] = await Promise.all([
+  const [localPdf, webPdf, paperInfo, s2Key, fileCache, openAlexKey] = await Promise.all([
     getSetting(LOCAL_PDF_VIEWER_ENABLED_SETTING_KEY, DEFAULT_LOCAL_PDF_VIEWER_ENABLED),
     getSetting(WEB_PDF_VIEWER_ENABLED_SETTING_KEY, DEFAULT_WEB_PDF_VIEWER_ENABLED),
     getSetting(PAPER_INFO_ENABLED_SETTING_KEY, DEFAULT_PAPER_INFO_ENABLED),
     getSetting<string>(SEMANTIC_SCHOLAR_API_KEY_SETTING_KEY, ''),
     getSetting(PDF_FILE_CACHE_ENABLED_SETTING_KEY, DEFAULT_PDF_FILE_CACHE_ENABLED),
+    getSetting<string>(OPENALEX_API_KEY_SETTING_KEY, ''),
   ]);
+  openAlexKeyInput.placeholder = openAlexKey ? '저장됨 (바꾸려면 새 키 입력)' : '없으면 네트워크 공용 일일 한도 사용';
   fileCacheInput.checked = fileCache;
   void renderFileCacheUsage();
   localPdfInput.checked = localPdf;
