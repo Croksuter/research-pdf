@@ -1,0 +1,502 @@
+[
+ {
+  "url": "https://arxiv.org/pdf/1706.03762",
+  "paper": "Attention Is All You Need",
+  "field": "doi",
+  "expected": "arXiv id only (or NeurIPS 2017 proceedings); no DOI",
+  "got": "DOI 10.65215/2q58a426 (publisher \"Shenzhen Medical Academy of Research and Translation\", Crossref posted-content, Aug 2025) used for popover DOI link, Google Scholar link, BibTeX @article and APA",
+  "severity": "high",
+  "cause": "openalex-data-pollution (OpenAlex W2626778328 has doi 10.65215/2q58a426, pub year 2025; product trusts it over the PDF arXiv id)",
+  "evidence": "curl api.openalex.org/works/W2626778328 -> doi https://doi.org/10.65215/2q58a426, publication_year 2025, many 10.65215/* locations; strip text"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1706.03762",
+  "paper": "Attention Is All You Need",
+  "field": "year",
+  "expected": "2017 (NeurIPS 2017 / first arXiv submission 2017-06-12)",
+  "got": "2025 in strip, BibTeX (Vaswani_2025, month=Aug) and APA",
+  "severity": "high",
+  "cause": "openalex-data-pollution",
+  "evidence": "OpenAlex publication_year 2025; arXiv API published 2017-06-12"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1706.03762",
+  "paper": "Attention Is All You Need",
+  "field": "venue",
+  "expected": "conference badge, NeurIPS 2017",
+  "got": "\"preprint · Neural Information Processing Systems\"; BibTeX says publisher Shenzhen Medical Academy..., APA mixes NeurIPS with the bogus DOI",
+  "severity": "medium",
+  "cause": "kind from OpenAlex workType=preprint while venue = NeurIPS",
+  "evidence": "strip text"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1706.03762",
+  "paper": "Attention Is All You Need",
+  "field": "references",
+  "expected": "~40 real refs; list of those",
+  "got": "refsHeader \"참고문헌 21편 ... 7편은 OpenAlex에 없음\" vs strip count 41; list contains junk entries e.g. \"AutoResearch Lite: a reproducible paper-inspired experiment runner (Adam mechanism reproduction ...)\"",
+  "severity": "high",
+  "cause": "openalex-data-pollution + s2-429 (S2 failed twice so list came from OA)",
+  "evidence": "pdftotext: bracketed refs [1]..[40]; refs[1] of result"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1706.03762",
+  "paper": "Attention Is All You Need",
+  "field": "citations",
+  "expected": "2-year citations on the order of tens of thousands (total ~190k)",
+  "got": "1,456 / 194,995: 2-year number from OpenAlex fragmented record (total OA 26,714) while total from S2 (194,995): incoherent scale",
+  "severity": "medium",
+  "cause": "source mixing (OA counts_by_year vs S2 total)",
+  "evidence": "meta.citations openalex 26714 vs semanticScholar 194995"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1706.03762",
+  "paper": "Attention Is All You Need",
+  "field": "authors",
+  "expected": "Ashish Vaswani, Noam Shazeer, Niki Parmar, ... Aidan N. Gomez",
+  "got": "\"Niki Jitendra Parmar\" in popover/APA (Parmar, N. J.), BibTeX \"N.Gomez, Aidan\" (mangled)",
+  "severity": "low",
+  "cause": "openalex author name quality / BibTeX name normalisation",
+  "evidence": "result copies BibTeX"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1512.03385v1",
+  "paper": "ResNet",
+  "field": "venue",
+  "expected": "CVPR 2016 (DOI 10.1109/CVPR.2016.90), conference",
+  "got": "preprint · arXiv (Cornell University) (published conference version not linked/detected; venue label \"arXiv (Cornell University)\" is an OpenAlex repository name)",
+  "severity": "medium",
+  "cause": "published-version-not-linked (OpenAlex arXiv-only record; S2 429 also prevented S2 venue)",
+  "evidence": "strip text; S2 429 x5"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1412.6980",
+  "paper": "Adam",
+  "field": "venue",
+  "expected": "ICLR 2015 conference",
+  "got": "preprint · arXiv (Cornell University) (published conference version not linked/detected; venue label \"arXiv (Cornell University)\" is an OpenAlex repository name)",
+  "severity": "medium",
+  "cause": "published-version-not-linked (OpenAlex arXiv-only record; S2 429 also prevented S2 venue)",
+  "evidence": "strip text; S2 429 x5"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1506.02142.pdf",
+  "paper": "Dropout as a Bayesian Approximation",
+  "field": "venue",
+  "expected": "ICML 2016 conference",
+  "got": "preprint · arXiv (Cornell University) (published conference version not linked/detected; venue label \"arXiv (Cornell University)\" is an OpenAlex repository name)",
+  "severity": "medium",
+  "cause": "published-version-not-linked (OpenAlex arXiv-only record; S2 429 also prevented S2 venue)",
+  "evidence": "strip text; S2 429 x5"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1512.03385v1",
+  "paper": "ResNet",
+  "field": "citations",
+  "expected": "total ~250k+ (S2), 2y ~ tens of thousands",
+  "got": "551/4,702 with ⚠︎ (OpenAlex arXiv-only record, S2 429)",
+  "severity": "high",
+  "cause": "s2-429 + oa arXiv-record fragmentation",
+  "evidence": "warnings text; meta.citations"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1412.6980",
+  "paper": "Adam",
+  "field": "citations",
+  "expected": "total ~200k, 2y tens of thousands",
+  "got": "3,240/83,446 with ⚠︎; OA yearly counts for the arXiv record show 2025=3,212 vs 2023=12,205 (record fragmentation makes 2y absurdly low)",
+  "severity": "high",
+  "cause": "s2-429 + oa fragmentation",
+  "evidence": "meta.citationsByYear"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1506.02142.pdf",
+  "paper": "Dropout",
+  "field": "citations",
+  "expected": "total ~10k",
+  "got": "194/2,628 ⚠︎",
+  "severity": "medium",
+  "cause": "s2-429",
+  "evidence": "warnings"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1312.6114.pdf",
+  "paper": "Auto-Encoding Variational Bayes",
+  "field": "venue",
+  "expected": "ICLR 2014 conference (arXiv 2013)",
+  "got": "\"preprint · UvA-DARE (University of Amsterdam)\" as venue; BibTeX @article{journal={UvA-DARE (University of Amsterdam)}, url=dare.uva.nl/personal/pure/...}; APA venue UvA-DARE with that URL",
+  "severity": "medium",
+  "cause": "repository-as-venue (OpenAlex primary_location is an institutional repository)",
+  "evidence": "copies BibTeX/APA"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1312.6114.pdf",
+  "paper": "Auto-Encoding Variational Bayes",
+  "field": "references",
+  "expected": "~26 refs; list ~26",
+  "got": "refsHeader 11편 (3 not in OA) vs strip 26",
+  "severity": "low",
+  "cause": "openalex partial refs",
+  "evidence": "meta.references openalex 14 / s2 26"
+ },
+ {
+  "url": "https://arxiv.org/pdf/2005.14165v4",
+  "paper": "GPT-3",
+  "field": "kind",
+  "expected": "conference (NeurIPS 2020)",
+  "got": "badge \"preprint\" next to venue \"Neural Information Processing Systems\"; BibTeX @article{journal=Neural Information Processing Systems} instead of @inproceedings",
+  "severity": "medium",
+  "cause": "kind from OpenAlex workType preprint",
+  "evidence": "copies"
+ },
+ {
+  "url": "https://arxiv.org/pdf/2005.14165v4",
+  "paper": "GPT-3",
+  "field": "authors",
+  "expected": "Tom B. Brown, Benjamin Mann, ... Mark Chen ...",
+  "got": "Inconsistent name forms (\"Brown, Tom B.\", \"Ziegler, Daniel M.\", \"Sigler, Eric\" vs \"First Last\") in popover/BibTeX; \"Mark I-Cheng Chen\", \"Gretchen Marie Krueger\" differ from PDF; refs 119 listed vs 146 counted",
+  "severity": "low",
+  "cause": "openalex author strings not normalised",
+  "evidence": "BibTeX copy"
+ },
+ {
+  "url": "https://arxiv.org/pdf/2005.14165v4",
+  "paper": "GPT-3",
+  "field": "references",
+  "expected": "~146 refs in PDF",
+  "got": "strip 146 (ok) but list 119",
+  "severity": "low",
+  "cause": "openalex partial refs",
+  "evidence": "refsHeader"
+ },
+ {
+  "url": "https://arxiv.org/pdf/hep-th/9711200",
+  "paper": "Maldacena large N",
+  "field": "references",
+  "expected": "65 refs in PDF; list of ~40+",
+  "got": "refsHeader \"참고문헌 2편\" (strip says 46) -- list has only 2 entries, no ⚠︎ warning; no fallback to S2/Crossref",
+  "severity": "high",
+  "cause": "openalex-missing refs (OA references=2) + s2-429 (2 failures) -> no fallback; list incomplete silently",
+  "evidence": "meta.references {\"openalex\":2,\"semanticScholar\":46}; pdftotext bracket refs up to [65]"
+ },
+ {
+  "url": "https://arxiv.org/pdf/hep-th/9711200",
+  "paper": "Maldacena large N",
+  "field": "title",
+  "expected": "The Large N Limit of Superconformal Field Theories and Supergravity",
+  "got": "\"The large $N$ limit of superconformal field theories and supergravity\" (raw LaTeX $N$ from Crossref) in popover/BibTeX/APA",
+  "severity": "low",
+  "cause": "crossref title not de-TeXed",
+  "evidence": "popover title"
+ },
+ {
+  "url": "https://arxiv.org/pdf/hep-th/9711200",
+  "paper": "Maldacena large N",
+  "field": "authors",
+  "expected": "Juan M. Maldacena",
+  "got": "\"JUAN M. MALDACENA\" (all caps) in popover; APA \"MALDACENA, J. M.\"",
+  "severity": "low",
+  "cause": "openalex author casing",
+  "evidence": "APA copy"
+ },
+ {
+  "url": "https://arxiv.org/pdf/math/0211159",
+  "paper": "Perelman Ricci flow entropy",
+  "field": "title",
+  "expected": "The entropy formula for the Ricci flow and its geometric applications",
+  "got": "\"Análisis Comparativo y Refutación Determinista de la Incertidumbre Cuántica Óptica de Fluidos en la Variedad RP3 vs. Ortodoxia Probabilística\" in popover, BibTeX key Perelman2002lisis, APA, Google Scholar link",
+  "severity": "high",
+  "cause": "openalex-data-pollution (OpenAlex W1970564715 carries a wrong title); detected PDF title not cross-checked",
+  "evidence": "pdftotext p1: \"The entropy formula for the Ricci flow and its geometric applications\"; first-page detection"
+ },
+ {
+  "url": "https://arxiv.org/pdf/math/0211159",
+  "paper": "Perelman Ricci flow entropy",
+  "field": "references",
+  "expected": "~28 (PDF list 28)",
+  "got": "list 13 entries mislabelled (OpenAlex related refs of wrong record?) - header 13편",
+  "severity": "low",
+  "cause": "openalex partial",
+  "evidence": "refsHeader"
+ },
+ {
+  "url": "https://arxiv.org/pdf/math/0211159",
+  "paper": "Perelman",
+  "field": "authors",
+  "expected": "Grisha Perelman",
+  "got": "\"Perelman, Grisha\" (Last, First retained in author string; APA \"Perelman, G.\" ok)",
+  "severity": "low",
+  "cause": "openalex name format",
+  "evidence": "popover"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1807.06209",
+  "paper": "Planck 2018 VI",
+  "field": "title",
+  "expected": "Planck 2018 results. VI. Cosmological parameters",
+  "got": "\"Dark Matter as a Topological Vacuum Condensate\" (wrong work) in popover, BibTeX, APA, Google Scholar link",
+  "severity": "high",
+  "cause": "openalex-data-pollution (OpenAlex W3105678606)",
+  "evidence": "pdftotext p1: \"Planck 2018 results. VI. Cosmological parameters\"; detection ids"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1807.06209",
+  "paper": "Planck 2018 VI",
+  "field": "venue",
+  "expected": "journal, Astronomy & Astrophysics 641, A6 (2020), DOI 10.1051/0004-6361/201833910",
+  "got": "\"preprint · arXiv (Cornell University) · 2018\", no DOI",
+  "severity": "high",
+  "cause": "published-version-not-linked",
+  "evidence": "arXiv API: journal_ref A&A 641, A6 (2020)"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1807.06209",
+  "paper": "Planck 2018 VI",
+  "field": "apa",
+  "expected": "Planck Collaboration. (2020). ...",
+  "got": "\"Collaboration, P., Aghanim, N., ...\" (group author parsed as person \"Collaboration, P.\"); BibTeX has 180+ authors in mixed name formats",
+  "severity": "medium",
+  "cause": "APA formatter does not handle group author",
+  "evidence": "copies APA"
+ },
+ {
+  "url": "https://arxiv.org/pdf/cond-mat/0410550",
+  "paper": "Novoselov graphene",
+  "field": "references",
+  "expected": "19 refs in the Science paper (PDF list 19)",
+  "got": "strip 42 (S2), list 16 (OA), Crossref 20",
+  "severity": "low",
+  "cause": "source disagreement; strip takes max",
+  "evidence": "meta.references"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1404.7828",
+  "paper": "Schmidhuber Deep learning overview",
+  "field": "year",
+  "expected": "2015 (Neural Networks 61, Jan 2015; Crossref year 2015)",
+  "got": "strip/APA 2014 but BibTeX 2015 (inconsistent between copy formats)",
+  "severity": "low",
+  "cause": "openalex year (online) vs crossref issued year",
+  "evidence": "copies"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1404.7828",
+  "paper": "Schmidhuber Deep learning overview",
+  "field": "references",
+  "expected": "~888 refs (arXiv comment \"888 references\"; Crossref 888)",
+  "got": "strip 1,243 (OpenAlex) while list header says 391",
+  "severity": "medium",
+  "cause": "source mixing / openalex inflation, list truncated",
+  "evidence": "meta.references crossref 888, openalex 1243, s2 994; header 391"
+ },
+ {
+  "url": "https://arxiv.org/pdf/2303.18223",
+  "paper": "Survey of LLMs",
+  "field": "references",
+  "expected": "~1,081 refs in PDF (v19)",
+  "got": "strip 462, header 436 (S2 only; OA 0, Crossref 355)",
+  "severity": "medium",
+  "cause": "s2/oa undercount of long reference lists",
+  "evidence": "pdftotext bracket max [1081]"
+ },
+ {
+  "url": "https://arxiv.org/pdf/2303.18223",
+  "paper": "Survey of LLMs",
+  "field": "authors",
+  "expected": "22 authors incl. ... ",
+  "got": "duplicated/misordered authors in meta: \"Yushuo Chen\" twice, \"Peiyu Liu\" twice (OpenAlex), popover 외 17명",
+  "severity": "low",
+  "cause": "openalex duplicate authors",
+  "evidence": "meta.authors"
+ },
+ {
+  "url": "https://arxiv.org/pdf/2303.04137v5",
+  "paper": "Diffusion Policy",
+  "field": "venue",
+  "expected": "journal: International Journal of Robotics Research 44(10-11), 2024 (v5 is the \"extended journal version\"); or RSS 2023 for v1",
+  "got": "badge \"conference · Robotics: Science and Systems Conference · 2023\" while DOI/volume/pages are the IJRR ones; APA = \"(2023) ... Robotics: Science and Systems Conference, 44(10-11), 1684-1704\" (mixed); BibTeX says IJRR 2024",
+  "severity": "medium",
+  "cause": "venue/year from OA primary vs DOI from Crossref inconsistent",
+  "evidence": "copies APA vs BibTeX"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1608.04644",
+  "paper": "Carlini-Wagner",
+  "field": "year",
+  "expected": "2017 (IEEE S&P 2017, DOI 10.1109/SP.2017.49)",
+  "got": "strip and APA 2016, BibTeX 2017 (inconsistent)",
+  "severity": "medium",
+  "cause": "year from OA arXiv date vs Crossref",
+  "evidence": "copies"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1608.04644",
+  "paper": "Carlini-Wagner",
+  "field": "authors",
+  "expected": "Nicholas Carlini, David Wagner",
+  "got": "\"D. Wagner\" abbreviated initial in popover; APA ok",
+  "severity": "low",
+  "cause": "openalex author names",
+  "evidence": "popover"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1608.00060",
+  "paper": "Double/Debiased ML",
+  "field": "venue",
+  "expected": "journal: The Econometrics Journal 21(1), 2018 (DOI 10.1111/ectj.12097)",
+  "got": "\"preprint · RePEc: Research Papers in Economics\"; BibTeX @article{journal={RePEc: Research Papers in Economics}, url=http://arxiv.org/pdf/1608.00060}",
+  "severity": "medium",
+  "cause": "published-version-not-linked; repository-as-venue",
+  "evidence": "copies"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1608.00060",
+  "paper": "Double/Debiased ML",
+  "field": "citations",
+  "expected": "total in the thousands (~6k+), 2y hundreds",
+  "got": "0/163 (OpenAlex 48 total, S2 163 -> only the RePEc/arXiv-fragment counted)",
+  "severity": "high",
+  "cause": "openalex record fragmentation (preprint copy) + s2-429",
+  "evidence": "meta.citations openalex 48, s2 163"
+ },
+ {
+  "url": "https://arxiv.org/pdf/2603.03251",
+  "paper": "Speculative Speculative Decoding",
+  "field": "citations",
+  "expected": "2y shown (ICLR 2026 paper, total 15)",
+  "got": "\"2년/전체 인용수 ⚠︎/15\": OpenAlex has no yearly data so the 2y value is blank although S2 total exists and paper is < 2 yrs old (2y == total)",
+  "severity": "low",
+  "cause": "openalex-missing (new record, 0 refs / 0 citations) - design gap: could fall back to total",
+  "evidence": "warnings; meta.citationsByYear []"
+ },
+ {
+  "url": "https://arxiv.org/pdf/2603.03251",
+  "paper": "Speculative Speculative Decoding",
+  "field": "references",
+  "expected": "~46 refs; list available",
+  "got": "this run: strip 46, list 43 (S2); OpenAlex has 0 refs. Known \"reference list missing\" occurs when S2 429 (S2 429 seen twice, succeeded on retry)",
+  "severity": "medium",
+  "cause": "s2-429 fragile / openalex-missing",
+  "evidence": "log"
+ },
+ {
+  "url": "https://arxiv.org/pdf/2603.03251",
+  "paper": "Speculative Speculative Decoding",
+  "field": "venue",
+  "expected": "conference ICLR 2026 (arXiv comment \"ICLR 2026\")",
+  "got": "\"preprint · arXiv.org · 2026\" (ICLR 2026 acceptance not reflected)",
+  "severity": "low",
+  "cause": "published-version-not-linked",
+  "evidence": "arXiv comment field"
+ },
+ {
+  "url": "https://export.arxiv.org/pdf/1810.04805",
+  "paper": "BERT",
+  "field": "detection",
+  "expected": "title extracted from first page (\"BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding\"); paper resolved (NAACL 2019)",
+  "got": "strip: \"⚠︎ arXiv:1810.04805: OpenAlex·Crossref에 없고, Semantic Scholar는 요청 제한(429)으로 확인하지 못했습니다\" - nothing shown; detection.titles = [] although the page-1 text starts with the title",
+  "severity": "high",
+  "cause": "title-extraction-failed + s2-429 (OpenAlex returned 200 but no match for arXiv id)",
+  "evidence": "pdftotext p1; detection.titles [] ; log: openalex 200, S2 429, \"no match\""
+ },
+ {
+  "url": "https://arxiv.org/pdf/0704.0001",
+  "paper": "Diphoton cross sections 0704.0001",
+  "field": "detection",
+  "expected": "\"Calculation of prompt diphoton production cross sections at Tevatron and LHC energies\" (Phys.Rev.D76:013009)",
+  "got": "not recognised, no title in detection (PDF text layer drops \"fi\"-ligatures: \"Cal ulation of prompt diphoton produ tion ross se tions\") ; S2 429; no OpenAlex hit",
+  "severity": "medium",
+  "cause": "title-extraction-failed (garbled ligature text) + s2-429",
+  "evidence": "detection.textSample; arXiv jref"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1910.11333",
+  "paper": "Quantum supremacy supplementary",
+  "field": "detection",
+  "expected": "title \"Supplementary information for \"Quantum supremacy using a programmable superconducting processor\"\" (arXiv record is the supplement; published Nature 574, 505)",
+  "got": "not recognised: ⚠︎ no database hit; detection.titles = [] though first line of text is the title",
+  "severity": "medium",
+  "cause": "title-extraction-failed + s2-429",
+  "evidence": "detection.textSample; arXiv API title"
+ },
+ {
+  "url": "https://arxiv.org/pdf/math/0312520",
+  "paper": "Verbitsky subvarieties",
+  "field": "detection",
+  "expected": "title \"Subvarieties in non-compact hyperkähler manifolds\"",
+  "got": "detected title mangled \"Subvarieties in non-compact hyperk¨ ahler manifolds\" (diacritic as separate char) used for search; page-1 text also has a short running title \"Subvarieties in hyperk¨ ahler manifolds\"",
+  "severity": "medium",
+  "cause": "title-extraction-diacritic-artefact (combined with OpenAlex 429) [lookup failure also affected by openalex-budget; title-extraction part is valid]",
+  "evidence": "detection.titles"
+ },
+ {
+  "url": "https://arxiv.org/pdf/1609.03499",
+  "paper": "WaveNet",
+  "field": "detection",
+  "expected": "title \"WaveNet: A Generative Model for Raw Audio\"",
+  "got": "detection.titles = [\"W N : A G M R A\"] (small-caps title decoded as just the capitals); first-page text has the full \"W AVE N ET : A G ENERATIVE M ODEL FOR R AW A UDIO\"; result: not found",
+  "severity": "high",
+  "cause": "title-extraction-failed on small caps (+ OpenAlex 429, S2 429) [lookup failure also affected by openalex-budget; title-extraction part is valid]",
+  "evidence": "detection.titles; pdftotext"
+ },
+ {
+  "url": "https://arxiv.org/pdf/2603.00841",
+  "paper": "Security Is Not Enough (CSLAW 2026)",
+  "field": "doi",
+  "expected": "paper DOI 10.1145/3788646.3789535 (ACM reference format line wraps \"https://doi.org/10.1145/3788646.\" / \"3789535\")",
+  "got": "detected DOI \"10.1145/3788646\" (truncated at the line break = the PROCEEDINGS DOI) -> popover title \"Proceedings of the Symposium on Computer Science and Law\", no authors, kind preprint/proceedings",
+  "severity": "high",
+  "cause": "doi-detection: DOI cut at line wrap; trusted over the correctly detected title and arXiv id",
+  "evidence": "detection.ids.doi; pdftotext lines 26-27"
+ },
+ {
+  "url": "https://arxiv.org/pdf/2603.00841",
+  "paper": "Security Is Not Enough (CSLAW 2026)",
+  "field": "apa",
+  "expected": "Monteiro, A. P. L. (2026). Security is not enough ... CSLAW 2026",
+  "got": "\"(2026). Proceedings of the Symposium on Computer Science and Law. arXiv. https://doi.org/10.48550/arXiv.2603.00841\" (no author, mixes proceedings title with arXiv); BibTeX @inproceedings{2026, series=CSLAW 26 ... no title/author}",
+  "severity": "high",
+  "cause": "consequence of wrong DOI",
+  "evidence": "copies"
+ },
+ {
+  "url": "https://arxiv.org/pdf/2012.15716v1",
+  "paper": "Masten Poirier Zhang",
+  "field": "venue",
+  "expected": "Journal of Business & Economic Statistics",
+  "got": "\"Journal of Business &amp; Economic Statistics\": HTML entity not decoded in strip, BibTeX journal field and APA",
+  "severity": "medium",
+  "cause": "html-entity-not-decoded (Crossref title)",
+  "evidence": "strip/copies"
+ },
+ {
+  "url": "https://arxiv.org/pdf/2012.15716v1",
+  "paper": "Masten Poirier Zhang",
+  "field": "references",
+  "expected": "~38 refs",
+  "got": "refsHeader \"이 논문을 OpenAlex·Semantic Scholar에서 못 찾아 참고문헌 목록을 만들 수 없습니다\" - misleading: the paper exists, lookups were rate limited (OA 429 x5, S2 429 x7)",
+  "severity": "low",
+  "cause": "misleading-warning (rate limit shown as not found)",
+  "evidence": "log"
+ },
+ {
+  "url": "https://arxiv.org/pdf/2604.27520",
+  "paper": "Incorporating the underuse problem",
+  "field": "venue",
+  "expected": "preprint, venue blank",
+  "got": "venue silently empty (\"preprint · 2026\") with no ⚠︎ whereas 2603.27960 shows \"⚠︎\"; inconsistent",
+  "severity": "low",
+  "cause": "openalex-budget (OA 429 in log); needs re-run",
+  "evidence": "strip texts"
+ },
+ {
+  "url": "https://arxiv.org/pdf/2603.27960v2",
+  "paper": "VLM inference survey",
+  "field": "authors",
+  "expected": "Surendra Pathak, Bo Han (George Mason University per PDF)",
+  "got": "popover/APA \"Surendra Pathak, Bohyung Han\" (S2 conflated with a different researcher)",
+  "severity": "medium",
+  "cause": "s2-author-disambiguation",
+  "evidence": "pdftotext p1: \"Bo Han\"; arXiv API"
+ }
+]

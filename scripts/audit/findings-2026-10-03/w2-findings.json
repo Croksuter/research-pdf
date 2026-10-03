@@ -1,0 +1,312 @@
+[
+ {
+  "url": "https://www.nature.com/articles/s41598-018-24271-9.pdf",
+  "paper": "GRU-D (Sci Rep 2018)",
+  "field": "references",
+  "expected": "46 references (PDF list; Crossref 46)",
+  "got": "strip shows 61 (S2 referenceCount preferred over Crossref 46); list header says 56",
+  "severity": "medium",
+  "cause": "s2-count-preferred-over-crossref",
+  "evidence": "pdftotext: reference list numbered 1-46; Crossref references-count 46; meta.references={crossref:46,s2:61}; strip 61 vs header 56 vs list length mismatch"
+ },
+ {
+  "url": "https://journals.plos.org/plosbiology/article/file?id=10.1371/journal.pbio.1001745&type=printable",
+  "paper": "Best Practices for Scientific Computing (PLOS Biol 2014)",
+  "field": "references",
+  "expected": "~69 (Crossref 69)",
+  "got": "strip 84 (S2), list header 76; list contains mis-resolved items (\"Continuum: Editorial board.\", \"Memory - Alberini 2006\")",
+  "severity": "medium",
+  "cause": "s2-count-preferred-over-crossref / s2-ref-noise",
+  "evidence": "meta.references={crossref:69,s2:84}; refs[6]=\"Continuum: Editorial board.\" year 2010"
+ },
+ {
+  "url": "https://www.nature.com/articles/s41467-024-52768-7.pdf",
+  "paper": "Y2O3-doping cathode (Nat Commun 2025)",
+  "field": "references",
+  "expected": "58 (PDF numbered refs 1-58)",
+  "got": "strip 59, header 58; first listed ref is \"Correspondence and requests for material\" (2006), not a real reference",
+  "severity": "low",
+  "cause": "s2-ref-noise",
+  "evidence": "pdftotext refs 1..58; meta.references s2=59"
+ },
+ {
+  "url": "https://www.nature.com/articles/s41467-024-52768-7.pdf",
+  "paper": "Y2O3-doping cathode (Nat Commun 2025)",
+  "field": "citations",
+  "expected": "a few citations at most (S2 says 307; paper published Jan 2025 in a materials journal)",
+  "got": "total citations 1,069 (Crossref is-referenced-by-count taken as max over sources)",
+  "severity": "medium",
+  "cause": "crossref-count-outlier; max() of sources picks implausible Crossref value",
+  "evidence": "meta.citations={crossref:1069,semanticScholar:307}; implausible for a 2025 paper. Needs re-run with OpenAlex to see which is right"
+ },
+ {
+  "url": "https://www.nature.com/articles/s41598-026-37247-x_reference.pdf",
+  "paper": "K-fold CV (Sci Rep 2026, article in press)",
+  "field": "references",
+  "expected": "50 (PDF refs 1-50)",
+  "got": "strip says 50 but list header/list shows only 30",
+  "severity": "medium",
+  "cause": "s2-ref-list-incomplete (S2 returned 37 refs, list dropped to 30); strip count and list count disagree",
+  "evidence": "pdftotext refs numbered 1-50; refCount 30 vs strip 50"
+ },
+ {
+  "url": "https://journals.plos.org/plosone/article/file?id=10.1371/journal.pone.0342182&type=printable",
+  "paper": "AI agents scoping review (PLOS One 2026)",
+  "field": "references",
+  "expected": "58",
+  "got": "strip 58 vs header 57",
+  "severity": "low",
+  "cause": "list-vs-count off-by-one",
+  "evidence": "pdftotext refs 1-58"
+ },
+ {
+  "url": "https://www.nature.com/articles/s41467-020-19160-7.pdf",
+  "paper": "Misuse of colour (Nat Commun 2020)",
+  "field": "references",
+  "expected": "refs unavailable only because S2 was 429 and OpenAlex budget 429; text should say lookup failed/rate-limited",
+  "got": "\"⚠︎ 이 논문을 OpenAlex·Semantic Scholar에서 못 찾아 참고문헌 목록을 만들 수 없습니다.\" (says paper not found, although title/DOI resolved fine via Crossref and the paper exists)",
+  "severity": "medium",
+  "cause": "s2-429 (misleading Korean message)",
+  "evidence": "log: fetch 429 semanticscholar + fetch 429 openalex; paper itself resolved by Crossref (meta.title present)"
+ },
+ {
+  "url": "https://www.nature.com/articles/s41598-026-39632-y.pdf",
+  "paper": "iHow solar/wind (Sci Rep 2026)",
+  "field": "references",
+  "expected": "refs unavailable only because S2 was 429 and OpenAlex budget 429; text should say lookup failed/rate-limited",
+  "got": "\"⚠︎ 이 논문을 OpenAlex·Semantic Scholar에서 못 찾아 참고문헌 목록을 만들 수 없습니다.\" (says paper not found, although title/DOI resolved fine via Crossref and the paper exists)",
+  "severity": "medium",
+  "cause": "s2-429 (misleading Korean message)",
+  "evidence": "log: fetch 429 semanticscholar + fetch 429 openalex; paper itself resolved by Crossref (meta.title present)"
+ },
+ {
+  "url": "https://www.nature.com/articles/s41586-021-03819-2.pdf",
+  "paper": "AlphaFold (Nature 2021)",
+  "field": "references",
+  "expected": "refs unavailable only because S2 was 429 and OpenAlex budget 429; text should say lookup failed/rate-limited",
+  "got": "\"⚠︎ 이 논문을 OpenAlex·Semantic Scholar에서 못 찾아 참고문헌 목록을 만들 수 없습니다.\" (says paper not found, although title/DOI resolved fine via Crossref and the paper exists)",
+  "severity": "medium",
+  "cause": "s2-429 (misleading Korean message)",
+  "evidence": "log: fetch 429 semanticscholar + fetch 429 openalex; paper itself resolved by Crossref (meta.title present)"
+ },
+ {
+  "url": "https://journals.plos.org/plosone/article/file?id=10.1371/journal.pone.0130140&type=printable",
+  "paper": "LRP (PLOS ONE 2015)",
+  "field": "references",
+  "expected": "refs unavailable only because S2 was 429 and OpenAlex budget 429; text should say lookup failed/rate-limited",
+  "got": "\"⚠︎ 이 논문을 OpenAlex·Semantic Scholar에서 못 찾아 참고문헌 목록을 만들 수 없습니다.\" (says paper not found, although title/DOI resolved fine via Crossref and the paper exists)",
+  "severity": "medium",
+  "cause": "s2-429 (misleading Korean message)",
+  "evidence": "log: fetch 429 semanticscholar + fetch 429 openalex; paper itself resolved by Crossref (meta.title present)"
+ },
+ {
+  "url": "https://journals.plos.org/plosbiology/article/file?id=10.1371/journal.pbio.1001745&type=printable",
+  "paper": "Best Practices for Scientific Computing",
+  "field": "apa",
+  "expected": "Wilson, G., Aruliah, D. A., Brown, C. T., Chue Hong, N. P., ...",
+  "got": "\"Hong, N. P. C.\" (compound surname \"Chue Hong\" split wrongly; BibTeX has \"Chue Hong, Neil P.\" correct)",
+  "severity": "low",
+  "cause": "apa-formatter-compound-surname",
+  "evidence": "APA string in copies.APA vs BibTeX author field"
+ },
+ {
+  "url": "https://journals.plos.org/plosone/article/file?id=10.1371/journal.pone.0342182&type=printable",
+  "paper": "AI agents scoping review",
+  "field": "apa",
+  "expected": "Njei, B., ... Sidney Kanmounye, U., ... Loic Nguefang, G., ...",
+  "got": "\"Kanmounye, U. S.\", \"Nguefang, G. L.\" (Crossref family names are \"Sidney Kanmounye\"/\"Loic Nguefang\"; BibTeX is consistent with Crossref, APA is not; popover shows \"Ulrick Sidney Kanmounye\")",
+  "severity": "low",
+  "cause": "apa-formatter-compound-surname",
+  "evidence": "copies.APA vs copies.BibTeX"
+ },
+ {
+  "url": "https://journals.plos.org/plosone/article/file?id=10.1371/journal.pone.0130140&type=printable",
+  "paper": "LRP (PLOS ONE 2015)",
+  "field": "apa",
+  "expected": "Müller, K.-R. (hyphenated given name keeps hyphen in APA); El-Kenawy, E.-S. M. in p04",
+  "got": "\"Müller, K. R.\"; \"El-Kenawy, E. S. M.\"",
+  "severity": "low",
+  "cause": "apa-formatter-hyphenated-given-names",
+  "evidence": "copies.APA; p04 same pattern"
+ },
+ {
+  "url": "https://www.nature.com/articles/s41467-025-56732-x.pdf",
+  "paper": "Pesticides (Nat Commun 2025)",
+  "field": "apa",
+  "expected": "article number included (e.g. Nature Communications, 16(1), 1360)",
+  "got": "\"Nature Communications, 16(1).\" with no article number/pages; BibTeX also lacks pages/number of the article ID; meta.firstPage null for Nature-family papers",
+  "severity": "low",
+  "cause": "crossref-article-number-ignored",
+  "evidence": "Crossref message has article-number; p07/p08 (with page ranges) are formatted with pages"
+ },
+ {
+  "url": "https://www.nature.com/articles/s41467-024-52768-7.pdf",
+  "paper": "Y2O3 (Nat Commun 2025)",
+  "field": "apa",
+  "expected": "article number included (e.g. Nature Communications, 16(1), 1360)",
+  "got": "\"Nature Communications, 16(1).\" with no article number/pages; BibTeX also lacks pages/number of the article ID; meta.firstPage null for Nature-family papers",
+  "severity": "low",
+  "cause": "crossref-article-number-ignored",
+  "evidence": "Crossref message has article-number; p07/p08 (with page ranges) are formatted with pages"
+ },
+ {
+  "url": "https://www.nature.com/articles/s41467-020-19160-7.pdf",
+  "paper": "Misuse of colour",
+  "field": "apa",
+  "expected": "article number included (e.g. Nature Communications, 16(1), 1360)",
+  "got": "\"Nature Communications, 16(1).\" with no article number/pages; BibTeX also lacks pages/number of the article ID; meta.firstPage null for Nature-family papers",
+  "severity": "low",
+  "cause": "crossref-article-number-ignored",
+  "evidence": "Crossref message has article-number; p07/p08 (with page ranges) are formatted with pages"
+ },
+ {
+  "url": "https://www.nature.com/articles/s41598-026-39632-y.pdf",
+  "paper": "iHow",
+  "field": "apa",
+  "expected": "article number included (e.g. Nature Communications, 16(1), 1360)",
+  "got": "\"Nature Communications, 16(1).\" with no article number/pages; BibTeX also lacks pages/number of the article ID; meta.firstPage null for Nature-family papers",
+  "severity": "low",
+  "cause": "crossref-article-number-ignored",
+  "evidence": "Crossref message has article-number; p07/p08 (with page ranges) are formatted with pages"
+ },
+ {
+  "url": "https://www.nature.com/articles/s41598-018-24271-9.pdf",
+  "paper": "GRU-D",
+  "field": "apa",
+  "expected": "article number included (e.g. Nature Communications, 16(1), 1360)",
+  "got": "\"Nature Communications, 16(1).\" with no article number/pages; BibTeX also lacks pages/number of the article ID; meta.firstPage null for Nature-family papers",
+  "severity": "low",
+  "cause": "crossref-article-number-ignored",
+  "evidence": "Crossref message has article-number; p07/p08 (with page ranges) are formatted with pages"
+ },
+ {
+  "url": "https://www.nature.com/articles/s41598-026-37247-x_reference.pdf",
+  "paper": "K-fold",
+  "field": "apa",
+  "expected": "article number included (e.g. Nature Communications, 16(1), 1360)",
+  "got": "\"Nature Communications, 16(1).\" with no article number/pages; BibTeX also lacks pages/number of the article ID; meta.firstPage null for Nature-family papers",
+  "severity": "low",
+  "cause": "crossref-article-number-ignored",
+  "evidence": "Crossref message has article-number; p07/p08 (with page ranges) are formatted with pages"
+ },
+ {
+  "url": "https://journals.plos.org/plosone/article/file?id=10.1371/journal.pone.0342182&type=printable",
+  "paper": "AI agents scoping review / AlphaFold etc.",
+  "field": "venue",
+  "expected": "consistent venue casing (\"PLOS ONE\")",
+  "got": "p08 \"PLOS ONE\", p09 \"PLOS One\" (taken verbatim from Crossref container-title)",
+  "severity": "low",
+  "cause": "venue-not-normalised",
+  "evidence": "Crossref container-title differs by year"
+ },
+ {
+  "url": "https://journals.plos.org/plosbiology/article/file?id=10.1371/journal.pbio.1001745&type=printable",
+  "paper": "Best Practices for Scientific Computing",
+  "field": "detection",
+  "expected": "title from first-page text",
+  "got": "detection.titles lists junk PDF-metadata title \"pbio.1001745 1..7\" first (final title chosen correctly)",
+  "severity": "low",
+  "cause": "pdf-metadata-title-noise",
+  "evidence": "detection.titles = [\"pbio.1001745 1..7\",\"Best Practices for Scientific Computing\"]"
+ },
+ {
+  "url": "https://www.nature.com/articles/s41467-025-56732-x.pdf",
+  "paper": "Pesticides",
+  "field": "citations",
+  "expected": "\"2년\" chart/number from OpenAlex; OpenAlex/venue-IF facts",
+  "got": "\"2년/전체 인용수 ⚠︎/N\" + \"⚠︎ 게재처 2년 평균 피인용을 OpenAlex에서 못 찾았습니다\" -- wording blames \"not found\" though OpenAlex returned 429 (budget); popover lacks OpenAlex link",
+  "severity": "medium",
+  "cause": "openalex-budget",
+  "evidence": "log: fetch 429 api.openalex.org/works x4 for every paper; NEEDS RE-RUN"
+ },
+ {
+  "url": "https://www.nature.com/articles/s41467-024-52768-7.pdf",
+  "paper": "Y2O3",
+  "field": "citations",
+  "expected": "\"2년\" chart/number from OpenAlex; OpenAlex/venue-IF facts",
+  "got": "\"2년/전체 인용수 ⚠︎/N\" + \"⚠︎ 게재처 2년 평균 피인용을 OpenAlex에서 못 찾았습니다\" -- wording blames \"not found\" though OpenAlex returned 429 (budget); popover lacks OpenAlex link",
+  "severity": "medium",
+  "cause": "openalex-budget",
+  "evidence": "log: fetch 429 api.openalex.org/works x4 for every paper; NEEDS RE-RUN"
+ },
+ {
+  "url": "https://www.nature.com/articles/s41467-020-19160-7.pdf",
+  "paper": "Colour",
+  "field": "citations",
+  "expected": "\"2년\" chart/number from OpenAlex; OpenAlex/venue-IF facts",
+  "got": "\"2년/전체 인용수 ⚠︎/N\" + \"⚠︎ 게재처 2년 평균 피인용을 OpenAlex에서 못 찾았습니다\" -- wording blames \"not found\" though OpenAlex returned 429 (budget); popover lacks OpenAlex link",
+  "severity": "medium",
+  "cause": "openalex-budget",
+  "evidence": "log: fetch 429 api.openalex.org/works x4 for every paper; NEEDS RE-RUN"
+ },
+ {
+  "url": "https://www.nature.com/articles/s41598-026-39632-y.pdf",
+  "paper": "iHow",
+  "field": "citations",
+  "expected": "\"2년\" chart/number from OpenAlex; OpenAlex/venue-IF facts",
+  "got": "\"2년/전체 인용수 ⚠︎/N\" + \"⚠︎ 게재처 2년 평균 피인용을 OpenAlex에서 못 찾았습니다\" -- wording blames \"not found\" though OpenAlex returned 429 (budget); popover lacks OpenAlex link",
+  "severity": "medium",
+  "cause": "openalex-budget",
+  "evidence": "log: fetch 429 api.openalex.org/works x4 for every paper; NEEDS RE-RUN"
+ },
+ {
+  "url": "https://www.nature.com/articles/s41598-018-24271-9.pdf",
+  "paper": "GRU-D",
+  "field": "citations",
+  "expected": "\"2년\" chart/number from OpenAlex; OpenAlex/venue-IF facts",
+  "got": "\"2년/전체 인용수 ⚠︎/N\" + \"⚠︎ 게재처 2년 평균 피인용을 OpenAlex에서 못 찾았습니다\" -- wording blames \"not found\" though OpenAlex returned 429 (budget); popover lacks OpenAlex link",
+  "severity": "medium",
+  "cause": "openalex-budget",
+  "evidence": "log: fetch 429 api.openalex.org/works x4 for every paper; NEEDS RE-RUN"
+ },
+ {
+  "url": "https://www.nature.com/articles/s41598-026-37247-x_reference.pdf",
+  "paper": "K-fold",
+  "field": "citations",
+  "expected": "\"2년\" chart/number from OpenAlex; OpenAlex/venue-IF facts",
+  "got": "\"2년/전체 인용수 ⚠︎/N\" + \"⚠︎ 게재처 2년 평균 피인용을 OpenAlex에서 못 찾았습니다\" -- wording blames \"not found\" though OpenAlex returned 429 (budget); popover lacks OpenAlex link",
+  "severity": "medium",
+  "cause": "openalex-budget",
+  "evidence": "log: fetch 429 api.openalex.org/works x4 for every paper; NEEDS RE-RUN"
+ },
+ {
+  "url": "https://www.nature.com/articles/s41586-021-03819-2.pdf",
+  "paper": "AlphaFold",
+  "field": "citations",
+  "expected": "\"2년\" chart/number from OpenAlex; OpenAlex/venue-IF facts",
+  "got": "\"2년/전체 인용수 ⚠︎/N\" + \"⚠︎ 게재처 2년 평균 피인용을 OpenAlex에서 못 찾았습니다\" -- wording blames \"not found\" though OpenAlex returned 429 (budget); popover lacks OpenAlex link",
+  "severity": "medium",
+  "cause": "openalex-budget",
+  "evidence": "log: fetch 429 api.openalex.org/works x4 for every paper; NEEDS RE-RUN"
+ },
+ {
+  "url": "https://journals.plos.org/plosone/article/file?id=10.1371/journal.pone.0130140&type=printable",
+  "paper": "LRP",
+  "field": "citations",
+  "expected": "\"2년\" chart/number from OpenAlex; OpenAlex/venue-IF facts",
+  "got": "\"2년/전체 인용수 ⚠︎/N\" + \"⚠︎ 게재처 2년 평균 피인용을 OpenAlex에서 못 찾았습니다\" -- wording blames \"not found\" though OpenAlex returned 429 (budget); popover lacks OpenAlex link",
+  "severity": "medium",
+  "cause": "openalex-budget",
+  "evidence": "log: fetch 429 api.openalex.org/works x4 for every paper; NEEDS RE-RUN"
+ },
+ {
+  "url": "https://journals.plos.org/plosone/article/file?id=10.1371/journal.pone.0342182&type=printable",
+  "paper": "AI agents",
+  "field": "citations",
+  "expected": "\"2년\" chart/number from OpenAlex; OpenAlex/venue-IF facts",
+  "got": "\"2년/전체 인용수 ⚠︎/N\" + \"⚠︎ 게재처 2년 평균 피인용을 OpenAlex에서 못 찾았습니다\" -- wording blames \"not found\" though OpenAlex returned 429 (budget); popover lacks OpenAlex link",
+  "severity": "medium",
+  "cause": "openalex-budget",
+  "evidence": "log: fetch 429 api.openalex.org/works x4 for every paper; NEEDS RE-RUN"
+ },
+ {
+  "url": "https://journals.plos.org/plosbiology/article/file?id=10.1371/journal.pbio.1001745&type=printable",
+  "paper": "Best practices",
+  "field": "citations",
+  "expected": "\"2년\" chart/number from OpenAlex; OpenAlex/venue-IF facts",
+  "got": "\"2년/전체 인용수 ⚠︎/N\" + \"⚠︎ 게재처 2년 평균 피인용을 OpenAlex에서 못 찾았습니다\" -- wording blames \"not found\" though OpenAlex returned 429 (budget); popover lacks OpenAlex link",
+  "severity": "medium",
+  "cause": "openalex-budget",
+  "evidence": "log: fetch 429 api.openalex.org/works x4 for every paper; NEEDS RE-RUN"
+ }
+]

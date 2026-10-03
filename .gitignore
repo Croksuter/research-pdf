@@ -4,3 +4,4 @@ coverage/
 *.map
 *.zip
 .DS_Store
+scripts/audit/.ext/

@@ -1,0 +1,82 @@
+[
+ {
+  "url": "https://ntrs.nasa.gov/api/citations/20200001234/downloads/20200001234.pdf",
+  "paper": "NTRS poster 'Metrics for Improved Reanalyses in Polar Regions' (1 page)",
+  "field": "detection",
+  "expected": "Not a journal paper (1-page NASA conference poster); at most matched by its real title 'Metrics for Improved Reanalyses in Polar Regions' (Parker, Cullather, Andrews, El Akkraoui), else 'not recognised as a paper'",
+  "got": "Strip shows journal badge, 'Understanding and Tackling Obesity:' (Routledge book chapter, DOI 10.4324/9781003072454-4, author Ruth MacConville), title 'PowerPoint Presentation', BibTeX @inbook and APA for that unrelated chapter",
+  "severity": "high",
+  "cause": "title-mismatch (generic PDF metadata/first-text title 'PowerPoint Presentation' accepted; the real title was in detection.titles as 2nd candidate; authors in PDF not compared with match)",
+  "evidence": "detection.titles=['PowerPoint Presentation','Metrics for Improved Reanalyses in Polar Regions']; firstPageText authors Chelsea L. Parker...; log: Crossref title search + S2 search/match -> 'resolved (primary)' with no author/title sanity check"
+ },
+ {
+  "url": "https://cdn.openai.com/papers/gpt-4.pdf",
+  "paper": "GPT-4 Technical Report",
+  "field": "detection",
+  "expected": "arXiv:2303.08774 (the PDF carries the stamp 'arXiv:submit/4812508 [cs.CL] 27 Mar 2023', a submission id, not a real arXiv id)",
+  "got": "Detected arxivId 'submit/4812508'; popover link https://arxiv.org/abs/submit/4812508 (HTTP 404), fact 'arXiv:submit/4812508', APA ends with https://doi.org/10.48550/arXiv.submit/4812508 (404); S2 lookup by arXiv:submit/4812508 wasted",
+  "severity": "high",
+  "cause": "parser: arXiv-id regex accepts 'submit/NNNNNNN' stamps",
+  "evidence": "pdftotext line 'arXiv:submit/4812508 [cs.CL] 27 Mar 2023'; curl of both URLs returns 404"
+ },
+ {
+  "url": "https://www.biorxiv.org/content/10.1101/2020.11.25.393017v7.full.pdf",
+  "paper": "structural connectome constrains fast brain dynamics (bioRxiv v7 URL)",
+  "field": "doi",
+  "expected": "DOI 10.1101/2020.11.25.393017 (strip any 'v7' and '.full.pdf' suffix from a bioRxiv URL)",
+  "got": "detection.ids.doi = '10.1101/2020.11.25.393017v7.full.pdf' -> Crossref and S2 DOI lookups both 404 (wasted calls); only the title search rescued it",
+  "severity": "medium",
+  "cause": "parser: DOI regex from URL keeps version + '.full.pdf' (bioRxiv/medRxiv URL shape); medRxiv URL without .full.pdf came out clean, so only the '10.1101/<id>vN.full.pdf' shape is affected",
+  "evidence": "results.jsonl #0 detection + log lines 'fetch 404 ... crossref.org/works/10.1101%2F2020.11.25.393017v7.full.pdf'"
+ },
+ {
+  "url": "https://www.biorxiv.org/content/10.1101/2020.11.25.393017v7.full.pdf",
+  "paper": "structural connectome (bioRxiv v7)",
+  "field": "references",
+  "expected": "One consistent reference count (PDF/published version)",
+  "got": "Strip header shows 참고문헌 40 (S2 count) while the hover list header says 37편 (list actually loaded) - mismatch of two numbers on the same strip; Crossref says 33",
+  "severity": "low",
+  "cause": "s2 count vs loaded list differ",
+  "evidence": "strip text '참고문헌40' vs refsHeader '참고문헌 37편'"
+ },
+ {
+  "url": "https://www.biorxiv.org/content/10.1101/2020.11.25.393017v7.full.pdf",
+  "paper": "structural connectome (bioRxiv v7)",
+  "field": "apa",
+  "expected": "Lopez/Troisi Lopez compound surname kept: 'Troisi Lopez, E.'",
+  "got": "APA: 'Lopez, E. T.' (compound surname split)",
+  "severity": "low",
+  "cause": "parser: APA initial/surname split on last token",
+  "evidence": "results.jsonl #0 APA; Crossref author family='Troisi Lopez'"
+ },
+ {
+  "url": "https://www.medrxiv.org/content/medrxiv/early/2020/02/09/2020.02.06.20020974.full.pdf",
+  "paper": "Guan et al. 2019-nCoV clinical characteristics (medRxiv)",
+  "field": "apa",
+  "expected": "Preprint APA should name the server: '... medRxiv. https://doi.org/...' (a repository name is shown for arXiv papers, e.g. 'arXiv')",
+  "got": "APA ends with the title and DOI only, no 'medRxiv'; BibTeX is @article with publisher={openRxiv} and no journal/eprint fields",
+  "severity": "low",
+  "cause": "parser: preprint formatting for non-arXiv servers (Crossref container-title empty)",
+  "evidence": "results.jsonl APA/BibTeX"
+ },
+ {
+  "url": "https://www.medrxiv.org/content/medrxiv/early/2020/03/20/2020.03.16.20037135.full.pdf",
+  "paper": "Gautret HCQ+azithromycin (medRxiv)",
+  "field": "apa",
+  "expected": "Preprint APA should name the server: '... medRxiv. https://doi.org/...' (a repository name is shown for arXiv papers, e.g. 'arXiv')",
+  "got": "APA ends with the title and DOI only, no 'medRxiv'; BibTeX is @article with publisher={openRxiv} and no journal/eprint fields",
+  "severity": "low",
+  "cause": "parser: preprint formatting for non-arXiv servers (Crossref container-title empty)",
+  "evidence": "results.jsonl APA/BibTeX"
+ },
+ {
+  "url": "https://osf.io/download/5fede7b91e6d9703262f9e9e/",
+  "paper": "SocArXiv 'Contours of citizen science' (OSF download URL)",
+  "field": "load",
+  "expected": "PDF opens (curl follows redirect to storage.googleapis.com and gets a valid 6-page PDF, served as application/octet-stream)",
+  "got": "Viewer: 'PDF를 열지 못했습니다: Unexpected server response (403)'",
+  "severity": "medium",
+  "cause": "load: fetch of OSF /download/ redirect chain fails with 403 in the viewer (probably Range/CORS on the redirect to the signed storage URL); also non-.pdf URL served as octet-stream",
+  "evidence": "results.jsonl #5, #6 (WORCS PsyArXiv https://osf.io/download/5ed3ff63aeeb6d03e008a594/ has the same 403)"
+ }
+]
