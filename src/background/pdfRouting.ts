@@ -393,7 +393,7 @@ export const pdfMessageHandlers: Record<string, PdfMessageHandler> = {
   VOCAB_T_PDF_PROJECT_OPEN: (m, sender) => {
     const request = parsePdfProjectOpenRequest(m);
     return request && isHubPageSender(sender)
-      ? openPdfProject(request.project, sender)
+      ? openPdfProject(request.project, sender, request.inPlace)
       : { success: false, error: '프로젝트 열기 요청 형식이 올바르지 않습니다.' };
   },
   VOCAB_T_PDF_PROJECT_MOVE: async (m, sender) => {

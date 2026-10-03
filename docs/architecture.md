@@ -103,9 +103,13 @@ last open with (layout: URLs, active, what was in front).
   with no write; it cannot be deleted. Its rows carry only pins. Before a
   device's first write the record reads as the default project seeded with
   the pins the library had before projects existed.
-- **Switcher** (left of the home button): open a project (its hub if open,
-  else a new hub tab next to this one with its saved layout,
-  `VOCAB_T_PDF_PROJECT_OPEN`), create (opens it), rename, delete.
+- **Switcher** (left of the home button): choosing a project switches this
+  tab to it — the viewers store everything, this project's layout is saved,
+  and the page loads the other project's hub URL with its saved layout
+  (`VOCAB_T_PDF_PROJECT_OPEN` with `inPlace`). A project already open in
+  another tab is brought forward instead. The row's ↗ opens it in a new tab
+  next to this one. Also create (switches to it), rename, delete. Recently
+  closed tabs are kept per project.
 - **Move** ("프로젝트로 이동", right side, and the tab menu): moves the
   document out of its project and into another (`VOCAB_T_PDF_PROJECT_MOVE`);
   its tab goes to that project's hub when open, otherwise into the layout it

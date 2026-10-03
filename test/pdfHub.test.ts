@@ -373,6 +373,26 @@ describe('hub claims', () => {
     expect(await hub.openPdfProject('nope', fake.sender(1))).toMatchObject({ success: false });
   });
 
+  it('switches a hub to a closed project in place: the URL to load, and a claim that keeps the tab', async () => {
+    storeProject('p1x', A);
+    (fake.local.rpdfProjects as Record<string, { layout: unknown }>).p1x.layout = { urls: [A], active: 0, show: 'home', savedAt: 9 };
+    fake.addTab({ id: 1, windowId: 7, index: 0, active: true });
+    expect(await claim([doc(B)], false, 1)).toMatchObject({ role: 'hub', project: 'default' });
+    const answer = await hub.openPdfProject('p1x', fake.sender(1), true);
+    expect(answer.success).toBe(true);
+    expect(hubParts(answer.url!)).toEqual({ docs: [doc(A)], active: 0, show: 'home', project: 'p1x' });
+    expect(fake.tabs.size).toBe(1);
+    // The page loads that URL and claims; having history does not send it back to a web page.
+    expect(await claim([doc(A)], true, 1, 'p1x')).toEqual({ success: true, role: 'hub', project: 'p1x', docs: [] });
+    expect(fake.tabs.size).toBe(1);
+    // Switching to a project open elsewhere brings that tab forward instead.
+    fake.addTab({ id: 2, windowId: 8, index: 0, active: true });
+    expect(await claim([], false, 2)).toMatchObject({ role: 'hub', project: 'default' });
+    fake.tabs.get(1)!.active = false;
+    expect(await hub.openPdfProject('p1x', fake.sender(2), true)).toEqual({ success: true });
+    expect(fake.tabs.get(1)?.active).toBe(true);
+  });
+
   it('moves a document: to an open project\'s hub, or into a closed one\'s saved tabs', async () => {
     storeProject('p1x', A, 'docA');
     storeProject('p2y', LOCAL, 'docL');

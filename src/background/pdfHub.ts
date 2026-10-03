@@ -196,7 +196,9 @@ export function claimPdfHub(
     const { project } = await claimTarget(request, registry);
     let entry = await liveEntry(registry, project);
     for (;;) {
-      const decision = decideHubClaim({ entry, claimerTabId: claimer.id, canGoBack: request.canGoBack, hasDocs: request.docs.length > 0 });
+      // A page naming its project is a hub by intent (opened, restored or
+      // switched to it): it never hands its tab back to a web page.
+      const decision = decideHubClaim({ entry, claimerTabId: claimer.id, canGoBack: request.canGoBack && !request.project, hasDocs: request.docs.length > 0 });
       debugLog('bg:hub', `claim → ${decision.kind}`, () => ({ tabId: claimer.id, project, docs: request.docs.length }));
       switch (decision.kind) {
         case 'become-hub': {
@@ -249,8 +251,12 @@ export function claimPdfHub(
 
 // ─── Opening a project, moving a document ───
 
-/** Shows the project's hub, opening it next to `sender` with its saved tabs if it is closed. */
-export function openPdfProject(project: string, sender: chrome.runtime.MessageSender): Promise<{ success: boolean; error?: string }> {
+/**
+ * Shows the project's hub if it is open anywhere. Closed: with `inPlace` the
+ * answer is the hub URL with its saved tabs, for the sender to switch to;
+ * otherwise a new hub tab opens next to the sender.
+ */
+export function openPdfProject(project: string, sender: chrome.runtime.MessageSender, inPlace = false): Promise<{ success: boolean; url?: string; error?: string }> {
   return serialized(async () => {
     const projects = await readPdfProjects();
     const target = projects[project];
@@ -258,12 +264,13 @@ export function openPdfProject(project: string, sender: chrome.runtime.MessageSe
     const registry = await readRegistry();
     const entry = await liveEntry(registry, project);
     if (entry) {
-      await activateTab(entry.tabId);
+      if (entry.tabId !== sender.tab?.id) await activateTab(entry.tabId);
       return { success: true };
     }
     const base = chrome.runtime.getURL(PDF_HUB_PAGE);
     const { urls, active, show } = target.layout;
     const url = buildPdfHubUrl(urls, active, base, show, project);
+    if (inPlace) return { success: true, url };
     try {
       const at = sender.tab;
       const created = await chrome.tabs.create({

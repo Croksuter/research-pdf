@@ -733,21 +733,30 @@ function completePendingPins(): void {
   }
 }
 
-// ─── Recently closed (this hub; survives a reload) ───
+// ─── Recently closed (this hub's project; survives a reload) ───
 
-let closed: HubClosedTab[] = (() => {
+let closed: HubClosedTab[] = [];
+
+function closedStorageKey(): string {
+  return `${CLOSED_STORAGE_KEY}:${projectId}`;
+}
+
+function loadClosed(): HubClosedTab[] {
   try {
-    return parseClosedTabs(JSON.parse(sessionStorage.getItem(CLOSED_STORAGE_KEY) ?? '[]'))
+    // Before projects, one list per hub tab (now the default project's).
+    const raw = sessionStorage.getItem(closedStorageKey())
+      ?? (projectId === DEFAULT_PROJECT_ID ? sessionStorage.getItem(CLOSED_STORAGE_KEY) : null);
+    return parseClosedTabs(JSON.parse(raw ?? '[]'))
       .filter((e) => e.fileId === null); // local files do not survive a reload
   } catch {
     return [];
   }
-})();
+}
 
 function setClosed(next: HubClosedTab[]): void {
   closed = next;
   try {
-    sessionStorage.setItem(CLOSED_STORAGE_KEY, JSON.stringify(closed));
+    sessionStorage.setItem(closedStorageKey(), JSON.stringify(closed));
   } catch {
     /* kept in memory */
   }
@@ -772,6 +781,17 @@ function reopenClosed(entry: HubClosedTab | undefined = closed[0]): void {
 
 let stateTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** The URL-backed tabs, which one is in front, and what (home, a pin) is shown instead. */
+function hubState(): { urls: string[]; active: number; show: string | null } {
+  const current = activeTab();
+  const urlTabs = tabs.filter((t): t is HubTab & { url: string } => t.url !== null && !t.pinned);
+  return {
+    urls: urlTabs.map((t) => t.url),
+    active: Math.max(0, urlTabs.findIndex((t) => t.key === activeKey)),
+    show: activeKey === HOME ? PDF_HUB_SHOW_HOME : current?.pinned ? current.url : null,
+  };
+}
+
 function render(): void {
   const current = activeTab();
   const name = activeKey === HOME ? '홈' : current?.paperTitle ?? current?.title ?? 'PDF';
@@ -786,10 +806,7 @@ function render(): void {
   });
   updateOverflow();
   if (!isHub) return;
-  const urlTabs = tabs.filter((t): t is HubTab & { url: string } => t.url !== null && !t.pinned);
-  const urls = urlTabs.map((t) => t.url);
-  const active = Math.max(0, urlTabs.findIndex((t) => t.key === activeKey));
-  const show = activeKey === HOME ? PDF_HUB_SHOW_HOME : current?.pinned ? current.url : null;
+  const { urls, active, show } = hubState();
   const canonical = buildPdfHubUrl(urls, active, hubBase, show, projectId);
   if (location.href !== canonical) history.replaceState(null, '', canonical);
   if (stateTimer) clearTimeout(stateTimer);
@@ -1238,6 +1255,17 @@ let sleepSeq = 0;
 const sleepWaiters = new Map<number, (reply: { ok: boolean; hash: string }) => void>();
 let sleeping = false;
 
+/** Asks every loaded viewer to store its drawings and position now. */
+function storeFrames(): Promise<unknown> {
+  return Promise.all(tabs.filter((t) => t.frame).map((tab) => new Promise<void>((resolve) => {
+    const id = ++sleepSeq;
+    const done = () => { sleepWaiters.delete(id); resolve(); };
+    sleepWaiters.set(id, done);
+    postToFrame(tab, { tag: HUB_MESSAGE_TAG, kind: 'sleep', id });
+    setTimeout(done, SLEEP_REPLY_TIMEOUT_MS);
+  })));
+}
+
 async function sleepTab(tab: HubTab): Promise<void> {
   if (!tab.frame || tab.key === activeKey) return;
   const id = ++sleepSeq;
@@ -1357,6 +1385,7 @@ function updateProjectLabel(): void {
 function setProject(id: string): void {
   if (id === projectId) return;
   projectId = id;
+  closed = loadClosed();
   registered.clear();
   pendingPins.clear();
   reconcilePinned();
@@ -1380,10 +1409,30 @@ async function createProject(rawName: string): Promise<string | null> {
   return id;
 }
 
-async function openProject(id: string): Promise<void> {
+/**
+ * Shows project `id`: in this tab (the default), or in a new tab next to it.
+ * A project already open in another tab is brought forward instead.
+ */
+async function openProject(id: string, where: 'here' | 'new-tab' = 'here'): Promise<void> {
   if (id === projectId) return;
-  const response = await ask({ type: 'VOCAB_T_PDF_PROJECT_OPEN', project: id });
-  if (!response?.success) showToast(response?.error ?? '프로젝트를 열지 못했습니다.');
+  const response = await ask<{ success?: boolean; url?: string; error?: string }>({
+    type: 'VOCAB_T_PDF_PROJECT_OPEN', project: id, inPlace: where === 'here',
+  });
+  if (!response?.success) { showToast(response?.error ?? '프로젝트를 열지 못했습니다.'); return; }
+  if (response.url) await switchHere(response.url);
+}
+
+/** Leaves this project (its tabs saved, as when its tab closes) and loads `url` here. */
+let switching = false;
+async function switchHere(url: string): Promise<void> {
+  if (switching || !isHub) return;
+  switching = true;
+  hidePanels();
+  if (stateTimer) { clearTimeout(stateTimer); stateTimer = null; }
+  await storeFrames();
+  await ask({ type: 'VOCAB_T_PDF_HUB_STATE', ...hubState(), project: projectId });
+  isHub = false; // nothing more is recorded for this project from here
+  location.replace(url);
 }
 
 function projectRow(project: PdfProject, index: Map<string, string[]>): HTMLElement {
@@ -1410,6 +1459,7 @@ function projectRow(project: PdfProject, index: Map<string, string[]>): HTMLElem
     button.addEventListener('click', run);
     row.append(button);
   };
+  if (!current) action('i-open-new', '새 탭에서 열기', () => { hideProjects(); void openProject(project.id, 'new-tab'); });
   action('i-edit', '이름 바꾸기', () => startRename(row, project));
   if (project.id !== DEFAULT_PROJECT_ID) {
     action('i-trash', '삭제', () => {
@@ -1704,6 +1754,7 @@ async function boot(): Promise<void> {
   strip.hidden = false;
   await loadLibraryState();
   if (projects[projectId]?.deletedAt !== 0) projectId = DEFAULT_PROJECT_ID;
+  closed = loadClosed();
   updateProjectLabel();
   reconcilePinned();
   addDocs(docs.map((doc) => ({ ...doc, file: null })), false, false);

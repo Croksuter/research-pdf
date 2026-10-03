@@ -169,8 +169,10 @@ describe('projects', () => {
     expect(parsePdfProjectUpdateRequest({ type: 'VOCAB_T_PDF_PROJECT_UPDATE', update: { kind: 'layout', id: 'pa', urls: [], active: 0 } })).toBeNull();
     expect(parsePdfProjectUpdateRequest({ type: 'VOCAB_T_PDF_PROJECT_UPDATE', update: { kind: 'member', id: 'pa', docId: 'd', member: true } }))
       .toEqual({ type: 'VOCAB_T_PDF_PROJECT_UPDATE', update: { kind: 'member', id: 'pa', docId: 'd', member: true } });
-    expect(parsePdfProjectOpenRequest({ type: 'VOCAB_T_PDF_PROJECT_OPEN', project: 'pa' })).toEqual({ type: 'VOCAB_T_PDF_PROJECT_OPEN', project: 'pa' });
-    expect(parsePdfProjectOpenRequest({ type: 'VOCAB_T_PDF_PROJECT_OPEN', project: 'p a' })).toBeNull();
+    expect(parsePdfProjectOpenRequest({ type: 'VOCAB_T_PDF_PROJECT_OPEN', project: 'pa', inPlace: true }))
+      .toEqual({ type: 'VOCAB_T_PDF_PROJECT_OPEN', project: 'pa', inPlace: true });
+    expect(parsePdfProjectOpenRequest({ type: 'VOCAB_T_PDF_PROJECT_OPEN', project: 'pa' })).toBeNull();
+    expect(parsePdfProjectOpenRequest({ type: 'VOCAB_T_PDF_PROJECT_OPEN', project: 'p a', inPlace: false })).toBeNull();
     const move = { type: 'VOCAB_T_PDF_PROJECT_MOVE', docId: 'd', url: A, from: 'default', to: 'pa', keep: false };
     expect(parsePdfProjectMoveRequest(move)).toEqual(move);
     expect(parsePdfProjectMoveRequest({ ...move, url: null })).toEqual({ ...move, url: null });

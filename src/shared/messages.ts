@@ -112,16 +112,19 @@ export function parsePdfProjectUpdateRequest(value: unknown): PdfProjectUpdateRe
   return update && update.kind !== 'layout' && update.kind !== 'move' ? { type: 'VOCAB_T_PDF_PROJECT_UPDATE', update } : null;
 }
 
-// Show a project: its hub if it is open anywhere, otherwise a new hub tab
-// next to the sender with the tabs it was closed with.
+// Show a project: its hub if it is open anywhere. Otherwise, `inPlace`: the
+// URL the sender switches itself to; not: a new hub tab next to the sender,
+// with the tabs the project was closed with.
 export interface PdfProjectOpenRequest {
   type: 'VOCAB_T_PDF_PROJECT_OPEN';
   project: string;
+  inPlace: boolean;
 }
 
 export function parsePdfProjectOpenRequest(value: unknown): PdfProjectOpenRequest | null {
-  if (!isRecord(value) || value.type !== 'VOCAB_T_PDF_PROJECT_OPEN' || Object.keys(value).length !== 2) return null;
-  return isPdfProjectId(value.project) ? { type: 'VOCAB_T_PDF_PROJECT_OPEN', project: value.project } : null;
+  if (!isRecord(value) || value.type !== 'VOCAB_T_PDF_PROJECT_OPEN' || Object.keys(value).length !== 3) return null;
+  if (!isPdfProjectId(value.project) || typeof value.inPlace !== 'boolean') return null;
+  return { type: 'VOCAB_T_PDF_PROJECT_OPEN', project: value.project, inPlace: value.inPlace };
 }
 
 // Move a document to another project (`keep`: register it there too and
