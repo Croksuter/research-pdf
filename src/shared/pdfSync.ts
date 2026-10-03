@@ -4,8 +4,9 @@
 // viewer's own durable state: per-document reading position/zoom
 // (`PdfDocRecord`, keyed by document identity), the browser-side
 // annotation cache (`PdfAnnotationCache`, the drawings PDF.js re-creates on
-// open) and, since version 2, the library of opened documents with their
-// pins (shared/pdfLibrary.ts). Nothing else: paper-strip lookups are caches,
+// open), since version 2 the library of opened documents
+// (shared/pdfLibrary.ts) and since version 3 the projects — their documents,
+// pins and saved tabs (shared/pdfProjects.ts). Nothing else: paper-strip lookups are caches,
 // settings are per device, and there are no credentials in here.
 //
 // Merge rules mirror the vocabulary engine (shared/threeWayMerge.ts):
@@ -15,6 +16,8 @@
 //     disappears everywhere once a base exists, and a drawing edited on both
 //     sides keeps the local copy;
 //   • library: a per-field join (shared/pdfLibrary.ts), no deletions;
+//   • projects: a join too — latest rename, final deletions, latest change
+//     per member, latest saved tabs (shared/pdfProjects.ts);
 //   • the merged set is bounded exactly like local storage (document count and
 //     age), so every device converges on the same set instead of one device's
 //     pruning being read as the user deleting things.
@@ -22,12 +25,13 @@
 import { PdfAnnotationCache, PDF_ANNOTATION_CACHE_MAX_DOCS, PDF_ANNOTATION_CACHE_VERSION, isEmptyAnnotationCache, parsePdfAnnotationCache } from './pdfAnnotations';
 import { PDF_DOC_RECORD_MAX, PDF_DOC_RECORD_MAX_AGE_MS, PdfDocRecord, parsePdfDocRecord } from './pdfIdentity';
 import { PDF_LIBRARY_MAX, PdfLibraryEntry, boundPdfLibrary, mergePdfLibraries, parsePdfLibraryList } from './pdfLibrary';
+import { PdfProject, boundPdfProjects, mergePdfProjectLists, parsePdfProjectList, projectDocIds } from './pdfProjects';
 import { byId, chooseThreeWay, mergeRows, stableJson } from './threeWayMerge';
 
-// Version 2 added `library`. A version-1 document (an older build's) still
-// reads, with an empty library; older builds refuse version 2 rather than
-// write it back without the library.
-export const PDF_SYNC_SNAPSHOT_VERSION = 2;
+// Version 2 added `library`, version 3 `projects`. An older build's document
+// still reads, with what it lacks empty; older builds refuse a newer version
+// rather than write it back without what they do not know.
+export const PDF_SYNC_SNAPSHOT_VERSION = 3;
 export const PDF_SYNC_MAX_DOCS = 5_000;
 
 export interface PdfSyncSnapshot {
@@ -36,6 +40,7 @@ export interface PdfSyncSnapshot {
   docs: PdfDocRecord[];
   annotations: PdfAnnotationCache[];
   library: PdfLibraryEntry[];
+  projects: PdfProject[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -44,7 +49,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** Strict: a document another build cannot read back is refused, never repaired. */
 export function parsePdfSyncSnapshot(value: unknown): PdfSyncSnapshot | null {
-  if (!isRecord(value) || (value.version !== 1 && value.version !== PDF_SYNC_SNAPSHOT_VERSION)) return null;
+  if (!isRecord(value) || (value.version !== 1 && value.version !== 2 && value.version !== PDF_SYNC_SNAPSHOT_VERSION)) return null;
   if (typeof value.exportedAt !== 'string' || !Number.isFinite(Date.parse(value.exportedAt))) return null;
   if (!Array.isArray(value.docs) || !Array.isArray(value.annotations)) return null;
   if (value.docs.length > PDF_SYNC_MAX_DOCS || value.annotations.length > PDF_SYNC_MAX_DOCS) return null;
@@ -66,15 +71,20 @@ export function parsePdfSyncSnapshot(value: unknown): PdfSyncSnapshot | null {
   }
   const library = value.version === 1 ? [] : parsePdfLibraryList(value.library, PDF_LIBRARY_MAX);
   if (!library) return null;
-  return { version: PDF_SYNC_SNAPSHOT_VERSION, exportedAt: value.exportedAt, docs, annotations, library };
+  const projects = value.version === PDF_SYNC_SNAPSHOT_VERSION ? parsePdfProjectList(value.projects) : [];
+  if (!projects) return null;
+  return { version: PDF_SYNC_SNAPSHOT_VERSION, exportedAt: value.exportedAt, docs, annotations, library, projects };
 }
 
 const byDocId = <T extends { docId: string }>(rows: T[]): T[] => [...rows].sort((a, b) => a.docId.localeCompare(b.docId));
+const byProjectId = (rows: PdfProject[]): PdfProject[] => [...rows].sort((a, b) => a.id.localeCompare(b.id));
 
 /** Same content, regardless of row order or `exportedAt`. */
 export function pdfSyncSnapshotDataEquals(left: PdfSyncSnapshot, right: PdfSyncSnapshot): boolean {
-  return stableJson({ docs: byDocId(left.docs), annotations: byDocId(left.annotations), library: byDocId(left.library) })
-    === stableJson({ docs: byDocId(right.docs), annotations: byDocId(right.annotations), library: byDocId(right.library) });
+  const data = (s: PdfSyncSnapshot) => stableJson({
+    docs: byDocId(s.docs), annotations: byDocId(s.annotations), library: byDocId(s.library), projects: byProjectId(s.projects),
+  });
+  return data(left) === data(right);
 }
 
 /**
@@ -153,7 +163,8 @@ export function boundPdfSyncSnapshot(snapshot: PdfSyncSnapshot, now: number = Da
     .sort((a, b) => b.updatedAt - a.updatedAt || a.docId.localeCompare(b.docId))
     .slice(0, PDF_ANNOTATION_CACHE_MAX_DOCS)
     .sort((a, b) => a.docId.localeCompare(b.docId));
-  return { ...snapshot, docs, annotations, library: boundPdfLibrary(snapshot.library, now) };
+  const projects = boundPdfProjects(snapshot.projects, now);
+  return { ...snapshot, docs, annotations, library: boundPdfLibrary(snapshot.library, now, projectDocIds(projects)), projects };
 }
 
 export function mergePdfSyncSnapshots(
@@ -164,7 +175,8 @@ export function mergePdfSyncSnapshots(
 ): PdfSyncSnapshot {
   const docs = mergeRows(local.docs, remote.docs, base?.docs ?? null, 'docId', 'updatedAt');
   const annotations = mergeAnnotationSets(local.annotations, remote.annotations, base?.annotations ?? null);
-  const library = mergePdfLibraries(local.library, remote.library, now);
+  const projects = mergePdfProjectLists(local.projects, remote.projects, now);
+  const library = mergePdfLibraries(local.library, remote.library, now, projectDocIds(projects));
   const times = [now, Date.parse(local.exportedAt), Date.parse(remote.exportedAt)].filter(Number.isFinite);
   return boundPdfSyncSnapshot({
     version: PDF_SYNC_SNAPSHOT_VERSION,
@@ -172,5 +184,6 @@ export function mergePdfSyncSnapshots(
     docs,
     annotations,
     library,
+    projects,
   }, now);
 }

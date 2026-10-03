@@ -7,6 +7,7 @@ import {
   cachedItemKey,
   describeCachedItem,
   describeFileAnnotation,
+  editorEntryItemKey,
   parsePdfAnnotationCache,
   reconcileAnnotations,
   resolveAnnotationConflict,
@@ -184,5 +185,15 @@ describe('labels and parsing', () => {
     expect(parsePdfAnnotationCache({ ...good, version: 99 })).toBeNull();
     expect(parsePdfAnnotationCache({ ...good, items: [{ key: 'k' }], deleted: ['nope'] })).toMatchObject({ items: [], deleted: [] });
     expect(parsePdfAnnotationCache(null)).toBeNull();
+  });
+
+  it('keys a live editor entry the way the cache keys it, so two viewers agree', () => {
+    const ink = { annotationType: EDITOR_TYPE_INK, pageIndex: 2, rect: new Float32Array(RECT_B), paths: { lines: [], points: [[1, 2]] } };
+    const [stored] = snapshotAnnotations({ entries: [['pdfjs_internal_editor_7', ink]], pending: [], previous: null, fileMarks: null, now: 1 }).items;
+    // Another viewer's editor for the same drawing has another storage key but the same content key.
+    expect(editorEntryItemKey({ ...ink, id: undefined })).toBe(stored.key);
+    expect(editorEntryItemKey({ deleted: true, id: '12R', pageIndex: 0 })).toBeNull();
+    expect(editorEntryItemKey({ annotationType: 999, pageIndex: 0, rect: RECT_A })).toBeNull();
+    expect(editorEntryItemKey({ annotationType: EDITOR_TYPE_INK, pageIndex: -1, rect: RECT_A })).toBeNull();
   });
 });

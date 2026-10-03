@@ -180,6 +180,21 @@ export interface SnapshotInput {
 }
 
 /**
+ * The cache key of one live editor entry (`annotationStorage` value), or null
+ * for anything that is not a drawing this cache keeps. Content-derived, so two
+ * viewers of the same document agree on which drawing is which.
+ */
+export function editorEntryItemKey(raw: unknown): string | null {
+  const value = toPlainJson(raw);
+  if (!isRecord(value) || value.deleted === true) return null;
+  const annotationType = value.annotationType;
+  if (typeof annotationType !== 'number' || !EDITOR_TYPES.has(annotationType)) return null;
+  const rect = parseRect(value.rect);
+  if (!rect || !isPageIndex(value.pageIndex)) return null;
+  return cachedItemKey(annotationType, value.pageIndex, rect);
+}
+
+/**
  * Turns the live annotation storage into cache entries. Edited file
  * annotations (`id` set) become delete + new; form-field values and other
  * non-editor entries are ignored.

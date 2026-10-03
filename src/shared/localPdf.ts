@@ -143,7 +143,9 @@ export function pdfDisplayName(sourceUrl: string): string {
 //   • `?a=<active>&f=<url>&f=<url>…` — the canonical multi-document form the
 //     hub rewrites itself to with history.replaceState. `s=home` or
 //     `s=<url>` says the home page or a pinned document (whose tabs come
-//     from the library, not from this list) was in front instead.
+//     from the project, not from this list) was in front instead, and
+//     `p=<id>` names the project the hub holds (shared/pdfProjects.ts); a
+//     hub URL without one is routed to a project by the background.
 
 export interface PdfHubDoc {
   url: string;
@@ -155,6 +157,8 @@ export const PDF_HUB_MAX_DOCS = 50;
 const PDF_HUB_ACTIVE_PARAM = 'a';
 const PDF_HUB_FILES_PARAM = 'f';
 const PDF_HUB_SHOW_PARAM = 's';
+const PDF_HUB_PROJECT_PARAM = 'p';
+const PROJECT_PARAM_PATTERN = /^[a-z0-9_-]{1,40}$/u;
 export const PDF_HUB_SHOW_HOME = 'home';
 
 function sourceOnly(candidate: string): string | null {
@@ -173,11 +177,13 @@ export function buildPdfHubEntryUrl(sourceUrl: string, hubBaseUrl: string): stri
  * Canonical hub URL for a document list; fragments are not persisted. `show`
  * is `PDF_HUB_SHOW_HOME` or the source URL of a pinned document in front.
  */
-export function buildPdfHubUrl(urls: readonly string[], active: number, hubBaseUrl: string, show: string | null = null): string {
+export function buildPdfHubUrl(urls: readonly string[], active: number, hubBaseUrl: string, show: string | null = null, project: string | null = null): string {
   const files = urls.map(sourceOnly).filter((url): url is string => url !== null).slice(0, PDF_HUB_MAX_DOCS);
   const shown = show === PDF_HUB_SHOW_HOME ? show : show ? sourceOnly(show) : null;
-  if (files.length === 0 && (shown === null || shown === PDF_HUB_SHOW_HOME)) return hubBaseUrl;
+  const projectId = project && PROJECT_PARAM_PATTERN.test(project) ? project : null;
+  if (files.length === 0 && (shown === null || shown === PDF_HUB_SHOW_HOME) && !projectId) return hubBaseUrl;
   const params = new URLSearchParams();
+  if (projectId) params.set(PDF_HUB_PROJECT_PARAM, projectId);
   if (files.length) params.set(PDF_HUB_ACTIVE_PARAM, String(Math.min(Math.max(0, Math.trunc(active) || 0), files.length - 1)));
   if (shown) params.set(PDF_HUB_SHOW_PARAM, shown);
   for (const file of files) params.append(PDF_HUB_FILES_PARAM, file);
@@ -185,10 +191,10 @@ export function buildPdfHubUrl(urls: readonly string[], active: number, hubBaseU
 }
 
 /** Reads a hub page's `location.search` + `location.hash` back into documents. */
-export function parsePdfHubUrl(search: string, hash: string): { docs: PdfHubDoc[]; active: number; show: string | null } {
+export function parsePdfHubUrl(search: string, hash: string): { docs: PdfHubDoc[]; active: number; show: string | null; project: string | null } {
   const entry = parsePdfViewerFile(search);
-  if (entry) return { docs: [{ url: entry, hash: typeof hash === 'string' && hash.startsWith('#') ? hash : '' }], active: 0, show: null };
-  if (typeof search !== 'string' || !search.startsWith('?')) return { docs: [], active: 0, show: null };
+  if (entry) return { docs: [{ url: entry, hash: typeof hash === 'string' && hash.startsWith('#') ? hash : '' }], active: 0, show: null, project: null };
+  if (typeof search !== 'string' || !search.startsWith('?')) return { docs: [], active: 0, show: null, project: null };
   const params = new URLSearchParams(search);
   const seen = new Set<string>();
   const docs: PdfHubDoc[] = [];
@@ -202,7 +208,9 @@ export function parsePdfHubUrl(search: string, hash: string): { docs: PdfHubDoc[
   const active = Number.parseInt(params.get(PDF_HUB_ACTIVE_PARAM) ?? '0', 10);
   const rawShow = params.get(PDF_HUB_SHOW_PARAM);
   const show = rawShow === PDF_HUB_SHOW_HOME ? rawShow : rawShow ? sourceOnly(rawShow) : null;
-  return { docs, active: Number.isInteger(active) && active >= 0 && active < docs.length ? active : 0, show };
+  const rawProject = params.get(PDF_HUB_PROJECT_PARAM);
+  const project = rawProject && PROJECT_PARAM_PATTERN.test(rawProject) ? rawProject : null;
+  return { docs, active: Number.isInteger(active) && active >= 0 && active < docs.length ? active : 0, show, project };
 }
 
 /**

@@ -22,9 +22,11 @@ import {
   mergeAnnotationCaches,
   mergePdfSyncSnapshots,
   parsePdfSyncSnapshot,
+  pdfSyncSnapshotDataEquals,
 } from '../src/shared/pdfSync';
 import { parsePdfSyncHintRequest, parseSetPdfSyncEnabledRequest } from '../src/shared/messages';
 import { PDF_LIBRARY_STORAGE_KEY, type PdfLibraryEntry } from '../src/shared/pdfLibrary';
+import type { PdfProject } from '../src/shared/pdfProjects';
 import researchManifest from '../manifest.json';
 import { FakeGoogle, createFakeGoogle } from './fakeGoogleDrive';
 import { clearAllStores } from './helpers';
@@ -50,8 +52,12 @@ function doc(docId: string, page: number, updatedAt: number): PdfDocRecord {
   };
 }
 
-function snapshot(docs: PdfDocRecord[] = [], annotations: PdfAnnotationCache[] = [], library: PdfLibraryEntry[] = []): PdfSyncSnapshot {
-  return { version: 2, exportedAt: '2026-09-01T00:00:00.000Z', docs, annotations, library };
+function snapshot(docs: PdfDocRecord[] = [], annotations: PdfAnnotationCache[] = [], library: PdfLibraryEntry[] = [], projects: PdfProject[] = []): PdfSyncSnapshot {
+  return { version: 3, exportedAt: '2026-09-01T00:00:00.000Z', docs, annotations, library, projects };
+}
+
+function project(id: string, overrides: Partial<PdfProject> = {}): PdfProject {
+  return { id, name: id, createdAt: ago(500), renamedAt: ago(500), deletedAt: 0, members: [], layout: { urls: [], active: 0, show: null, savedAt: 0 }, ...overrides };
 }
 
 function entry(docId: string, overrides: Partial<PdfLibraryEntry> = {}): PdfLibraryEntry {
@@ -114,13 +120,43 @@ describe('pdf sync merge', () => {
     expect(mergePdfSyncSnapshots(remote, local, null).library).toEqual(merged.library);
   });
 
-  it('reads an older build\'s version-1 document with an empty library', () => {
+  it('joins projects: the latest rename and saved tabs, final deletions, the latest change per document', () => {
+    const local = snapshot([], [], [entry(DOC_A)], [
+      project('pa', { name: 'Local name', renamedAt: ago(10), members: [{ docId: DOC_A, member: true, pinned: true, changedAt: ago(30) }] }),
+      project('pb'),
+    ]);
+    const remote = snapshot([], [], [entry(DOC_B)], [
+      project('pa', { name: 'Remote name', renamedAt: ago(20), members: [{ docId: DOC_A, member: false, pinned: false, changedAt: ago(5) }, { docId: DOC_B, member: true, pinned: false, changedAt: ago(5) }],
+        layout: { urls: ['https://a.org/x.pdf'], active: 0, show: null, savedAt: ago(1) } }),
+      project('pb', { deletedAt: ago(2) }),
+    ]);
+    const merged = mergePdfSyncSnapshots(local, remote, null);
+    const pa = merged.projects.find((p) => p.id === 'pa')!;
+    expect(pa.name).toBe('Local name');
+    expect(pa.members.map((m) => [m.docId, m.member, m.pinned])).toEqual([[DOC_A, false, false], [DOC_B, true, false]]);
+    expect(pa.layout.urls).toEqual(['https://a.org/x.pdf']);
+    expect(merged.projects.find((p) => p.id === 'pb')).toMatchObject({ deletedAt: ago(2), members: [] });
+    expect(mergePdfSyncSnapshots(remote, local, null).projects).toEqual(merged.projects);
+    expect(pdfSyncSnapshotDataEquals(merged, mergePdfSyncSnapshots(merged, merged, null))).toBe(true);
+  });
+
+  it('keeps every library row a project still refers to', () => {
+    const old = entry(DOC_A, { openedAt: ago(400 * 24 * 60 * 60) });
+    const kept = mergePdfSyncSnapshots(snapshot([], [], [old], [project('pa', { members: [{ docId: DOC_A, member: true, pinned: false, changedAt: ago(1) }] })]), snapshot(), null);
+    expect(kept.library.map((e) => e.docId)).toEqual([DOC_A]);
+    expect(mergePdfSyncSnapshots(snapshot([], [], [old]), snapshot(), null).library).toEqual([]);
+  });
+
+  it('reads an older build\'s document with what it lacks empty', () => {
     const parsed = parsePdfSyncSnapshot({ version: 1, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [] });
-    expect(parsed).toEqual({ version: 2, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [] });
+    expect(parsed).toEqual({ version: 3, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [] });
+    expect(parsePdfSyncSnapshot({ version: 2, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [] })?.projects).toEqual([]);
   });
 
   it('refuses a document another build could not read back', () => {
+    expect(parsePdfSyncSnapshot({ version: 4, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [] })).toBeNull();
     expect(parsePdfSyncSnapshot({ version: 3, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [] })).toBeNull();
+    expect(parsePdfSyncSnapshot({ version: 3, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [{ id: 'x' }] })).toBeNull();
     expect(parsePdfSyncSnapshot({ version: 2, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [] })).toBeNull();
     expect(parsePdfSyncSnapshot({ version: 2, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [{ docId: 'x' }] })).toBeNull();
     expect(parsePdfSyncSnapshot({ version: 1, exportedAt: 'nope', docs: [], annotations: [] })).toBeNull();
@@ -185,7 +221,7 @@ describe('drive sync', () => {
 
     expect(google.files.size).toBe(1);
     const body = await google.headBody<PdfSyncSnapshot>();
-    expect(body.version).toBe(2);
+    expect(body.version).toBe(3);
     expect(body.docs.map((entry) => entry.page)).toEqual([4]);
     expect(keysOf(body.annotations[0])).toEqual(['k1']);
     expect(JSON.stringify(body)).not.toContain('perm-main');

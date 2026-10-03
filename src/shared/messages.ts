@@ -6,6 +6,7 @@
 
 import { PDF_HUB_MAX_DOCS, isPdfViewerSourceUrl, type PdfHubDoc } from './localPdf';
 import { parsePdfLibraryUpdate, type PdfLibraryUpdate } from './pdfLibrary';
+import { isPdfProjectId, parsePdfProjectUpdate, type PdfProjectUpdate } from './pdfProjects';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -41,7 +42,7 @@ export function parseSyncWebPdfRoutingRequest(value: unknown): SyncWebPdfRouting
   return parseEmptyRequest(value, 'VOCAB_T_SYNC_WEB_PDF_ROUTING');
 }
 
-// ─── PDF hub (one tab per window collecting every top-level PDF) ───
+// ─── PDF hub (one tab per project collecting every top-level PDF) ───
 
 function parseHubDocs(value: unknown): PdfHubDoc[] | null {
   if (!Array.isArray(value) || value.length > PDF_HUB_MAX_DOCS) return null;
@@ -54,35 +55,95 @@ function parseHubDocs(value: unknown): PdfHubDoc[] | null {
   return docs;
 }
 
-// A hub page that just loaded asks whether it is its window's hub or should
-// hand its documents to the existing one and get out of the way.
+// A hub page that just loaded asks whether it is a project's hub or should
+// hand its documents to the existing one and get out of the way. `project`
+// is the one its URL names, or null to let the background route the
+// documents (the default project, or an open one they are registered to).
 export interface PdfHubClaimRequest {
   type: 'VOCAB_T_PDF_HUB_CLAIM';
   docs: PdfHubDoc[];
   canGoBack: boolean;
+  project: string | null;
 }
 
 export function parsePdfHubClaimRequest(value: unknown): PdfHubClaimRequest | null {
   if (!isRecord(value) || value.type !== 'VOCAB_T_PDF_HUB_CLAIM' || typeof value.canGoBack !== 'boolean') return null;
+  const project = value.project === undefined || value.project === null ? null : isPdfProjectId(value.project) ? value.project : undefined;
+  if (project === undefined) return null;
   const docs = parseHubDocs(value.docs);
-  return docs ? { type: 'VOCAB_T_PDF_HUB_CLAIM', docs, canGoBack: value.canGoBack } : null;
+  return docs ? { type: 'VOCAB_T_PDF_HUB_CLAIM', docs, canGoBack: value.canGoBack, project } : null;
 }
 
 // The hub reports its URL-backed documents so the background can recreate it
 // after an extension reload (Chrome closes every page of a reloaded
-// extension). Reading positions come back from the per-document records.
+// extension) and keep them as its project's layout, which is what the
+// project opens with next time. Reading positions come back from the
+// per-document records.
 export interface PdfHubStateRequest {
   type: 'VOCAB_T_PDF_HUB_STATE';
   urls: string[];
   active: number;
+  project: string;
+  /** `home`, a pinned document's URL in front, or null. */
+  show: string | null;
 }
 
 export function parsePdfHubStateRequest(value: unknown): PdfHubStateRequest | null {
-  if (!isRecord(value) || value.type !== 'VOCAB_T_PDF_HUB_STATE') return null;
+  if (!isRecord(value) || value.type !== 'VOCAB_T_PDF_HUB_STATE' || !isPdfProjectId(value.project)) return null;
   if (!Array.isArray(value.urls) || value.urls.length > PDF_HUB_MAX_DOCS) return null;
   if (!value.urls.every((url) => typeof url === 'string' && isPdfViewerSourceUrl(url))) return null;
+  const show = value.show === null || value.show === undefined ? null
+    : value.show === 'home' || (typeof value.show === 'string' && isPdfViewerSourceUrl(value.show)) ? value.show as string : undefined;
+  if (show === undefined) return null;
   const active = typeof value.active === 'number' && Number.isInteger(value.active) && value.active >= 0 ? value.active : 0;
-  return { type: 'VOCAB_T_PDF_HUB_STATE', urls: value.urls as string[], active };
+  return { type: 'VOCAB_T_PDF_HUB_STATE', urls: value.urls as string[], active, project: value.project, show };
+}
+
+// ─── Projects (hub → background) ───
+
+export interface PdfProjectUpdateRequest {
+  type: 'VOCAB_T_PDF_PROJECT_UPDATE';
+  update: PdfProjectUpdate;
+}
+
+export function parsePdfProjectUpdateRequest(value: unknown): PdfProjectUpdateRequest | null {
+  if (!isRecord(value) || value.type !== 'VOCAB_T_PDF_PROJECT_UPDATE' || Object.keys(value).length !== 2) return null;
+  const update = parsePdfProjectUpdate(value.update);
+  return update && update.kind !== 'layout' && update.kind !== 'move' ? { type: 'VOCAB_T_PDF_PROJECT_UPDATE', update } : null;
+}
+
+// Show a project: its hub if it is open anywhere, otherwise a new hub tab
+// next to the sender with the tabs it was closed with.
+export interface PdfProjectOpenRequest {
+  type: 'VOCAB_T_PDF_PROJECT_OPEN';
+  project: string;
+}
+
+export function parsePdfProjectOpenRequest(value: unknown): PdfProjectOpenRequest | null {
+  if (!isRecord(value) || value.type !== 'VOCAB_T_PDF_PROJECT_OPEN' || Object.keys(value).length !== 2) return null;
+  return isPdfProjectId(value.project) ? { type: 'VOCAB_T_PDF_PROJECT_OPEN', project: value.project } : null;
+}
+
+// Move a document to another project (`keep`: register it there too and
+// leave it where it is). The background updates the membership and puts the
+// document's tab in the target: handed to its hub when open, otherwise added
+// to the tabs it opens with.
+export interface PdfProjectMoveRequest {
+  type: 'VOCAB_T_PDF_PROJECT_MOVE';
+  docId: string;
+  url: string | null;
+  from: string;
+  to: string;
+  keep: boolean;
+}
+
+export function parsePdfProjectMoveRequest(value: unknown): PdfProjectMoveRequest | null {
+  if (!isRecord(value) || value.type !== 'VOCAB_T_PDF_PROJECT_MOVE') return null;
+  const { docId, url, from, to, keep } = value;
+  if (typeof docId !== 'string' || !docId || docId.length > 128 || !isPdfProjectId(from) || !isPdfProjectId(to) || from === to) return null;
+  if (url !== null && (typeof url !== 'string' || !isPdfViewerSourceUrl(url))) return null;
+  if (typeof keep !== 'boolean') return null;
+  return { type: 'VOCAB_T_PDF_PROJECT_MOVE', docId, url, from, to, keep };
 }
 
 // Background → hub page broadcast: add these documents to the hub in tab `tabId`.

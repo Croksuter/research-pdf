@@ -9,6 +9,11 @@
 // File annotations the user removed are recorded in annotationStorage as
 // `{deleted: true}` (what `saveDocument()` honours), registered with the UI
 // manager so they never turn into editors, and hidden in the annotation layer.
+//
+// The same document can be open in several viewers at once (hubs of
+// different projects). Every stored snapshot is announced on a
+// BroadcastChannel; the other viewers of that document then show what was
+// drawn and drop what was erased, in place, without reloading.
 
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { EventBus, PDFViewer } from 'pdfjs-dist/web/pdf_viewer.mjs';
@@ -17,6 +22,7 @@ import { mergeAnnotationCaches } from '../../shared/pdfSync';
 import { requestPdfSync } from './syncHint';
 import {
   EDITOR_TYPE_STAMP,
+  editorEntryItemKey,
   PDF_ANNOTATION_CACHE_VERSION,
   isEmptyAnnotationCache,
   parseRect,
@@ -35,6 +41,10 @@ import type { PdfDocIdentity } from '../../shared/pdfIdentity';
 import { debugError, debugLog } from '../../shared/debugLog';
 
 const SNAPSHOT_DEBOUNCE_MS = 800;
+const OUTSIDE_WRITE_DEBOUNCE_MS = 150;
+const ANNOTATION_CHANNEL = 'rpdf-annotations';
+// Who stored it, so a viewer ignores its own announcements.
+const VIEWER_INSTANCE = Math.random().toString(36).slice(2);
 // Enumerating file annotations costs one worker round trip per page.
 const FILE_MARKS_MAX_PAGES = 2_000;
 
@@ -55,6 +65,9 @@ interface StorageLike {
   readonly serializable: { map: Map<string, unknown> | null };
   getRawValue(key: string): unknown;
   setValue(key: string, value: unknown): void;
+}
+interface RemovableEditor {
+  remove(): void;
 }
 interface PageViewLike {
   div: HTMLDivElement;
@@ -87,6 +100,8 @@ export class AnnotationCache {
   private foreign: { items: Map<string, CachedAnnotationItem>; deleted: Map<string, CachedAnnotationDelete> } = {
     items: new Map(), deleted: new Map(),
   };
+  private readonly channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel(ANNOTATION_CHANNEL) : null;
+  private outsideTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     eventBus: EventBus,
@@ -107,6 +122,14 @@ export class AnnotationCache {
     document.addEventListener('keyup', () => this.scheduleSnapshot());
     document.addEventListener('visibilitychange', () => { if (document.hidden) void this.flush(); });
     window.addEventListener('pagehide', () => { void this.flush(); });
+    this.channel?.addEventListener('message', (event: MessageEvent<{ docId?: unknown; from?: unknown }>) => {
+      if (event.data?.from === VIEWER_INSTANCE || !this.identity || event.data?.docId !== this.identity.docId) return;
+      if (this.outsideTimer) clearTimeout(this.outsideTimer);
+      this.outsideTimer = setTimeout(() => {
+        this.outsideTimer = null;
+        void this.applyOutsideWrite();
+      }, OUTSIDE_WRITE_DEBOUNCE_MS);
+    });
   }
 
   /** Called once per opened document, after `pdfViewer.setDocument(doc)`. */
@@ -369,9 +392,62 @@ export class AnnotationCache {
       }
       this.cache = next;
       await putPdfAnnotationCache(next);
+      this.channel?.postMessage({ docId: identity.docId, from: VIEWER_INSTANCE });
       requestPdfSync('edit');
     } catch (error) {
       debugError('pdf:annot', 'annotation snapshot failed', () => ({ error: error instanceof Error ? error.message : String(error) }));
+    }
+  }
+
+  // ─── Another viewer of this document stored drawings ───
+
+  /**
+   * Shows here what the other viewer stored: drawings it added appear, ones
+   * it erased (that this page had stored before) go. This page's own unsaved
+   * drawings are stored first, through the usual merge, so none are lost.
+   */
+  async applyOutsideWrite(): Promise<void> {
+    const { doc, identity } = this;
+    if (!doc || !identity || !this.ready) return;
+    const session = this.session;
+    const before = this.cache;
+    await this.flush();
+    if (session !== this.session) return;
+    try {
+      // No row: everything was erased (an empty cache is not stored).
+      const stored = await getPdfAnnotationCache(identity.docId) ?? this.emptyCache(identity);
+      if (session !== this.session) return;
+      const storage = doc.annotationStorage as unknown as StorageLike;
+      const shown = new Map<string, string>(); // item key → storage key
+      for (const [entryKey, value] of this.serializedEntries()) {
+        const key = editorEntryItemKey(value);
+        if (key) shown.set(key, entryKey);
+      }
+      const storedKeys = new Set(stored.items.map((item) => item.key));
+      const known = new Set((before?.items ?? []).map((item) => item.key));
+      const pages = new Set<number>();
+      let added = 0;
+      let removed = 0;
+      for (const [key, entryKey] of shown) {
+        if (storedKeys.has(key) || !known.has(key)) continue;
+        const editor = storage.getRawValue(entryKey) as Partial<RemovableEditor> | undefined;
+        if (typeof editor?.remove === 'function') { editor.remove(); removed += 1; }
+      }
+      for (const key of [...this.pending.keys()]) {
+        if (!storedKeys.has(key) && known.has(key)) { this.pending.delete(key); removed += 1; }
+      }
+      for (const item of stored.items) {
+        if (shown.has(item.key) || this.pending.has(item.key)) continue;
+        this.pending.set(item.key, item);
+        this.foreign.items.delete(item.key);
+        pages.add(item.pageIndex);
+        added += 1;
+      }
+      this.cache = stored;
+      debugLog('pdf:annot', 'applied another viewer\'s drawings', () => ({ added, removed }));
+      for (const pageIndex of pages) void this.restorePage(pageIndex);
+    } catch (error) {
+      debugError('pdf:annot', 'applying another viewer\'s drawings failed', () => ({ error: error instanceof Error ? error.message : String(error) }));
     }
   }
 

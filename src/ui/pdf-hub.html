@@ -20,12 +20,24 @@
     <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></symbol>
     <symbol id="i-restore" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4h4"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2h8.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/></symbol>
+    <symbol id="i-move" viewBox="0 0 24 24"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2h8.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/><path d="M9 13.5h6m-2.5-2.5 2.5 2.5-2.5 2.5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M6 12h12"/></symbol>
   </svg>
   <nav id="rpdf-strip" class="rpdf-strip" aria-label="열린 PDF">
+    <button id="rpdf-project-btn" class="rpdf-project-btn" type="button" aria-haspopup="dialog" aria-expanded="false">
+      <svg><use href="#i-folder"/></svg><span id="rpdf-project-name" class="rpdf-project-name"></span><svg class="rpdf-chevron"><use href="#i-chevron"/></svg>
+    </button>
     <button id="rpdf-home-btn" class="rpdf-home-btn" type="button" title="홈 · 라이브러리" aria-label="홈 · 라이브러리" aria-pressed="false"><svg><use href="#i-home"/></svg></button>
     <div id="rpdf-tabs" class="rpdf-tabs" role="tablist"></div>
     <button id="rpdf-add" class="rpdf-add" type="button" title="PDF 파일 열기" aria-label="PDF 파일 열기"><svg><use href="#i-plus"/></svg></button>
     <span class="rpdf-strip-spacer"></span>
+    <button id="rpdf-move-btn" class="rpdf-move-btn" type="button" title="다른 프로젝트로 이동" aria-haspopup="dialog" aria-expanded="false">
+      <svg><use href="#i-move"/></svg><span>프로젝트로 이동</span>
+    </button>
     <button id="rpdf-list-btn" class="rpdf-list-btn" type="button" title="모든 탭 · 최근 닫은 탭" aria-haspopup="dialog" aria-expanded="false">
       <span id="rpdf-list-count" class="rpdf-list-count"></span><svg><use href="#i-chevron"/></svg>
     </button>
@@ -38,10 +50,26 @@
     </label>
     <div id="rpdf-list-items" class="rpdf-list-items"></div>
   </div>
+  <div id="rpdf-projects" class="rpdf-popover rpdf-popover-left" role="dialog" aria-label="프로젝트" hidden>
+    <div id="rpdf-projects-items" class="rpdf-list-items"></div>
+    <form id="rpdf-project-new" class="rpdf-search rpdf-new">
+      <svg aria-hidden="true"><use href="#i-plus"/></svg>
+      <input id="rpdf-project-new-name" type="text" maxlength="60" placeholder="새 프로젝트 — 이름 입력 후 Enter" autocomplete="off" spellcheck="false">
+    </form>
+  </div>
+  <div id="rpdf-move" class="rpdf-popover" role="dialog" aria-label="프로젝트로 이동" hidden>
+    <p id="rpdf-move-title" class="rpdf-pop-title"></p>
+    <div id="rpdf-move-items" class="rpdf-list-items"></div>
+    <form id="rpdf-move-new" class="rpdf-search rpdf-new">
+      <svg aria-hidden="true"><use href="#i-plus"/></svg>
+      <input id="rpdf-move-new-name" type="text" maxlength="60" placeholder="새 프로젝트로 이동 — 이름 입력 후 Enter" autocomplete="off" spellcheck="false">
+    </form>
+  </div>
   <div id="rpdf-menu" class="rpdf-menu" role="menu" hidden></div>
   <main id="rpdf-frames" class="rpdf-frames">
     <section id="rpdf-home" class="rpdf-home" aria-label="홈 · 라이브러리" hidden>
       <div class="rpdf-home-inner">
+        <h1 id="rpdf-home-title" class="rpdf-home-title"></h1>
         <header class="rpdf-home-head">
           <label class="rpdf-search rpdf-home-search">
             <svg aria-hidden="true"><use href="#i-search"/></svg>

@@ -1,19 +1,25 @@
 // ─── ResearchPDF hub page ───
 //
-// One browser tab per window that collects every PDF the window opens, so
-// papers stop scattering across tabs that look like (and mix with) web
-// pages. Each document is a viewer iframe (pdf-viewer.html) behind an
+// One browser tab per project that collects its PDFs, so papers stop
+// scattering across tabs that look like (and mix with) web pages. Each document is a viewer iframe (pdf-viewer.html) behind an
 // in-page tab strip; iframes are created the first time a document is
 // shown, so a restored hub with twenty papers loads only the one in front,
 // and frames not shown for a while are unloaded again (shared/hubTabs.ts).
 //
-// Left of the tabs is the home page: the library of every document the hub
-// has shown (shared/pdfLibrary.ts), the pinned ones and this hub's recently
-// closed tabs. Pinned documents are tabs in every hub, on every device.
+// A project (shared/pdfProjects.ts) is a named set of documents with its own
+// pins and the tabs it was last closed with; every PDF first lands in the
+// default project and "프로젝트로 이동" moves it. The switcher at the strip's
+// left opens, creates, renames and deletes projects; each open project is
+// one hub tab.
+//
+// Left of the tabs is the home page: the project's documents and pins, this
+// hub's recently closed tabs, and the library of every document any hub has
+// shown (shared/pdfLibrary.ts). Pinned documents are tabs in that project's
+// hub, on every device.
 //
 // On load the page claims with the background (background/pdfHub.ts): it is
-// either its window's hub, or it hands its documents to the existing hub and
-// goes back to the page it came from (or closes). The document list lives in
+// either its project's hub, or it hands its documents to the existing hub
+// and goes back to the page it came from (or closes). The document list lives in
 // this page's own URL (history.replaceState, see shared/localPdf.ts), so a
 // reload or Chrome's session restore brings every document back.
 
@@ -43,17 +49,30 @@ import {
   type PdfHubDoc,
 } from '../shared/localPdf';
 import { parsePdfHubOpenMessage } from '../shared/messages';
+import {
+  DEFAULT_PROJECT_ID,
+  PDF_PROJECTS_STORAGE_KEY,
+  cleanPdfProjectName,
+  isDocInProject,
+  livePdfProjects,
+  newPdfProjectId,
+  parsePdfProjects,
+  projectPinnedDocIds,
+  projectsOfDoc,
+  seedPdfProjects,
+  type PdfProject,
+  type PdfProjects,
+  type PdfProjectUpdate,
+} from '../shared/pdfProjects';
 import { PDF_DOC_STATE_STORAGE_KEY, parsePdfDocRecords, type PdfDocRecords } from '../shared/pdfIdentity';
 import {
   PDF_LIBRARY_STORAGE_KEY,
   libraryEntryName,
   parsePdfLibrary,
-  pinnedLibraryEntries,
   relativeTimeKo,
   searchPdfLibrary,
   type PdfLibrary,
   type PdfLibraryEntry,
-  type PdfLibraryUpdate,
 } from '../shared/pdfLibrary';
 import {
   HUB_MESSAGE_TAG,
@@ -91,6 +110,8 @@ interface HubTab {
   keepOnUnpin: boolean;
   /** Pin as soon as the document's identity is known. */
   pendingPin: boolean;
+  /** Move to another project as soon as the document's identity is known. */
+  pendingMove: { to: string; keep: boolean } | null;
   frame: HTMLIFrameElement | null;
   /** Prefetch into the local file cache was attempted. */
   prefetched: boolean;
@@ -134,6 +155,19 @@ const emptyText = byId<HTMLParagraphElement>('rpdf-empty-text');
 const toast = byId<HTMLDivElement>('rpdf-toast');
 const toastText = byId<HTMLSpanElement>('rpdf-toast-text');
 const toastAction = byId<HTMLButtonElement>('rpdf-toast-action');
+const projectBtn = byId<HTMLButtonElement>('rpdf-project-btn');
+const projectNameEl = byId<HTMLSpanElement>('rpdf-project-name');
+const projectsPanel = byId<HTMLDivElement>('rpdf-projects');
+const projectsItems = byId<HTMLDivElement>('rpdf-projects-items');
+const projectNewForm = byId<HTMLFormElement>('rpdf-project-new');
+const projectNewName = byId<HTMLInputElement>('rpdf-project-new-name');
+const moveBtn = byId<HTMLButtonElement>('rpdf-move-btn');
+const movePanel = byId<HTMLDivElement>('rpdf-move');
+const moveTitle = byId<HTMLParagraphElement>('rpdf-move-title');
+const moveItems = byId<HTMLDivElement>('rpdf-move-items');
+const moveNewForm = byId<HTMLFormElement>('rpdf-move-new');
+const moveNewName = byId<HTMLInputElement>('rpdf-move-new-name');
+const homeTitle = byId<HTMLHeadingElement>('rpdf-home-title');
 
 const viewerBase = chrome.runtime.getURL(PDF_VIEWER_PAGE);
 const hubBase = chrome.runtime.getURL(PDF_HUB_PAGE);
@@ -176,45 +210,115 @@ let library: PdfLibrary = {};
 let urlToLibraryId = new Map<string, string>();
 let docRecords: PdfDocRecords = {};
 let annotated = new Set<string>();
+
+// ─── Projects (read here, written by the background) ───
+
+let projectId = DEFAULT_PROJECT_ID;
+// Before a device's first project write there is no record: it reads as the
+// default project seeded with the library's old pins, like the background.
+let storedProjects: unknown;
+let projects: PdfProjects = parsePdfProjects(undefined);
+// Projects with a hub right now (the background's registry; may be stale).
+let openProjectIds = new Set<string>();
 // Pin changes sent but not yet seen in storage: they win over a stale read.
 const pendingPins = new Map<string, boolean>();
+// Documents this hub already registered to its project (one message each).
+const registered = new Set<string>();
+const PROJECT_HUBS_SESSION_KEY = 'rpdfProjectHubs';
 
 function setLibrary(next: PdfLibrary): void {
   library = next;
-  for (const [docId, pinned] of pendingPins) {
-    if (!library[docId] || library[docId].pinned === pinned) pendingPins.delete(docId);
-  }
   urlToLibraryId = new Map();
   for (const entry of Object.values(library).sort((a, b) => a.openedAt - b.openedAt)) {
     for (const url of entry.urls) urlToLibraryId.set(hubDocKey(url).url, entry.docId);
   }
+  if (storedProjects === undefined) setProjects(undefined);
 }
 
-function libraryView(): PdfLibrary {
-  if (pendingPins.size === 0) return library;
-  const view: PdfLibrary = { ...library };
+function setProjects(raw: unknown): void {
+  storedProjects = raw;
+  projects = raw === undefined ? seedPdfProjects(Object.values(library)) : parsePdfProjects(raw);
+  const stored = new Set(projectPinnedDocIds(projects, projectId));
   for (const [docId, pinned] of pendingPins) {
-    if (view[docId]) view[docId] = { ...view[docId], pinned, pinChangedAt: Number.MAX_SAFE_INTEGER };
+    if (stored.has(docId) === pinned) pendingPins.delete(docId);
   }
-  return view;
+}
+
+function currentProject(): PdfProject {
+  return projects[projectId] ?? projects[DEFAULT_PROJECT_ID];
+}
+
+function projectName(id: string): string {
+  return projects[id]?.name ?? '프로젝트';
+}
+
+/** Pinned documents of this project, with pin changes still in flight. */
+function pinnedDocIds(): string[] {
+  const ids = projectPinnedDocIds(projects, projectId).filter((id) => pendingPins.get(id) !== false);
+  for (const [id, pinned] of pendingPins) if (pinned && !ids.includes(id)) ids.push(id);
+  return ids;
+}
+
+function isPinnedDoc(docId: string): boolean {
+  return pinnedDocIds().includes(docId);
+}
+
+/** docId → the non-default projects it is registered to. */
+function membershipIndex(): Map<string, string[]> {
+  const index = new Map<string, string[]>();
+  for (const project of livePdfProjects(projects)) {
+    if (project.id === DEFAULT_PROJECT_ID) continue;
+    for (const m of project.members) {
+      if (m.member) index.set(m.docId, [...(index.get(m.docId) ?? []), project.id]);
+    }
+  }
+  return index;
+}
+
+function inThisProject(docId: string, index: Map<string, string[]>): boolean {
+  return projectId === DEFAULT_PROJECT_ID ? !index.has(docId) : (index.get(docId) ?? []).includes(projectId);
+}
+
+function sendProjectUpdate(update: PdfProjectUpdate): Promise<unknown> {
+  return ask({ type: 'VOCAB_T_PDF_PROJECT_UPDATE', update });
+}
+
+function ask<T = { success?: boolean; error?: string }>(message: Record<string, unknown>): Promise<T | undefined> {
+  return (chrome.runtime.sendMessage(message) as Promise<T>).catch(() => undefined);
+}
+
+async function loadOpenProjects(): Promise<void> {
+  try {
+    const stored = await chrome.storage.session.get(PROJECT_HUBS_SESSION_KEY);
+    const value = stored[PROJECT_HUBS_SESSION_KEY];
+    openProjectIds = new Set(value && typeof value === 'object' ? Object.keys(value) : []);
+  } catch {
+    openProjectIds = new Set();
+  }
+}
+
+/** A project opened in another hub registers the documents shown in it. */
+function registerDoc(docId: string | null): void {
+  if (!isHub || !docId || projectId === DEFAULT_PROJECT_ID || registered.has(docId)) return;
+  registered.add(docId);
+  if (isDocInProject(projects, projectId, docId)) return;
+  void sendProjectUpdate({ kind: 'member', id: projectId, docId, member: true });
 }
 
 function libraryIdForUrl(url: string): string | null {
   return urlToLibraryId.get(hubDocKey(url).url) ?? null;
 }
 
-function sendLibraryUpdate(update: PdfLibraryUpdate): void {
-  chrome.runtime.sendMessage({ type: 'VOCAB_T_PDF_LIBRARY_UPDATE', update }, () => { void chrome.runtime.lastError; });
-}
-
 async function loadLibraryState(): Promise<void> {
   try {
-    const stored = await chrome.storage.local.get([PDF_LIBRARY_STORAGE_KEY, PDF_DOC_STATE_STORAGE_KEY]);
+    const stored = await chrome.storage.local.get([PDF_LIBRARY_STORAGE_KEY, PDF_DOC_STATE_STORAGE_KEY, PDF_PROJECTS_STORAGE_KEY]);
     setLibrary(parsePdfLibrary(stored[PDF_LIBRARY_STORAGE_KEY]));
+    setProjects(stored[PDF_PROJECTS_STORAGE_KEY]);
     docRecords = parsePdfDocRecords(stored[PDF_DOC_STATE_STORAGE_KEY]);
   } catch {
     /* an empty home page */
   }
+  await loadOpenProjects();
 }
 
 async function loadAnnotated(): Promise<void> {
@@ -232,12 +336,25 @@ async function loadAnnotated(): Promise<void> {
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'session') {
+    if (changes[PROJECT_HUBS_SESSION_KEY]) {
+      const value = changes[PROJECT_HUBS_SESSION_KEY].newValue;
+      openProjectIds = new Set(value && typeof value === 'object' ? Object.keys(value) : []);
+      refreshPanels();
+    }
+    return;
+  }
   if (area !== 'local') return;
-  if (changes[PDF_LIBRARY_STORAGE_KEY]) {
-    setLibrary(parsePdfLibrary(changes[PDF_LIBRARY_STORAGE_KEY].newValue));
+  if (changes[PDF_LIBRARY_STORAGE_KEY] || changes[PDF_PROJECTS_STORAGE_KEY]) {
+    if (changes[PDF_LIBRARY_STORAGE_KEY]) setLibrary(parsePdfLibrary(changes[PDF_LIBRARY_STORAGE_KEY].newValue));
+    if (changes[PDF_PROJECTS_STORAGE_KEY]) setProjects(changes[PDF_PROJECTS_STORAGE_KEY].newValue);
     if (isHub) {
+      // This project was deleted (here, in another hub, on another device).
+      if (projects[projectId]?.deletedAt !== 0) { void rehome(); return; }
       completePendingPins();
       reconcilePinned();
+      updateProjectLabel();
+      refreshPanels();
     }
     scheduleHomeRender();
   }
@@ -274,7 +391,7 @@ function createTab(doc: { url: string | null; hash: string; file: File | null })
   const tab: HubTab = {
     key, url: doc.url, hash: doc.hash, file: doc.file, fileId,
     title: initialTitle, paperTitle: null, docId: null, libraryId: doc.url ? libraryIdForUrl(doc.url) : null,
-    pinned: false, keepOnUnpin: false, pendingPin: false,
+    pinned: false, keepOnUnpin: false, pendingPin: false, pendingMove: null,
     frame: null, prefetched: false, lastShownAt: 0, busyUntil: 0,
     button, iconEl, titleEl, paperEl, verEl, closeEl,
   };
@@ -334,12 +451,13 @@ function addDocs(docs: Array<{ url: string | null; hash: string; file: File | nu
       continue;
     }
     if (tabs.length - pinnedCount() >= PDF_HUB_MAX_DOCS) {
-      showToast(`한 창에는 PDF를 ${PDF_HUB_MAX_DOCS}개까지 열 수 있습니다.`);
+      showToast(`한 프로젝트에는 PDF를 ${PDF_HUB_MAX_DOCS}개까지 열 수 있습니다.`);
       break;
     }
     const tab = createTab(doc);
     insertTab(tab, insertAt ?? tabs.length);
     if (insertAt !== undefined) insertAt += 1;
+    registerDoc(tab.libraryId);
     last = tab;
   }
   if (last && (activateLast || (autoActivate && activeKey === null))) activate(last.key);
@@ -531,9 +649,11 @@ function wireDrag(tab: HubTab): void {
 
 // ─── Pins ───
 
-/** Makes the strip match the library's pinned rows (this and every other hub). */
+/** Makes the strip match the project's pinned documents (set here, in another hub, or on another device). */
 function reconcilePinned(): void {
-  const pinned = pinnedLibraryEntries(libraryView()).filter((e) => e.urls.length > 0);
+  const pinned = pinnedDocIds()
+    .map((id) => library[id])
+    .filter((e): e is PdfLibraryEntry => !!e && e.urls.length > 0);
   const wanted = new Set(pinned.map((e) => e.docId));
   for (const tab of [...tabs]) {
     if (!tab.pinned || (tab.libraryId && wanted.has(tab.libraryId))) continue;
@@ -570,8 +690,16 @@ function reconcilePinned(): void {
 
 function setPinnedById(docId: string, pinned: boolean): void {
   if (!library[docId]) return;
+  if (pinned && !isDocInProject(projects, projectId, docId)) {
+    if (projectId === DEFAULT_PROJECT_ID) {
+      const elsewhere = projectsOfDoc(projects, docId).map(projectName).join(', ');
+      showToast(`‘${elsewhere}’ 프로젝트의 문서입니다. 기본 프로젝트로 옮긴 뒤 고정하세요.`);
+      return;
+    }
+    registered.add(docId); // pinning registers it
+  }
   pendingPins.set(docId, pinned);
-  sendLibraryUpdate({ kind: 'pin', docId, pinned });
+  void sendProjectUpdate({ kind: 'pin', id: projectId, docId, pinned });
   reconcilePinned();
   scheduleHomeRender();
 }
@@ -647,7 +775,9 @@ let stateTimer: ReturnType<typeof setTimeout> | null = null;
 function render(): void {
   const current = activeTab();
   const name = activeKey === HOME ? '홈' : current?.paperTitle ?? current?.title ?? 'PDF';
-  document.title = hubDocumentTitle(name, tabs.length, APP_NAME);
+  const appName = projectId === DEFAULT_PROJECT_ID ? APP_NAME : `${currentProject().name} · ${APP_NAME}`;
+  document.title = hubDocumentTitle(name, tabs.length, appName);
+  moveBtn.disabled = !current;
   listCount.textContent = tabs.length ? String(tabs.length) : '';
   const badges = arxivVersionBadges(tabs.map((t) => t.url));
   tabs.forEach((t, i) => {
@@ -660,12 +790,14 @@ function render(): void {
   const urls = urlTabs.map((t) => t.url);
   const active = Math.max(0, urlTabs.findIndex((t) => t.key === activeKey));
   const show = activeKey === HOME ? PDF_HUB_SHOW_HOME : current?.pinned ? current.url : null;
-  const canonical = buildPdfHubUrl(urls, active, hubBase, show);
+  const canonical = buildPdfHubUrl(urls, active, hubBase, show, projectId);
   if (location.href !== canonical) history.replaceState(null, '', canonical);
   if (stateTimer) clearTimeout(stateTimer);
+  const project = projectId;
   stateTimer = setTimeout(() => {
     stateTimer = null;
-    chrome.runtime.sendMessage({ type: 'VOCAB_T_PDF_HUB_STATE', urls, active }, () => { void chrome.runtime.lastError; });
+    if (project !== projectId || !isHub) return;
+    chrome.runtime.sendMessage({ type: 'VOCAB_T_PDF_HUB_STATE', urls, active, project, show }, () => { void chrome.runtime.lastError; });
   }, 400);
 }
 
@@ -721,6 +853,28 @@ function renderList(): void {
     listItems.append(row);
   }
   if (open.length === 0) listItems.append(el('p', { className: 'rpdf-li-empty', textContent: words.length ? '일치하는 탭이 없습니다.' : '열린 탭이 없습니다.' }));
+  // The project's documents that are not open: one click away.
+  const index = membershipIndex();
+  const openIds = new Set(tabs.map((t) => t.docId ?? t.libraryId));
+  const members = Object.values(library)
+    .filter((e) => e.urls.length > 0 && !openIds.has(e.docId) && inThisProject(e.docId, index) && matches(entryName(e), e.fileName, ...e.urls))
+    .sort((a, b) => b.openedAt - a.openedAt);
+  if (members.length) {
+    listItems.append(el('h3', { className: 'rpdf-li-head', textContent: `${currentProject().name}의 닫힌 문서` }));
+    for (const entry of members.slice(0, 10)) {
+      const main = el('button', { type: 'button', className: 'rpdf-li-main' });
+      const text = el('span', { className: 'rpdf-li-text' });
+      text.append(
+        el('span', { className: 'rpdf-li-title', textContent: entryName(entry) }),
+        el('span', { className: 'rpdf-li-sub', textContent: `${relativeTimeKo(entry.openedAt)} 열어 봄` }),
+      );
+      main.append(icon(entry.urls[0].startsWith('file:') ? 'i-file-local' : 'i-file'), text);
+      main.addEventListener('click', () => { hideList(); openEntry(entry); });
+      const row = el('div', { className: 'rpdf-li' });
+      row.append(main);
+      listItems.append(row);
+    }
+  }
   const recent = closed.filter((e) => matches(e.title, e.paperTitle, e.url));
   if (recent.length) {
     listItems.append(el('h3', { className: 'rpdf-li-head', textContent: '최근 닫은 탭' }));
@@ -741,7 +895,7 @@ function renderList(): void {
 }
 
 function showList(): void {
-  hideMenu();
+  hidePanels();
   listPanel.hidden = false;
   listBtn.setAttribute('aria-expanded', 'true');
   listSearch.value = '';
@@ -774,7 +928,7 @@ listPanel.addEventListener('keydown', (e) => {
 // ─── Tab context menu ───
 
 function showTabMenu(tab: HubTab, x: number, y: number): void {
-  hideList();
+  hidePanels();
   menu.replaceChildren();
   const item = (label: string, run: () => void, disabled = false) => {
     const button = el('button', { type: 'button', className: 'rpdf-menu-item', textContent: label, disabled });
@@ -783,6 +937,11 @@ function showTabMenu(tab: HubTab, x: number, y: number): void {
     menu.append(button);
   };
   item(tab.pinned ? '고정 해제' : '고정', () => setPinned(tab, !tab.pinned));
+  item('프로젝트로 이동…', () => showMove(tab));
+  const docId = tab.docId ?? tab.libraryId;
+  if (projectId !== DEFAULT_PROJECT_ID && docId && isDocInProject(projects, projectId, docId)) {
+    item('프로젝트에서 빼기', () => removeFromProject(tab, docId));
+  }
   if (tab.url) {
     const url = tab.url;
     item('주소 복사', () => {
@@ -817,8 +976,17 @@ document.addEventListener('pointerdown', (e) => {
   const target = e.target as Node;
   if (!menu.hidden && !menu.contains(target)) hideMenu();
   if (!listPanel.hidden && !listPanel.contains(target) && !listBtn.contains(target)) hideList();
+  if (!projectsPanel.hidden && !projectsPanel.contains(target) && !projectBtn.contains(target)) hideProjects();
+  if (!movePanel.hidden && !movePanel.contains(target) && !moveBtn.contains(target)) hideMove();
 }, true);
-window.addEventListener('blur', () => { hideMenu(); hideList(); });
+window.addEventListener('blur', () => hidePanels());
+
+function hidePanels(): void {
+  hideMenu();
+  hideList();
+  hideProjects();
+  hideMove();
+}
 
 // ─── Toast ───
 
@@ -883,8 +1051,17 @@ function openEntry(entry: PdfLibraryEntry): void {
   addDocs([{ url, hash: '', file: null }], true);
 }
 
-function homeRow(entry: PdfLibraryEntry): HTMLElement {
-  const pinned = libraryView()[entry.docId]?.pinned ?? entry.pinned;
+interface HomeRowOptions {
+  /** "+": register to this project without opening it. */
+  add?: boolean;
+  /** "−": take it out of this project. */
+  remove?: boolean;
+  /** Names of the other projects it is in, shown in the meta line. */
+  elsewhere?: string[];
+}
+
+function homeRow(entry: PdfLibraryEntry, options: HomeRowOptions = {}): HTMLElement {
+  const pinned = isPinnedDoc(entry.docId);
   const row = el('li', { className: 'rpdf-item' });
   const main = el('button', { type: 'button', className: 'rpdf-item-main' });
   main.title = [entry.title, entry.docTitle, entry.fileName, ...entry.urls].filter(Boolean).filter((v, i, all) => all.indexOf(v) === i).join('\n');
@@ -893,6 +1070,7 @@ function homeRow(entry: PdfLibraryEntry): HTMLElement {
   const record = docRecords[entry.docId];
   const page = record?.page ?? null;
   const meta = [
+    options.elsewhere?.length ? options.elsewhere.join(', ') : null,
     [entry.venue, entry.year].filter(Boolean).join(' '),
     entrySource(entry),
     relativeTimeKo(entry.openedAt),
@@ -909,12 +1087,37 @@ function homeRow(entry: PdfLibraryEntry): HTMLElement {
   if (openTabFor(entry.docId)) badges.append(el('span', { className: 'rpdf-badge rpdf-badge-open', textContent: '열림' }));
   main.append(badges);
   main.addEventListener('click', () => openEntry(entry));
-  const pin = el('button', { type: 'button', className: 'rpdf-item-pin', title: pinned ? '고정 해제' : '고정 — 모든 PDF 탭 왼쪽에 둡니다' });
+  row.append(main);
+  if (options.add) {
+    const add = el('button', { type: 'button', className: 'rpdf-item-act', title: `${currentProject().name}에 추가` });
+    add.setAttribute('aria-label', `${entryName(entry)}을(를) ${currentProject().name}에 추가`);
+    add.append(icon('i-plus'));
+    add.addEventListener('click', () => {
+      registered.add(entry.docId);
+      void sendProjectUpdate({ kind: 'member', id: projectId, docId: entry.docId, member: true });
+      showToast(`${currentProject().name}에 추가했습니다.`);
+    });
+    row.append(add);
+  }
+  if (options.remove) {
+    const remove = el('button', { type: 'button', className: 'rpdf-item-act', title: '이 프로젝트에서 빼기' });
+    remove.setAttribute('aria-label', `${entryName(entry)}을(를) 이 프로젝트에서 빼기`);
+    remove.append(icon('i-minus'));
+    remove.addEventListener('click', () => {
+      void sendProjectUpdate({ kind: 'member', id: projectId, docId: entry.docId, member: false });
+      showToast('이 프로젝트에서 뺐습니다.', {
+        label: '되돌리기',
+        run: () => { void sendProjectUpdate({ kind: 'member', id: projectId, docId: entry.docId, member: true }); },
+      });
+    });
+    row.append(remove);
+  }
+  const pin = el('button', { type: 'button', className: 'rpdf-item-pin', title: pinned ? '고정 해제' : '고정 — 이 프로젝트의 탭 왼쪽에 둡니다' });
   pin.setAttribute('aria-pressed', String(pinned));
   pin.setAttribute('aria-label', pinned ? `${entryName(entry)} 고정 해제` : `${entryName(entry)} 고정`);
   pin.append(icon('i-pin'));
   pin.addEventListener('click', () => setPinnedById(entry.docId, !pinned));
-  row.append(main, pin);
+  row.append(pin);
   if (page && entry.numPages > 1) {
     const bar = el('span', { className: 'rpdf-item-progress' });
     const fill = el('span');
@@ -935,50 +1138,79 @@ function homeSection(title: string, rows: HTMLElement[], extra?: HTMLElement): H
   return section;
 }
 
+function moreButton(total: number, onMore: () => void): HTMLElement | undefined {
+  if (total <= homeLimit) return undefined;
+  const more = el('button', { type: 'button', className: 'rpdf-more', textContent: `더 보기 (${total - homeLimit}개 더)` });
+  more.addEventListener('click', onMore);
+  return more;
+}
+
 function renderHome(): void {
-  const view = libraryView();
-  const entries = Object.values(view);
+  const project = currentProject();
+  homeTitle.textContent = project.name;
+  const entries = Object.values(library);
+  const index = membershipIndex();
+  const isDefault = projectId === DEFAULT_PROJECT_ID;
+  const otherNames = (docId: string) => (index.get(docId) ?? []).filter((id) => id !== projectId).map(projectName);
   const query = homeSearch.value.trim();
   const sections: HTMLElement[] = [];
   if (query) {
     const found = searchPdfLibrary(entries, query);
     sections.push(found.length
-      ? homeSection(`검색 결과 ${found.length}개`, found.slice(0, 100).map(homeRow))
+      ? homeSection(`검색 결과 ${found.length}개`, found.slice(0, 100).map((e) => homeRow(e, { elsewhere: otherNames(e.docId) })))
       : el('p', { className: 'rpdf-home-empty', textContent: '일치하는 PDF가 없습니다.' }));
-  } else {
-    const pinned = pinnedLibraryEntries(view);
-    if (pinned.length) sections.push(homeSection('고정됨', pinned.map(homeRow)));
-    if (closed.length) {
-      const rows = closed.slice(0, 6).map((entry) => {
-        const row = el('li', { className: 'rpdf-item' });
-        const main = el('button', { type: 'button', className: 'rpdf-item-main' });
-        const text = el('span', { className: 'rpdf-item-text' });
-        text.append(
-          el('span', { className: 'rpdf-item-title', textContent: entry.paperTitle ?? entry.title }),
-          el('span', { className: 'rpdf-item-meta', textContent: `${relativeTimeKo(entry.closedAt)} 닫음` }),
-        );
-        main.append(icon('i-restore'), text);
-        main.addEventListener('click', () => reopenClosed(entry));
-        row.append(main);
-        return row;
-      });
-      sections.push(homeSection('최근 닫은 탭', rows));
-    }
-    const recent = searchPdfLibrary(entries.filter((e) => !e.pinned), '');
-    if (recent.length) {
-      let more: HTMLElement | undefined;
-      if (recent.length > homeLimit) {
-        more = el('button', { type: 'button', className: 'rpdf-more', textContent: `더 보기 (${recent.length - homeLimit}개 더)` });
-        more.addEventListener('click', () => { homeLimit += HOME_PAGE_SIZE; renderHome(); });
-      }
-      sections.push(homeSection('이어 읽기', recent.slice(0, homeLimit).map(homeRow), more));
+    homeSections.replaceChildren(...sections);
+    return;
+  }
+  const pinnedIds = pinnedDocIds();
+  const pinned = pinnedIds.map((id) => library[id]).filter((e): e is PdfLibraryEntry => !!e);
+  if (pinned.length) sections.push(homeSection('고정됨', pinned.map((e) => homeRow(e))));
+  if (closed.length) {
+    const rows = closed.slice(0, 6).map((entry) => {
+      const row = el('li', { className: 'rpdf-item' });
+      const main = el('button', { type: 'button', className: 'rpdf-item-main' });
+      const text = el('span', { className: 'rpdf-item-text' });
+      text.append(
+        el('span', { className: 'rpdf-item-title', textContent: entry.paperTitle ?? entry.title }),
+        el('span', { className: 'rpdf-item-meta', textContent: `${relativeTimeKo(entry.closedAt)} 닫음` }),
+      );
+      main.append(icon('i-restore'), text);
+      main.addEventListener('click', () => reopenClosed(entry));
+      row.append(main);
+      return row;
+    });
+    sections.push(homeSection('최근 닫은 탭', rows));
+  }
+  const pinnedSet = new Set(pinnedIds);
+  const mine = searchPdfLibrary(entries.filter((e) => !pinnedSet.has(e.docId) && inThisProject(e.docId, index)), '');
+  if (isDefault) {
+    if (mine.length) {
+      sections.push(homeSection('이어 읽기', mine.slice(0, homeLimit).map((e) => homeRow(e)), moreButton(mine.length, () => { homeLimit += HOME_PAGE_SIZE; renderHome(); })));
     }
     if (sections.length === 0) {
       sections.push(el('p', {
         className: 'rpdf-home-empty',
-        textContent: '아직 연 PDF가 없습니다. 웹에서 PDF를 열거나, 파일을 이 창에 끌어다 놓으세요. 연 PDF는 여기에 모이고, 고정한 PDF는 모든 창의 PDF 탭 왼쪽에 놓입니다.',
+        textContent: '아직 연 PDF가 없습니다. 웹에서 PDF를 열거나, 파일을 이 창에 끌어다 놓으세요. 처음 연 PDF는 기본 프로젝트에 모이고, 위의 ‘프로젝트로 이동’으로 다른 프로젝트에 옮길 수 있습니다.',
       }));
     }
+    homeSections.replaceChildren(...sections);
+    return;
+  }
+  const own = homeSection('이 프로젝트의 문서', mine.map((e) => homeRow(e, { remove: true })));
+  if (mine.length === 0) {
+    own.append(el('p', {
+      className: 'rpdf-home-hint',
+      textContent: '아직 문서가 없습니다. 아래 목록에서 열거나 +로 추가하고, 다른 프로젝트의 탭에서는 ‘프로젝트로 이동’을 쓰세요. 이 프로젝트에서 연 PDF는 자동으로 추가됩니다.',
+    }));
+  }
+  sections.push(own);
+  const others = searchPdfLibrary(entries.filter((e) => !pinnedSet.has(e.docId) && !inThisProject(e.docId, index)), '');
+  if (others.length) {
+    sections.push(homeSection(
+      '다른 PDF',
+      others.slice(0, homeLimit).map((e) => homeRow(e, { add: true, elsewhere: otherNames(e.docId) })),
+      moreButton(others.length, () => { homeLimit += HOME_PAGE_SIZE; renderHome(); }),
+    ));
   }
   homeSections.replaceChildren(...sections);
 }
@@ -1075,6 +1307,12 @@ window.addEventListener('message', (event) => {
       const twin = tabs.find((t) => t !== tab && (t.docId ?? t.libraryId) === message.docId);
       if (twin) { mergeTwins(tab, twin); return; }
       completePendingPins();
+      registerDoc(message.docId);
+      if (tab.pendingMove) {
+        const { to, keep } = tab.pendingMove;
+        tab.pendingMove = null;
+        void moveTab(tab, to, keep);
+      }
     }
     updateTabLabel(tab);
     render();
@@ -1093,12 +1331,293 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (!menu.hidden) { hideMenu(); return; }
     if (!listPanel.hidden) { hideList(); listBtn.focus(); return; }
+    if (!projectsPanel.hidden) { hideProjects(); projectBtn.focus(); return; }
+    if (!movePanel.hidden) { hideMove(); moveBtn.focus(); return; }
   }
   if (document.activeElement?.closest('.rpdf-tab') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
     e.preventDefault();
     step(e.key === 'ArrowRight' ? 'next' : 'prev');
   }
 });
+
+// ─── Projects: switcher, move, rehoming ───
+
+function projectDocCount(project: PdfProject, index: Map<string, string[]>): number {
+  if (project.id !== DEFAULT_PROJECT_ID) return project.members.filter((m) => m.member).length;
+  return Object.keys(library).filter((docId) => !index.has(docId)).length;
+}
+
+function updateProjectLabel(): void {
+  const name = currentProject().name;
+  projectNameEl.textContent = name;
+  projectBtn.title = `프로젝트: ${name} — 다른 프로젝트 열기, 새로 만들기`;
+  projectBtn.setAttribute('aria-label', `프로젝트 ${name}`);
+}
+
+function setProject(id: string): void {
+  if (id === projectId) return;
+  projectId = id;
+  registered.clear();
+  pendingPins.clear();
+  reconcilePinned();
+  updateProjectLabel();
+  render();
+  scheduleHomeRender();
+}
+
+function refreshPanels(): void {
+  if (!projectsPanel.hidden) renderProjects();
+  if (!movePanel.hidden && moveTarget) renderMove(moveTarget);
+}
+
+async function createProject(rawName: string): Promise<string | null> {
+  const name = cleanPdfProjectName(rawName);
+  if (!name) return null;
+  const id = newPdfProjectId();
+  // Awaited: the next request (open, move) must find the project stored.
+  const response = await sendProjectUpdate({ kind: 'create', id, name }) as { success?: boolean } | undefined;
+  if (!response?.success) { showToast('프로젝트를 만들지 못했습니다.'); return null; }
+  return id;
+}
+
+async function openProject(id: string): Promise<void> {
+  if (id === projectId) return;
+  const response = await ask({ type: 'VOCAB_T_PDF_PROJECT_OPEN', project: id });
+  if (!response?.success) showToast(response?.error ?? '프로젝트를 열지 못했습니다.');
+}
+
+function projectRow(project: PdfProject, index: Map<string, string[]>): HTMLElement {
+  const row = el('div', { className: 'rpdf-li' });
+  const current = project.id === projectId;
+  row.classList.toggle('is-current', current);
+  const main = el('button', { type: 'button', className: 'rpdf-li-main' });
+  const text = el('span', { className: 'rpdf-li-text' });
+  const open = current || openProjectIds.has(project.id);
+  text.append(
+    el('span', { className: 'rpdf-li-title', textContent: project.name }),
+    el('span', { className: 'rpdf-li-sub', textContent: [current ? '지금 보는 중' : open ? '열림' : null, `문서 ${projectDocCount(project, index)}개`].filter(Boolean).join(' · ') }),
+  );
+  const mark = icon(current ? 'i-check' : 'i-folder');
+  if (current || open) mark.classList.add('is-accent');
+  main.append(mark, text);
+  if (current) main.setAttribute('aria-current', 'true');
+  main.addEventListener('click', () => { hideProjects(); void openProject(project.id); });
+  row.append(main);
+  const action = (name: string, label: string, run: () => void) => {
+    const button = el('button', { type: 'button', className: 'rpdf-li-action', title: label });
+    button.setAttribute('aria-label', `${project.name} ${label}`);
+    button.append(icon(name));
+    button.addEventListener('click', run);
+    row.append(button);
+  };
+  action('i-edit', '이름 바꾸기', () => startRename(row, project));
+  if (project.id !== DEFAULT_PROJECT_ID) {
+    action('i-trash', '삭제', () => {
+      const ok = confirm(`‘${project.name}’ 프로젝트를 삭제할까요?\n\n문서와 필기는 지워지지 않습니다. 다른 프로젝트에 없는 문서는 기본 프로젝트로 돌아갑니다.`);
+      if (ok) void sendProjectUpdate({ kind: 'delete', id: project.id });
+    });
+  }
+  return row;
+}
+
+function startRename(row: HTMLElement, project: PdfProject): void {
+  const input = el('input', { type: 'text', className: 'rpdf-li-rename', value: project.name, maxLength: 60 });
+  input.setAttribute('aria-label', '프로젝트 이름');
+  row.replaceChildren(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const finish = (save: boolean) => {
+    if (done) return;
+    done = true;
+    const name = cleanPdfProjectName(input.value);
+    if (save && name && name !== project.name) void sendProjectUpdate({ kind: 'rename', id: project.id, name });
+    renderProjects();
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+}
+
+function renderProjects(): void {
+  const index = membershipIndex();
+  projectsItems.replaceChildren(
+    el('h3', { className: 'rpdf-li-head', textContent: '프로젝트' }),
+    ...livePdfProjects(projects).map((p) => projectRow(p, index)),
+  );
+}
+
+function showProjects(): void {
+  hidePanels();
+  projectsPanel.hidden = false;
+  projectBtn.setAttribute('aria-expanded', 'true');
+  projectNewName.value = '';
+  renderProjects();
+  void loadOpenProjects().then(() => { if (!projectsPanel.hidden) renderProjects(); });
+  projectsItems.querySelector<HTMLButtonElement>('.rpdf-li-main')?.focus();
+}
+
+function hideProjects(): void {
+  if (projectsPanel.hidden) return;
+  projectsPanel.hidden = true;
+  projectBtn.setAttribute('aria-expanded', 'false');
+}
+
+projectBtn.addEventListener('click', () => { if (projectsPanel.hidden) showProjects(); else hideProjects(); });
+projectNewForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const name = projectNewName.value;
+  void createProject(name).then((id) => {
+    if (!id) return;
+    hideProjects();
+    void openProject(id);
+  });
+});
+
+// "프로젝트로 이동": the document in front (or the one whose tab menu asked).
+let moveTarget: HubTab | null = null;
+
+/** Where the document is now: this project, or (a guest here) the one it belongs to. */
+function moveSource(docId: string | null): string {
+  if (!docId || isDocInProject(projects, projectId, docId)) return projectId;
+  return projectsOfDoc(projects, docId)[0] ?? projectId;
+}
+
+function renderMove(tab: HubTab): void {
+  const docId = tab.docId ?? tab.libraryId ?? (tab.url ? libraryIdForUrl(tab.url) : null);
+  const from = moveSource(docId);
+  const index = membershipIndex();
+  moveTitle.textContent = `‘${tabName(tab)}’ 옮기기`;
+  const targets = livePdfProjects(projects)
+    .filter((p) => p.id !== from)
+    .sort((a, b) => Number(openProjectIds.has(b.id)) - Number(openProjectIds.has(a.id)));
+  const rows = targets.map((project) => {
+    const row = el('div', { className: 'rpdf-li' });
+    const main = el('button', { type: 'button', className: 'rpdf-li-main' });
+    const already = !!docId && project.id !== DEFAULT_PROJECT_ID && (index.get(docId) ?? []).includes(project.id);
+    const open = openProjectIds.has(project.id);
+    const text = el('span', { className: 'rpdf-li-text' });
+    text.append(
+      el('span', { className: 'rpdf-li-title', textContent: project.name }),
+      el('span', { className: 'rpdf-li-sub', textContent: [open ? '열림' : '닫힘', already ? '이미 들어 있음' : null].filter(Boolean).join(' · ') }),
+    );
+    const mark = icon('i-folder');
+    if (open) mark.classList.add('is-accent');
+    main.append(mark, text);
+    main.title = '이 프로젝트로 옮기기';
+    main.addEventListener('click', () => { hideMove(); void moveTab(tab, project.id, false); });
+    row.append(main);
+    if (project.id !== DEFAULT_PROJECT_ID && !already) {
+      const add = el('button', { type: 'button', className: 'rpdf-li-action', title: '여기에도 추가 (지금 프로젝트에도 남김)' });
+      add.setAttribute('aria-label', `${project.name}에도 추가`);
+      add.append(icon('i-plus'));
+      add.addEventListener('click', () => { hideMove(); void moveTab(tab, project.id, true); });
+      row.append(add);
+    }
+    return row;
+  });
+  moveItems.replaceChildren(...(rows.length ? rows : [el('p', { className: 'rpdf-li-empty', textContent: '옮길 다른 프로젝트가 없습니다. 아래에서 새로 만드세요.' })]));
+}
+
+function showMove(tab: HubTab | null = activeTab()): void {
+  if (!tab) return;
+  hidePanels();
+  moveTarget = tab;
+  movePanel.hidden = false;
+  moveBtn.setAttribute('aria-expanded', 'true');
+  moveNewName.value = '';
+  renderMove(tab);
+  void loadOpenProjects().then(() => { if (!movePanel.hidden && moveTarget) renderMove(moveTarget); });
+  moveItems.querySelector<HTMLButtonElement>('.rpdf-li-main')?.focus();
+}
+
+function hideMove(): void {
+  if (movePanel.hidden) return;
+  movePanel.hidden = true;
+  moveTarget = null;
+  moveBtn.setAttribute('aria-expanded', 'false');
+}
+
+moveBtn.addEventListener('click', () => { if (movePanel.hidden) showMove(); else hideMove(); });
+moveNewForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const tab = moveTarget;
+  const name = moveNewName.value;
+  if (!tab) return;
+  void createProject(name).then((id) => {
+    if (!id) return;
+    hideMove();
+    void moveTab(tab, id, false);
+  });
+});
+
+/**
+ * Moves the tab's document to project `to` (`keep`: registers it there and
+ * leaves it here). The background puts it in that project's hub, or among
+ * the tabs it opens with.
+ */
+async function moveTab(tab: HubTab, to: string, keep: boolean): Promise<void> {
+  const docId = tab.docId ?? tab.libraryId ?? (tab.url ? libraryIdForUrl(tab.url) : null);
+  if (!docId) {
+    tab.pendingMove = { to, keep };
+    ensureFrame(tab);
+    showToast('문서를 불러온 뒤 옮깁니다.');
+    return;
+  }
+  const from = moveSource(docId);
+  const response = await ask<{ success?: boolean; open?: boolean; error?: string }>({
+    type: 'VOCAB_T_PDF_PROJECT_MOVE', docId, url: tab.url, from, to, keep,
+  });
+  if (!response?.success) { showToast(response?.error ?? '옮기지 못했습니다.'); return; }
+  const name = projectName(to);
+  if (keep) { showToast(`${name}에도 추가했습니다.`); return; }
+  pendingPins.delete(docId);
+  if (tabs.includes(tab)) removeTab(tab);
+  render();
+  showToast(tab.url ? `${name}(으)로 옮겼습니다.` : `${name}(으)로 옮겼습니다. 로컬 파일은 그 프로젝트에서 다시 열어야 합니다.`, {
+    label: '열기',
+    run: () => { void openProject(to); },
+  });
+}
+
+function removeFromProject(tab: HubTab, docId: string): void {
+  void sendProjectUpdate({ kind: 'member', id: projectId, docId, member: false });
+  registered.add(docId); // closing it must not register it again
+  if (tab.pinned) { tab.pinned = false; tab.keepOnUnpin = false; }
+  closeTab(tab.key, false);
+  showToast('이 프로젝트에서 뺐습니다.', {
+    label: '되돌리기',
+    run: () => {
+      void sendProjectUpdate({ kind: 'member', id: projectId, docId, member: true });
+      if (tab.url) addDocs([{ url: tab.url, hash: '', file: null }], true);
+    },
+  });
+}
+
+/**
+ * This hub's project was deleted: its documents go to the default project —
+ * this hub becomes it, or hands them to its open hub and closes.
+ */
+let rehoming = false;
+async function rehome(): Promise<void> {
+  if (rehoming || !isHub) return;
+  rehoming = true;
+  // Pinned ones too: the pins went with the project.
+  const docs = tabs.filter((t) => t.url).map((t) => ({ url: t.url as string, hash: '' }));
+  const response = await ask<{ success?: boolean; role?: 'hub' | 'forwarded'; project?: string }>({
+    type: 'VOCAB_T_PDF_HUB_CLAIM', docs, canGoBack: false, project: DEFAULT_PROJECT_ID,
+  });
+  rehoming = false;
+  if (response?.success && response.role === 'forwarded') {
+    isHub = false;
+    if (myTabId !== null) void chrome.tabs.remove(myTabId).catch(() => undefined);
+    return;
+  }
+  setProject(DEFAULT_PROJECT_ID);
+  showToast('프로젝트가 삭제되어 이 탭은 기본 프로젝트가 되었습니다.');
+}
 
 // ─── Local files ───
 
@@ -1168,9 +1687,9 @@ async function boot(): Promise<void> {
   const current = await chrome.tabs.getCurrent().catch(() => undefined);
   myTabId = typeof current?.id === 'number' ? current.id : null;
   const docs: PdfHubDoc[] = initial.docs;
-  let response: { success?: boolean; role?: 'hub' | 'forwarded'; docs?: PdfHubDoc[]; dispose?: 'back' | 'close' } | undefined;
+  let response: { success?: boolean; role?: 'hub' | 'forwarded'; project?: string; docs?: PdfHubDoc[]; dispose?: 'back' | 'close' } | undefined;
   if (myTabId !== null) {
-    response = await chrome.runtime.sendMessage({ type: 'VOCAB_T_PDF_HUB_CLAIM', docs, canGoBack: canGoBack() }).catch(() => undefined);
+    response = await chrome.runtime.sendMessage({ type: 'VOCAB_T_PDF_HUB_CLAIM', docs, canGoBack: canGoBack(), project: initial.project }).catch(() => undefined);
   }
   if (response?.success && response.role === 'forwarded') {
     emptyText.textContent = 'PDF 탭으로 옮겼습니다.';
@@ -1180,9 +1699,12 @@ async function boot(): Promise<void> {
     return;
   }
   // The hub (or, if the background could not be reached, a standalone page).
+  projectId = response?.project ?? initial.project ?? DEFAULT_PROJECT_ID;
   isHub = true;
   strip.hidden = false;
   await loadLibraryState();
+  if (projects[projectId]?.deletedAt !== 0) projectId = DEFAULT_PROJECT_ID;
+  updateProjectLabel();
   reconcilePinned();
   addDocs(docs.map((doc) => ({ ...doc, file: null })), false, false);
   let front: HubTab | undefined;

@@ -150,14 +150,15 @@ export function mergePdfLibraryEntries(a: PdfLibraryEntry, b: PdfLibraryEntry): 
 }
 
 /**
- * The rows kept: pinned ones (the most recently pinned first, up to a cap),
- * then the most recently opened within the age limit. Sorted by `docId`.
+ * The rows kept: the ones a project refers to (`keep`, shared/pdfProjects.ts)
+ * and legacy pins (the most recently changed first, up to a cap), then the
+ * most recently opened within the age limit. Sorted by `docId`.
  */
-export function boundPdfLibrary(entries: readonly PdfLibraryEntry[], now: number = Date.now()): PdfLibraryEntry[] {
+export function boundPdfLibrary(entries: readonly PdfLibraryEntry[], now: number = Date.now(), keep: ReadonlySet<string> = new Set()): PdfLibraryEntry[] {
   const pinned = entries
-    .filter((e) => e.pinned)
-    .sort((a, b) => b.pinChangedAt - a.pinChangedAt || a.docId.localeCompare(b.docId))
-    .slice(0, PDF_LIBRARY_MAX_PINNED);
+    .filter((e) => e.pinned || keep.has(e.docId))
+    .sort((a, b) => Number(keep.has(b.docId)) - Number(keep.has(a.docId)) || b.pinChangedAt - a.pinChangedAt || b.openedAt - a.openedAt || a.docId.localeCompare(b.docId))
+    .slice(0, Math.max(PDF_LIBRARY_MAX_PINNED, Math.min(keep.size, PDF_LIBRARY_MAX)));
   const kept = new Set(pinned.map((e) => e.docId));
   const recent = entries
     .filter((e) => !kept.has(e.docId) && now - e.openedAt <= PDF_LIBRARY_MAX_AGE_MS)
@@ -166,13 +167,13 @@ export function boundPdfLibrary(entries: readonly PdfLibraryEntry[], now: number
   return [...pinned, ...recent].sort((a, b) => a.docId.localeCompare(b.docId));
 }
 
-export function mergePdfLibraries(left: readonly PdfLibraryEntry[], right: readonly PdfLibraryEntry[], now: number = Date.now()): PdfLibraryEntry[] {
+export function mergePdfLibraries(left: readonly PdfLibraryEntry[], right: readonly PdfLibraryEntry[], now: number = Date.now(), keep: ReadonlySet<string> = new Set()): PdfLibraryEntry[] {
   const byId = new Map<string, PdfLibraryEntry>();
   for (const entry of [...left, ...right]) {
     const existing = byId.get(entry.docId);
     byId.set(entry.docId, existing ? mergePdfLibraryEntries(existing, entry) : entry);
   }
-  return boundPdfLibrary([...byId.values()], now);
+  return boundPdfLibrary([...byId.values()], now, keep);
 }
 
 export function libraryFromList(entries: readonly PdfLibraryEntry[]): PdfLibrary {
@@ -188,7 +189,7 @@ export type PdfLibraryUpdate =
   | { kind: 'meta'; docId: string; docTitle: string | null; title: string | null; venue: string | null; year: number | null }
   | { kind: 'pin'; docId: string; pinned: boolean };
 
-export function applyPdfLibraryUpdate(library: PdfLibrary, update: PdfLibraryUpdate, now: number = Date.now()): PdfLibrary {
+export function applyPdfLibraryUpdate(library: PdfLibrary, update: PdfLibraryUpdate, now: number = Date.now(), keep: ReadonlySet<string> = new Set()): PdfLibrary {
   const current = library[update.docId];
   let next: PdfLibraryEntry | null = null;
   if (update.kind === 'opened') {
@@ -221,7 +222,7 @@ export function applyPdfLibraryUpdate(library: PdfLibrary, update: PdfLibraryUpd
     next = { ...current, pinned: update.pinned, pinChangedAt: Math.max(now, current.pinChangedAt + 1) };
   }
   const entries = Object.values({ ...library, [next.docId]: next });
-  return libraryFromList(boundPdfLibrary(entries, now));
+  return libraryFromList(boundPdfLibrary(entries, now, keep));
 }
 
 export function parsePdfLibraryUpdate(value: unknown): PdfLibraryUpdate | null {

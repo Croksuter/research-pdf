@@ -27,20 +27,26 @@ import {
   parseOpenNativePdfRequest,
   parsePdfHubClaimRequest,
   parsePdfHubStateRequest,
+  parsePdfProjectMoveRequest,
+  parsePdfProjectOpenRequest,
+  parsePdfProjectUpdateRequest,
   parseRestoreViewerTabsRequest,
   parseSyncWebPdfRoutingRequest,
 } from '../shared/messages';
+import { DEFAULT_PROJECT_ID, isPdfProjectId } from '../shared/pdfProjects';
 import { getSetting } from '../db/settingsRepository';
 import { debugError, debugLog } from '../shared/debugLog';
-import { claimPdfHub, noteTopLevelCommit } from './pdfHub';
+import { claimPdfHub, movePdfToProject, noteTopLevelCommit, openPdfProject } from './pdfHub';
+import { updatePdfProjects } from './pdfProjectStore';
 import { isExtensionPageSender } from './messageDispatcher';
+import { requestPdfSyncSoon } from './pdfSyncService';
 
 // ─── PDF viewer routing ───
 //
 // Chrome's built-in PDF viewer is a privileged guest frame; content scripts
 // never run inside it, even with file-URL access granted. PDF navigations are
 // therefore re-pointed at the bundled PDF.js page. Top-level PDFs land in the
-// window's PDF hub (./pdfHub.ts: one tab collecting every PDF), embedded ones
+// PDF hub of a project (./pdfHub.ts: one tab collecting its PDFs), embedded ones
 // in the viewer page inline.
 //
 //   • file:///…pdf — webNavigation.onBeforeNavigate + tabs.update. Requires the
@@ -207,10 +213,12 @@ async function openNativePdf(url: string, sender: chrome.runtime.MessageSender):
 // documents (VOCAB_T_PDF_HUB_STATE); entries are dropped when the tab closes
 // or navigates elsewhere. Whatever is still recorded when onInstalled fires
 // belonged to a tab Chrome killed, so it is recreated in the same window at
-// the same index. Reading positions come back from the per-document records.
+// the same index, for the same project. Reading positions come back from the
+// per-document records. The same report is the project's saved layout.
 interface HubTabRecord {
   urls: string[];
   active: number;
+  project: string;
   windowId: number;
   index: number;
   updatedAt: number;
@@ -218,14 +226,16 @@ interface HubTabRecord {
 const VIEWER_TABS_STORAGE_KEY = 'vtViewerTabs';
 const VIEWER_TAB_RECORD_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-// Records written before the hub existed held one `sourceUrl` per viewer tab.
+// Records written before the hub existed held one `sourceUrl` per viewer tab,
+// and before projects existed every hub was the default project's.
 function normalizeRecord(value: unknown): HubTabRecord | null {
   if (!value || typeof value !== 'object') return null;
   const record = value as Partial<HubTabRecord> & { sourceUrl?: unknown };
   const urls = Array.isArray(record.urls) ? record.urls : typeof record.sourceUrl === 'string' ? [record.sourceUrl] : [];
   const valid = urls.filter((url): url is string => typeof url === 'string' && isPdfViewerSourceUrl(url));
   if (valid.length === 0 || typeof record.windowId !== 'number' || typeof record.index !== 'number' || typeof record.updatedAt !== 'number') return null;
-  return { urls: valid, active: typeof record.active === 'number' ? record.active : 0, windowId: record.windowId, index: record.index, updatedAt: record.updatedAt };
+  const project = isPdfProjectId(record.project) ? record.project : DEFAULT_PROJECT_ID;
+  return { urls: valid, active: typeof record.active === 'number' ? record.active : 0, project, windowId: record.windowId, index: record.index, updatedAt: record.updatedAt };
 }
 
 async function readViewerTabs(): Promise<Record<string, HubTabRecord>> {
@@ -253,7 +263,7 @@ async function writeViewerTabs(records: Record<string, HubTabRecord>): Promise<v
 }
 
 async function recordHubState(
-  request: { urls: string[]; active: number },
+  request: { urls: string[]; active: number; project: string; show: string | null },
   sender: chrome.runtime.MessageSender,
 ): Promise<Record<string, unknown>> {
   const tab = sender.tab;
@@ -265,12 +275,15 @@ async function recordHubState(
     records[String(tab.id)] = {
       urls: request.urls,
       active: request.active,
+      project: request.project,
       windowId: tab.windowId,
       index: tab.index,
       updatedAt: Date.now(),
     };
   }
   await writeViewerTabs(records);
+  const { urls, active, project, show } = request;
+  if (await updatePdfProjects({ kind: 'layout', id: project, urls, active, show })) requestPdfSyncSoon();
   return { success: true };
 }
 
@@ -326,8 +339,8 @@ async function restoreViewerTabs(): Promise<{ restored: number; open: number }> 
     try {
       let windowId: number | undefined = record.windowId;
       try { await chrome.windows.get(windowId); } catch { windowId = undefined; }
-      const tab = await chrome.tabs.create({ url: buildPdfHubUrl(urls, active, hubBase), active: false, ...(windowId !== undefined ? { windowId, index: record.index } : {}) });
-      if (typeof tab.id === 'number') next[String(tab.id)] = { urls, active, windowId: tab.windowId, index: tab.index, updatedAt: now };
+      const tab = await chrome.tabs.create({ url: buildPdfHubUrl(urls, active, hubBase, null, record.project), active: false, ...(windowId !== undefined ? { windowId, index: record.index } : {}) });
+      if (typeof tab.id === 'number') next[String(tab.id)] = { urls, active, project: record.project, windowId: tab.windowId, index: tab.index, updatedAt: now };
       restored += 1;
       debugLog('bg:pdf', 'restored PDF hub after reload', () => ({ documents: urls.length }));
     } catch (error) {
@@ -370,6 +383,25 @@ export const pdfMessageHandlers: Record<string, PdfMessageHandler> = {
     return request && isHubPageSender(sender)
       ? recordHubState(request, sender)
       : { success: false, error: 'PDF 탭 상태 형식이 올바르지 않습니다.' };
+  },
+  VOCAB_T_PDF_PROJECT_UPDATE: async (m, sender) => {
+    const request = parsePdfProjectUpdateRequest(m);
+    if (!request || !isHubPageSender(sender)) return { success: false, error: '프로젝트 요청 형식이 올바르지 않습니다.' };
+    if (await updatePdfProjects(request.update)) requestPdfSyncSoon();
+    return { success: true };
+  },
+  VOCAB_T_PDF_PROJECT_OPEN: (m, sender) => {
+    const request = parsePdfProjectOpenRequest(m);
+    return request && isHubPageSender(sender)
+      ? openPdfProject(request.project, sender)
+      : { success: false, error: '프로젝트 열기 요청 형식이 올바르지 않습니다.' };
+  },
+  VOCAB_T_PDF_PROJECT_MOVE: async (m, sender) => {
+    const request = parsePdfProjectMoveRequest(m);
+    if (!request || !isHubPageSender(sender)) return { success: false, error: '프로젝트 이동 요청 형식이 올바르지 않습니다.' };
+    const result = await movePdfToProject(request);
+    if (result.success) requestPdfSyncSoon();
+    return result;
   },
   VOCAB_T_RESTORE_VIEWER_TABS: async (m) => {
     if (!parseRestoreViewerTabsRequest(m)) return { success: false, error: '뷰어 탭 복구 요청 형식이 올바르지 않습니다.' };

@@ -3,9 +3,9 @@
 ResearchPDF is a Chrome extension: the bundled PDF.js viewer, drawings and
 highlights that come back when the same paper is reopened, remembered reading
 position, the paper strip (venue, citations, references), the PDF hub (one tab
-per window holding every open PDF, with a library of every PDF it showed and
-pinned documents), and Google Drive sync of the drawings, positions and
-library. No content script, no server, no account of its own.
+per project holding its open PDFs, with a library of every PDF it showed and
+pinned documents), projects, and Google Drive sync of the drawings, positions,
+library and projects. No content script, no server, no account of its own.
 
 | | |
 |---|---|
@@ -15,14 +15,17 @@ library. No content script, no server, no account of its own.
 | hub | `src/ui/pdf-hub.html`, `pdfHub.ts` + `src/background/pdfHub.ts` |
 | viewer | `src/ui/pdf-viewer.html`, `pdfViewer.ts`, `pdfViewer/*` |
 | sync engine | `src/background/pdfSyncService.ts`, `src/shared/pdfSync.ts` |
-| storage | IndexedDB `ResearchPDF` (settings, pdf_annotations, pdf_files / pdf_file_bytes / pdf_urls) + `chrome.storage.local` (reading positions, library, hub tabs) + `chrome.storage.session` (hub registry) |
+| storage | IndexedDB `ResearchPDF` (settings, pdf_annotations, pdf_files / pdf_file_bytes / pdf_urls) + `chrome.storage.local` (reading positions, library, projects, hub tabs) + `chrome.storage.session` (hub registry) |
 
 ## Modules
 
 - `src/background/pdfRouting.ts`: file:// and opt-in web-PDF routing (top-level
   PDFs to the hub, embedded ones to the viewer inline), hub-tab records and
   restore after an extension reload, and their message handlers.
-- `src/background/pdfHub.ts`: which tab is each window's hub (see below).
+- `src/background/pdfHub.ts`: which tab is each project's hub, opening a
+  project, moving a document (see below).
+- `src/background/pdfProjectStore.ts`, `pdfLibraryStore.ts`: the only writers
+  of the projects and the library.
 - `src/background/messageDispatcher.ts`: the `onMessage` dispatcher and the
   extension-page sender check.
 - `googleAuth.ts`, `googleDriveStore.ts`, `googleDriveAccount.ts`: sign-in,
@@ -31,37 +34,44 @@ library. No content script, no server, no account of its own.
 
 ## PDF hub
 
-Every top-level PDF lands in `pdf-hub.html`, and each window keeps one such
-tab: an in-page tab strip over one viewer iframe per document, so papers no
-longer scatter across tabs that look like web pages.
+Every top-level PDF lands in `pdf-hub.html`, and each open project keeps one
+such tab: an in-page tab strip over one viewer iframe per document, so papers
+no longer scatter across tabs that look like web pages.
 
 - Routing sends the PDF to the hub page **in the tab where it opened**. The
-  page claims with the background (`VOCAB_T_PDF_HUB_CLAIM`), which decides
-  serially per window: no hub and no history → this tab is the hub; no hub
-  but the tab came from a web page → a clean hub tab is created next to it;
-  a hub exists → the documents are handed to it (`VOCAB_T_PDF_HUB_OPEN`
-  broadcast, or queued while a new hub is still loading). A tab that handed
-  its documents over goes back to its page, or closes if it has none. The hub
-  is brought forward only when the PDF opened in the foreground.
-- The hub's own URL (`?a=<active>&f=<url>&f=…`, via `history.replaceState`)
-  is its document list, so reload and Chrome session restore bring every
-  document back; `VOCAB_T_PDF_HUB_STATE` records the same list for recreating
-  hubs after an extension reload. Local files opened from disk are not
-  restorable. Iframes are created the first time a document is shown.
+  page claims with the background (`VOCAB_T_PDF_HUB_CLAIM`, with the project
+  its URL names or none), which decides serially per project: a PDF entering
+  from the web goes to an open project it is registered to, otherwise the
+  default project; no hub for that project and no history → this tab is the
+  hub; no hub but the tab came from a web page → a clean hub tab is created
+  next to it; a hub exists (in any window) → the documents are handed to it
+  (`VOCAB_T_PDF_HUB_OPEN` broadcast, or queued while a new hub is still
+  loading). A tab that handed its documents over goes back to its page, or
+  closes if it has none. The hub (and its window) is brought forward only
+  when the PDF opened in the foreground. The registry is project → tab, so a
+  hub dragged to another window stays that project's hub.
+- The hub's own URL (`?p=<project>&a=<active>&f=<url>&f=…`, via
+  `history.replaceState`) is its document list, so reload and Chrome session
+  restore bring every document back; `VOCAB_T_PDF_HUB_STATE` records the same
+  list for recreating hubs after an extension reload, and as the project's
+  saved layout. Local files opened from disk are not restorable. Iframes are
+  created the first time a document is shown.
 - Viewer ↔ hub talk over same-origin `postMessage` (`shared/pdfHubProtocol.ts`):
   document title and identity, Alt+Shift+←/→, Alt+W and Alt+Shift+T, local
   files opened inside a viewer (they become new hub tabs), the sleep
   handshake. "Open in Chrome's viewer" from the hub opens a separate tab so
   the hub's other documents stay.
 - **Home** (house button left of the tabs, and what an emptied hub shows):
-  the library — pinned documents, this hub's recently closed tabs, and every
-  document opened in a hub, most recent first, with reading progress, a
-  drawings mark and search over titles, file names and URLs. `s=home` in the
-  hub URL keeps it in front across a reload.
-- **Pins** are a library flag, so a pinned document is a narrow tab at the
-  left of every hub on every device (loaded only when shown; `s=<url>`
-  remembers one in front). Pin/unpin from the tab's context menu or home.
-  A pinned tab has no close button; unpinning one this hub never loaded
+  the project's pinned documents, this hub's recently closed tabs and the
+  project's documents (the default project: every document no other project
+  has; another project: its documents with −, then the rest of the library
+  with + to add), most recent first, with reading progress, a drawings mark
+  and search over the whole library. `s=home` in the hub URL keeps it in
+  front across a reload.
+- **Pins** belong to a project, so a pinned document is a narrow tab at the
+  left of that project's hub on every device (loaded only when shown;
+  `s=<url>` remembers one in front). Pin/unpin from the tab's context menu or
+  home. A pinned tab has no close button; unpinning one this hub never loaded
   because another device unpinned it removes the tab.
 - **Recently closed**: a per-hub stack (sessionStorage, 20) with a 5 s undo
   toast and Alt+Shift+T (Ctrl+Shift+T is Chrome's). Local files reopen while
@@ -80,6 +90,32 @@ longer scatter across tabs that look like web pages.
   the ▾ button lists every tab and the recently closed ones, with search.
 - A top-level `pdf-viewer.html` (old tabs, bookmarks) redirects into the hub;
   a hub framed by a web page acts as the plain viewer.
+
+## Projects
+
+`shared/pdfProjects.ts`, `chrome.storage.local` key `rpdfProjects`, written by
+the background only (`background/pdfProjectStore.ts`). A project has a name,
+its members (`docId` → registered, pinned, changed at), and the tabs it was
+last open with (layout: URLs, active, what was in front).
+
+- **Default project** (`default`, "기본"): implicit membership — every library
+  document no other project has. A PDF opened for the first time is there
+  with no write; it cannot be deleted. Its rows carry only pins. Before a
+  device's first write the record reads as the default project seeded with
+  the pins the library had before projects existed.
+- **Switcher** (left of the home button): open a project (its hub if open,
+  else a new hub tab next to this one with its saved layout,
+  `VOCAB_T_PDF_PROJECT_OPEN`), create (opens it), rename, delete.
+- **Move** ("프로젝트로 이동", right side, and the tab menu): moves the
+  document out of its project and into another (`VOCAB_T_PDF_PROJECT_MOVE`);
+  its tab goes to that project's hub when open, otherwise into the layout it
+  opens with. "+" registers it there too and leaves it here. A document a
+  project hub shows is registered to that project; the default hub shows a
+  document of a closed project as a guest without registering it.
+- **Deleting** a project is a tombstone. Its open hub hands its tabs to the
+  default project's hub (or becomes it) and its documents fall back to the
+  default project.
+- Documents a project refers to are never pruned from the library.
 
 ## Selectable text
 
@@ -156,9 +192,9 @@ Bounded to 1,000 rows (pins kept first, up to 100; others 365 days).
 ## Sync document
 
 `researchpdf-sync-v1.json` (gzip) in the account's Drive appDataFolder,
-shape in `src/shared/pdfSync.ts` (snapshot version 2; a version-1 document
-from an older build reads with an empty library, and older builds refuse
-version 2 instead of writing it back without one):
+shape in `src/shared/pdfSync.ts` (snapshot version 3; an older build's
+version-1 or -2 document reads with what it lacks empty, and older builds
+refuse a newer version instead of writing it back without it):
 
 - `docs`: `PdfDocRecord[]`, reading position + zoom per document identity.
   Newest `updatedAt` wins per document.
@@ -168,6 +204,9 @@ version 2 instead of writing it back without one):
   removed everywhere once a base exists; a stroke edited on both sides keeps
   the local copy. Presence of a document's cache is decided 3-way too, so
   erasing everything on one device wins over an unchanged peer.
+- `projects` (version 3): `PdfProject[]`, joined: the latest rename names a
+  project, a deletion is final (kept as a bare tombstone for a year), per
+  member the latest change wins, the latest saved layout wins.
 - `library`: `PdfLibraryEntry[]`, joined per field (`mergePdfLibraryEntries`):
   the latest open names the row, the latest pin change wins the pin, URLs are
   unioned. No deletions, so the join can be applied over local rows at any
@@ -202,8 +241,13 @@ stay on the device.
   writing. If sync changed it since the page last touched it, the page merges
   3-way against what it last saw and keeps the outside drawings as "foreign"
   entries carried by every later snapshot, so the editor's ignorance of them
-  is never read as the user erasing them. Outside drawings become visible on
-  the next open of that document, not live.
+  is never read as the user erasing them. Drawings another device synced
+  become visible on the next open of that document, not live.
+- **The same document in two viewers** (hubs of different projects): every
+  stored snapshot is announced on the `rpdf-annotations` BroadcastChannel.
+  The other viewers of that document store their own pending drawings first
+  (the merge above), then show what was added and remove what was erased —
+  matched by the content-derived drawing key — in place, without reloading.
 
 ## Setup and store
 

@@ -6,12 +6,17 @@ Google Drive.
 
 - Opens local files and web PDFs in a bundled PDF.js viewer with pen,
   highlight, text and stamp annotations.
-- Collects every PDF a window opens into one tab with its own tab strip, so
-  papers stop scattering among your web tabs (Alt+Shift+←/→ to switch, Alt+W
-  to close one, Alt+Shift+T to reopen it). The same paper opened again goes
-  to its existing tab; tabs you have not looked at for a while are unloaded.
-- A home page lists every PDF you have opened, with reading progress and
-  search. Pinned PDFs sit at the left of the PDF tab in every window.
+- Collects PDFs into one tab per project with its own tab strip, so papers
+  stop scattering among your web tabs (Alt+Shift+←/→ to switch, Alt+W to
+  close one, Alt+Shift+T to reopen it). The same paper opened again goes to
+  its existing tab; tabs you have not looked at for a while are unloaded.
+- Projects: every new PDF starts in the default project; move it to a named
+  one ("프로젝트로 이동"). Close a project's tab and reopen it later with the
+  same tabs; its other papers stay one click away. A paper open in two
+  projects shows drawings made in either one live.
+- A home page lists the project's PDFs and every PDF you have opened, with
+  reading progress and search. Pinned PDFs sit at the left of their project's
+  tab.
 - Remembers drawings and the last page/zoom per document, identified by the
   file's own content rather than its name or path.
 - Shows venue, citation trend, references and links for papers it recognises
