@@ -181,6 +181,75 @@ export type HubClaimResult =
   | { success: true; role: 'forwarded'; dispose: 'back' | 'close' }
   | { success: false; error: string };
 
+// ─── Embedded PDFs that are the whole page ───
+//
+// A publisher page that only wraps its PDF in a full-size iframe (IEEE's
+// stamp.jsp) gets the viewer inline, without the hub. When that embedded
+// viewer fills most of the tab, the tab becomes the hub for it instead: the
+// hub page claims in place (it does not go back to the wrapper, which would
+// wrap it again). Each tab promotes a given PDF once, so going back to the
+// wrapper later shows it inline.
+
+const PROMOTED_KEY = 'rpdfPromoted';
+const FULL_PAGE = { width: 0.85, height: 0.7 };
+
+/** Whether an embedded frame of `frame` CSS pixels fills a tab of `tab` pixels. */
+export function fillsTab(frame: { width: number; height: number }, tab: { width?: number; height?: number }): boolean {
+  if (!tab.width || !tab.height) return false;
+  return frame.width >= tab.width * FULL_PAGE.width && frame.height >= tab.height * FULL_PAGE.height;
+}
+
+async function readPromoted(): Promise<{ pending: Record<string, string>; done: string[] }> {
+  try {
+    const stored = (await chrome.storage.session.get(PROMOTED_KEY))[PROMOTED_KEY] as { pending?: Record<string, string>; done?: string[] } | undefined;
+    return { pending: stored?.pending ?? {}, done: stored?.done ?? [] };
+  } catch {
+    return { pending: {}, done: [] };
+  }
+}
+
+async function writePromoted(value: { pending: Record<string, string>; done: string[] }): Promise<void> {
+  try {
+    await chrome.storage.session.set({ [PROMOTED_KEY]: { pending: value.pending, done: value.done.slice(-200) } });
+  } catch {
+    /* best effort */
+  }
+}
+
+const bare = (url: string) => url.replace(/#.*$/u, '');
+
+/** Moves a full-page embedded PDF into the hub; false when it stays inline. */
+export function promoteEmbeddedPdf(request: { url: string; width: number; height: number }, sender: chrome.runtime.MessageSender): Promise<boolean> {
+  const tab = sender.tab;
+  if (!tab || typeof tab.id !== 'number' || !sender.frameId || !fillsTab(request, tab)) return Promise.resolve(false);
+  const tabId = tab.id;
+  return serialized(async () => {
+    const promoted = await readPromoted();
+    const mark = `${tabId}|${bare(request.url)}`;
+    if (promoted.done.includes(mark)) return false;
+    promoted.done.push(mark);
+    promoted.pending[String(tabId)] = bare(request.url);
+    await writePromoted(promoted);
+    try {
+      await chrome.tabs.update(tabId, { url: buildPdfHubEntryUrl(request.url, chrome.runtime.getURL(PDF_HUB_PAGE)) });
+      debugLog('bg:hub', 'promoted a full-page embedded PDF', () => ({ tabId, url: request.url }));
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
+/** Whether this claim is the hub page a promotion just opened (it stays in its tab). */
+async function takePromotion(tabId: number, docs: readonly PdfHubDoc[]): Promise<boolean> {
+  const promoted = await readPromoted();
+  const url = promoted.pending[String(tabId)];
+  if (!url) return false;
+  delete promoted.pending[String(tabId)];
+  await writePromoted(promoted);
+  return docs.some((d) => bare(d.url) === url);
+}
+
 export function claimPdfHub(
   request: { docs: PdfHubDoc[]; canGoBack: boolean; project: string | null },
   sender: chrome.runtime.MessageSender,
@@ -194,11 +263,13 @@ export function claimPdfHub(
   return serialized(async (): Promise<HubClaimResult> => {
     const registry = await readRegistry();
     const { project } = await claimTarget(request, registry);
+    const promoted = await takePromotion(claimer.id, request.docs);
     let entry = await liveEntry(registry, project);
     for (;;) {
       // A page naming its project is a hub by intent (opened, restored or
-      // switched to it): it never hands its tab back to a web page.
-      const decision = decideHubClaim({ entry, claimerTabId: claimer.id, canGoBack: request.canGoBack && !request.project, hasDocs: request.docs.length > 0 });
+      // switched to it), and so is one replacing a PDF's wrapper page: it
+      // never hands its tab back to a web page.
+      const decision = decideHubClaim({ entry, claimerTabId: claimer.id, canGoBack: request.canGoBack && !request.project && !promoted, hasDocs: request.docs.length > 0 });
       debugLog('bg:hub', `claim → ${decision.kind}`, () => ({ tabId: claimer.id, project, docs: request.docs.length }));
       switch (decision.kind) {
         case 'become-hub': {

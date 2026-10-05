@@ -932,7 +932,33 @@ function boot() {
     });
     return;
   }
+  if (isFramed && !inHub) {
+    // Embedded in a web page. One that is nothing but this PDF (a
+    // publisher's "view PDF" wrapper) hands it to the hub, which replaces
+    // the page; anything smaller is read right here.
+    void askToPromote(fileUrl).then((promoted) => {
+      if (promoted) showMessage('PDF 탭으로 여는 중…');
+      else void loadFromUrl(fileUrl);
+    });
+    return;
+  }
   void loadFromUrl(fileUrl);
+}
+
+function askToPromote(fileUrl: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), 1_500);
+    try {
+      chrome.runtime.sendMessage({ type: 'VOCAB_T_PDF_EMBED_PROMOTE', url: fileUrl, width: window.innerWidth, height: window.innerHeight }, (response?: { promoted?: boolean }) => {
+        clearTimeout(timer);
+        void chrome.runtime.lastError;
+        resolve(response?.promoted === true);
+      });
+    } catch {
+      clearTimeout(timer);
+      resolve(false);
+    }
+  });
 }
 
 boot();

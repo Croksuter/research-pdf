@@ -25,6 +25,7 @@ import {
 } from '../shared/localPdf';
 import {
   parseOpenNativePdfRequest,
+  parsePdfEmbedPromoteRequest,
   parsePdfHubClaimRequest,
   parsePdfHubStateRequest,
   parsePdfProjectMoveRequest,
@@ -36,7 +37,7 @@ import {
 import { DEFAULT_PROJECT_ID, isPdfProjectId } from '../shared/pdfProjects';
 import { getSetting } from '../db/settingsRepository';
 import { debugError, debugLog } from '../shared/debugLog';
-import { claimPdfHub, movePdfToProject, noteTopLevelCommit, openPdfProject } from './pdfHub';
+import { claimPdfHub, movePdfToProject, noteTopLevelCommit, openPdfProject, promoteEmbeddedPdf } from './pdfHub';
 import { updatePdfProjects } from './pdfProjectStore';
 import { isExtensionPageSender } from './messageDispatcher';
 import { requestPdfSyncSoon } from './pdfSyncService';
@@ -383,6 +384,13 @@ export const pdfMessageHandlers: Record<string, PdfMessageHandler> = {
     return request && isHubPageSender(sender)
       ? recordHubState(request, sender)
       : { success: false, error: 'PDF 탭 상태 형식이 올바르지 않습니다.' };
+  },
+  VOCAB_T_PDF_EMBED_PROMOTE: async (m, sender) => {
+    const request = parsePdfEmbedPromoteRequest(m);
+    if (!request || !isExtensionPageSender(sender) || !(sender.url ?? '').startsWith(chrome.runtime.getURL(PDF_VIEWER_PAGE))) {
+      return { success: false, error: '요청 형식이 올바르지 않습니다.' };
+    }
+    return { success: true, promoted: await promoteEmbeddedPdf(request, sender) };
   },
   VOCAB_T_PDF_PROJECT_UPDATE: async (m, sender) => {
     const request = parsePdfProjectUpdateRequest(m);

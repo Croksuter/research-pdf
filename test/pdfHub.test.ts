@@ -418,6 +418,13 @@ describe('hub claims', () => {
     expect(projects.p2y.members.some((m) => m.docId === 'docL' && m.member)).toBe(true);
   });
 
+  it('takes an embedded PDF for the whole page only when its frame fills the tab', () => {
+    expect(hub.fillsTab({ width: 1300, height: 860 }, { width: 1300, height: 900 })).toBe(true); // IEEE stamp.jsp: header + iframe
+    expect(hub.fillsTab({ width: 320, height: 240 }, { width: 1300, height: 900 })).toBe(false); // a PDF in a blog post
+    expect(hub.fillsTab({ width: 1300, height: 400 }, { width: 1300, height: 900 })).toBe(false);
+    expect(hub.fillsTab({ width: 1300, height: 860 }, {})).toBe(false);
+  });
+
   it('refuses claims from frames and tab-less senders', async () => {
     fake.addTab({ id: 1, windowId: 7, index: 0, active: true });
     const framed = { ...fake.sender(1), frameId: 3 } as chrome.runtime.MessageSender;

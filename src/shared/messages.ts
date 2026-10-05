@@ -164,6 +164,24 @@ export function parsePdfHubOpenMessage(value: unknown): PdfHubOpenMessage | null
   return docs ? { type: 'VOCAB_T_PDF_HUB_OPEN', tabId: value.tabId, docs, activate: value.activate } : null;
 }
 
+// An embedded viewer filling (almost) the whole tab — a publisher's "view
+// PDF" page that wraps the PDF in an iframe (IEEE stamp.jsp) — asks to move
+// the document into the hub. `width`/`height`: its frame, in CSS pixels.
+export interface PdfEmbedPromoteRequest {
+  type: 'VOCAB_T_PDF_EMBED_PROMOTE';
+  url: string;
+  width: number;
+  height: number;
+}
+
+export function parsePdfEmbedPromoteRequest(value: unknown): PdfEmbedPromoteRequest | null {
+  if (!isRecord(value) || value.type !== 'VOCAB_T_PDF_EMBED_PROMOTE') return null;
+  const { url, width, height } = value;
+  if (typeof url !== 'string' || !isPdfViewerSourceUrl(url)) return null;
+  if (typeof width !== 'number' || typeof height !== 'number' || !(width > 0) || !(height > 0)) return null;
+  return { type: 'VOCAB_T_PDF_EMBED_PROMOTE', url, width, height };
+}
+
 // Popup button: recreate PDF viewer tabs whose records survived a reload.
 export interface RestoreViewerTabsRequest {
   type: 'VOCAB_T_RESTORE_VIEWER_TABS';

@@ -50,6 +50,12 @@ no longer scatter across tabs that look like web pages.
   closes if it has none. The hub (and its window) is brought forward only
   when the PDF opened in the foreground. The registry is project → tab, so a
   hub dragged to another window stays that project's hub.
+- An embedded PDF gets the viewer inline, unless its frame fills the tab
+  (≥ 85 % wide, ≥ 70 % high): a publisher page that only wraps the PDF in an
+  iframe (IEEE's stamp.jsp). Then the viewer asks the background
+  (`VOCAB_T_PDF_EMBED_PROMOTE`), which navigates the tab to the hub; that
+  hub claims in place instead of going back to the wrapper. Each tab promotes
+  a given PDF once, so going back to the wrapper shows it inline.
 - The hub's own URL (`?p=<project>&a=<active>&f=<url>&f=…`, via
   `history.replaceState`) is its document list, so reload and Chrome session
   restore bring every document back; `VOCAB_T_PDF_HUB_STATE` records the same
