@@ -140,14 +140,21 @@ function register(registry: HubRegistry, project: string, entry: HubRegistryEntr
   registry[project] = entry;
 }
 
-async function forwardToLiveHub(hubTabId: number, docs: PdfHubDoc[], activate: boolean): Promise<boolean> {
+// How long a live hub gets to take handed-over documents before the claimer
+// stops waiting. A hub in a background tab can be frozen by Chrome: it takes
+// the message only once shown again, and the claimer must not sit there blank
+// until then.
+const HUB_ANSWER_MS = 1500;
+
+/** 'taken'; 'gone' when no hub page answered; 'asleep' when the tab is there but has not answered yet. */
+async function forwardToLiveHub(hubTabId: number, docs: PdfHubDoc[], activate: boolean): Promise<'taken' | 'gone' | 'asleep'> {
   const message: PdfHubOpenMessage = { type: 'VOCAB_T_PDF_HUB_OPEN', tabId: hubTabId, docs, activate };
-  try {
-    const response = await chrome.runtime.sendMessage(message) as { ok?: boolean } | undefined;
-    return response?.ok === true;
-  } catch {
-    return false;
-  }
+  const sent = chrome.runtime.sendMessage(message).then(
+    (response: { ok?: boolean } | undefined) => (response?.ok === true ? 'taken' as const : 'gone' as const),
+    () => 'gone' as const,
+  );
+  const late = new Promise<'asleep'>((resolve) => { setTimeout(() => resolve('asleep'), HUB_ANSWER_MS); });
+  return Promise.race([sent, late]);
 }
 
 /** Brings a tab forward, and its window when that is another one. */
@@ -285,10 +292,23 @@ export function claimPdfHub(
           return { success: true, role: 'forwarded', dispose };
         }
         case 'forward-live': {
-          if (await forwardToLiveHub(decision.hubTabId, request.docs, claimer.active)) {
+          const hubTab = await chrome.tabs.get(decision.hubTabId).catch(() => null);
+          if (hubTab?.discarded) {
+            // A discarded hub reloads when shown and claims again: the
+            // documents wait for that claim.
+            const pendingEntry = registry[project];
+            pendingEntry.ready = false;
+            pendingEntry.pending = mergeHubDocs(pendingEntry.pending, request.docs);
+            await writeRegistry(registry);
             if (claimer.active) await activateTab(decision.hubTabId);
             return { success: true, role: 'forwarded', dispose };
           }
+          // Shown first: that also wakes a hub Chrome froze in the background.
+          if (claimer.active) await activateTab(decision.hubTabId);
+          const delivery = await forwardToLiveHub(decision.hubTabId, request.docs, claimer.active);
+          debugLog('bg:hub', `forwarded → ${delivery}`, () => ({ hubTabId: decision.hubTabId }));
+          // Asleep: the message is queued for the hub and taken when it wakes.
+          if (delivery !== 'gone') return { success: true, role: 'forwarded', dispose };
           // The hub did not answer (navigated away, crashed): elect anew.
           delete registry[project];
           entry = null;
