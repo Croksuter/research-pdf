@@ -5,3 +5,4 @@ coverage/
 *.zip
 .DS_Store
 scripts/audit/.ext/
+artifact/chrome-web-store/tools/raw/
