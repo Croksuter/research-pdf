@@ -58,7 +58,7 @@ ResearchPDF는 논문을 읽는 사람을 위한 Chrome PDF 뷰어입니다. 웹
 ■ 개인정보
 • PDF는 브라우저 안에서만 읽습니다. 논문을 찾을 때는 DOI·arXiv ID·제목 같은 식별자만 학술 데이터베이스에 보냅니다.
 • 동기화 데이터는 개발자 서버가 아니라 사용자 본인의 Google Drive(앱 전용 폴더)에만 저장됩니다. 광고, 분석 도구, 추적이 없습니다.
-• 개인정보처리방침: https://research-pdf.croksuter.com/privacy.html
+• 개인정보처리방침: https://research-pdf.croksuter.com/privacy.html#ko
 
 ■ 시작하기
 1. 웹의 PDF 링크를 열거나, 컴퓨터의 PDF를 Chrome 창에 끌어다 놓으세요.

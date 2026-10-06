@@ -12,7 +12,7 @@ library and projects. No content script, no server, no account of its own.
 | build | `npm run build` → `dist/`, `npm run zip` for the store |
 | background | `src/background.ts` + `src/background/*` |
 | popup | `src/ui/popup.*`: open the PDF tab, sync at a glance, a nudge when web PDFs are off |
-| settings page | `src/ui/settings.*`: shown inside the hub like home (⚙ in the strip, `s=settings`; the popup's 설정 and Chrome's extension options bring a hub forward with it, `VOCAB_T_PDF_SHOW_SETTINGS`), framed and styled with the hub's palette; every setting on one page of cards, with Chrome's site / file-URL access shown next to the switches that need it, API key checks (OpenAlex's remaining daily budget from its `X-RateLimit-*` headers, `shared/apiStatus.ts`), storage use and the shortcuts |
+| settings page | `src/ui/settings.*`: shown inside the hub like home (⚙ in the strip, `s=settings`; the popup's 설정 and Chrome's extension options bring a hub forward with it, `VOCAB_T_PDF_SHOW_SETTINGS`), framed and styled with the hub's palette; every setting on one page of cards, with Chrome's site / file-URL access shown next to the switches that need it, API key checks (OpenAlex's remaining daily budget from its `X-RateLimit-*` headers, `shared/apiStatus.ts`), storage use and the shortcuts. The hub keeps the frame, so it refreshes when the hub shows it again (`SETTINGS_SHOWN_MESSAGE`), on visibility/focus, on library/project changes, and polls while a sync runs. Disconnect and clearing saved PDFs ask first; a key is removed only with Remove. Helpers shared with the welcome page and popup are in `ui/pageKit.ts`; the shortcut table is `shared/shortcuts.ts` (README carries the same) |
 | hub | `src/ui/pdf-hub.html`, `pdfHub.ts` + `src/background/pdfHub.ts` |
 | viewer | `src/ui/pdf-viewer.html`, `pdfViewer.ts`, `pdfViewer/*` |
 | sync engine | `src/background/pdfSyncService.ts`, `src/shared/pdfSync.ts` |
@@ -112,13 +112,27 @@ a tour with a demo paper; done. The demo paper is LaTeX about the extension
 itself (`assets/demo/`, Korean and English), published on the site
 (`docs/demo/`) so it opens as an ordinary web PDF.
 
+Turning on file-URL access on Chrome's extension page reloads the extension,
+which closes the guide. So "Turn on in Chrome" first leaves a marker
+(`rpdfWelcomeResume` in `chrome.storage.local`: step and time,
+`shared/welcomeResume.ts`); every service-worker start (that reload is one)
+reopens `welcome.html#<step>` when the marker is under 10 minutes old and no
+guide is open, and drops it. Reaching "done" (or skipping) drops it too.
+
 ## Gathering PDFs open in Chrome's viewer
 
 `ui/openPdfTabs.ts`: tabs whose address looks like a PDF (visible to the
 extension once site access is granted; local files with file-URL access).
-Home shows a banner when there are some ("이 프로젝트로 모으기"), the
-settings page has a button, the welcome page a step; gathered documents join
-this PDF tab and their tabs close. Chrome's viewer keeps its zoom as the tab's
+Home shows a banner when there are some ("Gather into this project" /
+"이 프로젝트로 모으기"), the settings page has a button, the welcome page a
+step; gathered documents join this PDF tab. The settings frame asks its hub
+(`GATHER_MESSAGE`) and shows the hub's answer (`GATHER_RESULT_MESSAGE`:
+gathered, kept open). The welcome page (and settings opened on its own)
+open each as a web PDF entering and close an original tab only once its
+document landed (`ui/pageKit.ts`): a viewer in a PDF tab recorded opening it
+(a library row stamped since the gather began), or a PDF tab lists it and
+its bytes are in the local file cache — and only if the tab still shows it.
+What has not landed after 45 s stays open, and the page says so. Chrome's viewer keeps its zoom as the tab's
 zoom, so `chrome.tabs.getZoom` carries it over as `#zoom=N` (the viewer then
 still restores the remembered page). Its scroll position and page are inside
 Chrome's own viewer frame, which no extension can read.
@@ -131,7 +145,9 @@ types; functions for interpolation); static HTML carries `data-i18n*`
 attributes filled by `localizeDocument`. The language is the user's choice on
 the settings page (auto = the browser's), kept in localStorage for pages and
 mirrored to `chrome.storage.local` for the service worker; open PDF tabs
-reload when it changes. The manifest description comes from `_locales/`
+reload when it changes. The worker starts in the browser's language until
+that read resolves; `languageReady()` (what `followStoredLanguage` returns)
+is what to await before building user-visible text there. The manifest description comes from `_locales/`
 (`default_locale: en`). Stored data stays as written — the default project's
 stored name is shown in the page's language until the user renames it.
 
@@ -303,8 +319,8 @@ Bounded to 1,000 rows (pins kept first, up to 100; others 365 days).
 ## Sync document
 
 `researchpdf-sync-v1.json` (gzip) in the account's Drive appDataFolder,
-shape in `src/shared/pdfSync.ts` (snapshot version 3; an older build's
-version-1 or -2 document reads with what it lacks empty, and older builds
+shape in `src/shared/pdfSync.ts` (snapshot version 5; an older build's
+version 1–4 document reads with what it lacks empty, and older builds
 refuse a newer version instead of writing it back without it):
 
 - `docs`: `PdfDocRecord[]`, reading position + zoom per document identity.
@@ -363,5 +379,7 @@ stay on the device.
 ## Setup and store
 
 Google Cloud setup is in `docs/google-drive-sync.md`. `docs/` is also the
-public site (homepage, privacy policy, terms) served by GitHub Pages; the OAuth
-consent screen and the Web Store listing link to it.
+public site (homepage, privacy policy, terms; each page English then Korean,
+`#en` / `#ko`) served by GitHub Pages; the OAuth consent screen and the Web
+Store listings link to it. Production builds carry no source maps (the
+store zip leaves them out); `npm run dev` keeps them.

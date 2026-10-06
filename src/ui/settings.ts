@@ -62,6 +62,8 @@ if (!embedded) {
 }
 
 byId('st-version').textContent = `ResearchPDF ${chrome.runtime.getManifest().version}`;
+// The policy page carries both languages: link to this page's.
+byId<HTMLAnchorElement>('st-privacy').hash = currentLanguage();
 
 // ─── Search and section chips ───
 

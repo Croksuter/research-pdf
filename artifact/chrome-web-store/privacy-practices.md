@@ -16,10 +16,10 @@
 | `storage` | 설정, 열어 본 PDF 목록(라이브러리), 프로젝트, 문서별 읽던 위치를 이 기기에 저장합니다. | `src/background/*Store.ts` |
 | `alarms` | Google Drive 동기화를 주기적으로 실행합니다. 계정을 연결하지 않았거나 동기화를 끈 경우 알람이 와도 아무것도 하지 않습니다. | `src/background.ts`, `src/background/pdfSyncService.ts` |
 | `webNavigation` | 탭이 `.pdf` 주소나 로컬 PDF 파일로 이동하는 순간을 알아 내장 뷰어로 열고, 뷰어 탭이 다른 페이지로 이동했는지 확인합니다. 페이지 내용은 읽지 않습니다. | `src/background/pdfRouting.ts` |
-| `declarativeNetRequestWithHostAccess` | 주소에 `.pdf`가 없어도 응답의 Content-Type이 PDF인 최상위 문서를 내장 뷰어로 보내는 규칙 하나를 둡니다. 사용자가 웹 PDF 열기를 켜고 사이트 접근을 허용한 경우에만 적용됩니다. | `src/background/pdfRouting.ts` |
+| `declarativeNetRequestWithHostAccess` | PDF인 응답을 내장 뷰어로 보내는 리디렉션 규칙 6개를 둡니다. 최상위 문서는 PDF 탭으로(3개), 페이지에 끼워 넣은 PDF(iframe, embed/object)는 그 자리의 뷰어로(3개) 보내며, 각각 Content-Type이 PDF인 응답, 주소가 `.pdf`로 끝나는 `application/octet-stream` 응답, inline `.pdf` 파일 이름(Content-Disposition)인 응답에 적용됩니다. 다운로드(attachment)와 POST 응답은 제외합니다. 사용자가 웹 PDF 열기를 켜고 사이트 접근을 허용한 경우에만 설치되고, Chrome이 허용된 사이트에서만 적용합니다. | `src/shared/localPdf.ts` (`buildWebPdfRedirectRules`), `src/background/pdfRouting.ts` |
 | `identity` | 사용자가 "Google 계정 연결"을 누를 때 OAuth 로그인 창을 띄워, Drive의 앱 전용 폴더(`drive.appdata` 범위)에만 접근하는 토큰을 받습니다. | `src/background/googleAuth.ts` |
-| 호스트 권한 `file:///*` | 사용자가 로컬 PDF 열기를 켜고 Chrome에서 파일 URL 접근을 허용한 경우, 컴퓨터의 PDF 파일을 뷰어로 읽습니다. | `src/ui/pdfViewer.ts` |
-| 선택 호스트 권한 `https://*/*`, `http://*/*` | 설치 시 요청하지 않습니다. 사용자가 "웹 PDF도 ResearchPDF로 열기"를 켜거나 뷰어에서 웹 PDF 열기를 허용할 때만 요청하며, 웹 PDF 파일을 내려받아 뷰어에 표시하고 PDF 응답을 뷰어로 돌리는 데만 씁니다. | `src/ui/settings.ts`, `src/ui/pdfViewer.ts`, `src/ui/pdfFileFetch.ts` |
+| 호스트 권한 `file:///*` | 사용자가 로컬 PDF 열기를 켜고 Chrome에서 파일 URL 접근을 허용한 경우, 컴퓨터의 PDF 파일을 뷰어로 읽고, Chrome 기본 뷰어에 열린 로컬 PDF 탭을 찾아 PDF 탭으로 모으자고 제안합니다. | `src/ui/pdfViewer.ts`, `src/ui/openPdfTabs.ts` |
+| 선택 호스트 권한 `https://*/*`, `http://*/*` | 설치 시 요청하지 않습니다. 사용자가 "웹 PDF도 ResearchPDF로 열기"를 켜거나 뷰어에서 웹 PDF 열기를 허용할 때만 요청합니다. 쓰는 곳: PDF 응답을 뷰어로 돌리는 위 규칙, 뷰어가 웹 PDF 파일을 내려받아 표시하고 기기에 보관하는 것, Chrome 기본 뷰어로 PDF를 보여 주는 탭의 주소·제목을 읽어 홈·설정·시작 가이드에서 PDF 탭으로 모으자고 제안하는 것(주소·제목은 기기 밖으로 나가지 않음). | `src/ui/settings.ts`, `src/ui/pdfViewer.ts`, `src/ui/pdfFileFetch.ts`, `src/ui/openPdfTabs.ts` |
 
 ### 원격 코드 (Remote code)
 
@@ -57,4 +57,4 @@
 https://research-pdf.croksuter.com/privacy.html
 ```
 
-(`docs/privacy.html`, GitHub Pages로 게시)
+(`docs/privacy.html`, GitHub Pages로 게시. 영어가 먼저, 한국어는 `#ko`: 한국어 등록정보에는 `https://research-pdf.croksuter.com/privacy.html#ko`)
