@@ -57,6 +57,7 @@ module.exports = {
         { from: 'src/ui/pdf-upkeep.html', to: '.' },
         { from: 'src/ui/tokens.css', to: '.' },
         { from: 'src/icons', to: 'icons' },
+        { from: 'src/_locales', to: '_locales' },
         // PDF.js runtime assets. The worker runs as a module Worker from the
         // extension origin; CMaps/fonts/wasm/ICC are fetched lazily by PDF.js
         // only for documents that need them. The worker is the readable build,

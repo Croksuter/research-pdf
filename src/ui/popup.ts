@@ -7,6 +7,10 @@
 import { DEFAULT_WEB_PDF_VIEWER_ENABLED, WEB_PDF_VIEWER_ENABLED_SETTING_KEY } from '../shared/constants';
 import { getSetting } from '../db/settingsRepository';
 import { PDF_HUB_PAGE, WEB_PDF_HOST_ORIGINS } from '../shared/localPdf';
+import { currentLanguage, localizeDocument } from '../shared/i18n';
+import { S } from './popup.strings';
+
+localizeDocument(S);
 
 const byId = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
@@ -50,27 +54,28 @@ let syncNow = false;
 
 async function loadSync(): Promise<void> {
   const status = await send<SyncStatus | { success: false; error: string }>({ type: 'VOCAB_T_GET_CLOUD_SYNC_STATUS' });
-  if (!status || 'success' in status) { syncSummary.textContent = '상태를 불러오지 못했습니다.'; return; }
+  if (!status || 'success' in status) { syncSummary.textContent = S.statusFailed; return; }
   syncNow = status.googleConnected && status.enabled;
   syncAction.hidden = false;
   syncAction.disabled = status.syncing;
-  syncAction.textContent = syncNow ? '지금 동기화' : status.googleConnected ? '켜기' : '연결';
-  if (!status.googleConnected) syncSummary.textContent = '연결하면 필기와 읽던 위치가 모든 기기를 따라옵니다.';
-  else if (!status.enabled) syncSummary.textContent = `${status.googleAccountEmail || 'Google 계정'} · 꺼져 있음`;
-  else if (status.syncing) syncSummary.textContent = '동기화 중…';
-  else if (status.error) syncSummary.textContent = `오류: ${status.error}`;
+  syncAction.textContent = syncNow ? S.syncNow : status.googleConnected ? S.turnOn : S.connect;
+  const account = status.googleAccountEmail || S.googleAccount;
+  if (!status.googleConnected) syncSummary.textContent = S.notConnected;
+  else if (!status.enabled) syncSummary.textContent = S.off(account);
+  else if (status.syncing) syncSummary.textContent = S.syncing;
+  else if (status.error) syncSummary.textContent = S.error(status.error);
   else syncSummary.textContent = status.lastSyncAt
-    ? `${status.googleAccountEmail || 'Google 계정'} · ${new Date(status.lastSyncAt).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })}`
-    : `${status.googleAccountEmail || 'Google 계정'} · 첫 동기화를 기다리는 중`;
+    ? S.lastSync(account, new Date(status.lastSyncAt).toLocaleString(currentLanguage(), { dateStyle: 'short', timeStyle: 'short' }))
+    : S.waitingFirst(account);
 }
 
 syncAction.addEventListener('click', () => {
   if (!syncNow) { openSettings(); return; }
   syncAction.disabled = true;
-  syncSummary.textContent = '동기화 중…';
+  syncSummary.textContent = S.syncing;
   void send<{ success: boolean; error?: string }>({ type: 'VOCAB_T_SYNC_CLOUD_NOW' }).then(async (response) => {
     await loadSync();
-    if (!response?.success) syncSummary.textContent = response?.error ?? '동기화에 실패했습니다.';
+    if (!response?.success) syncSummary.textContent = response?.error ?? S.syncFailed;
   });
 });
 

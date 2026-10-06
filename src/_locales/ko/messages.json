@@ -1,0 +1,8 @@
+{
+  "appDescription": {
+    "message": "논문 PDF 뷰어. 게재처·인용·참고문헌을 바로 보여주고, 필기와 읽던 위치를 내 Google Drive로 모든 기기에 동기화합니다."
+  },
+  "actionTitle": {
+    "message": "ResearchPDF"
+  }
+}

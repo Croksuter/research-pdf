@@ -13,25 +13,25 @@
       <img src="icons/icon-32.png" width="28" height="28" alt="">
       <div>
         <h1>ResearchPDF</h1>
-        <p>논문 PDF 뷰어 · 필기와 읽던 위치가 따라옵니다</p>
+        <p data-i18n="tagline">논문 PDF 뷰어 · 필기와 읽던 위치가 따라옵니다</p>
       </div>
     </header>
 
-    <button type="button" id="open-viewer" class="btn-primary">PDF 탭 열기</button>
+    <button type="button" id="open-viewer" class="btn-primary" data-i18n="openPdfTab">PDF 탭 열기</button>
 
     <section class="rp-card" aria-labelledby="sync-title">
       <div class="rp-card-text">
-        <h2 id="sync-title">Google Drive 동기화</h2>
-        <p id="sync-summary" class="rp-sub" aria-live="polite">불러오는 중…</p>
+        <h2 id="sync-title" data-i18n="syncTitle">Google Drive 동기화</h2>
+        <p id="sync-summary" class="rp-sub" aria-live="polite" data-i18n="loading">불러오는 중…</p>
       </div>
       <button type="button" id="sync-action" class="btn-secondary" hidden></button>
     </section>
 
-    <p id="web-hint" class="rp-hint" hidden>웹 PDF는 아직 Chrome 기본 뷰어로 열립니다. <button type="button" id="web-hint-open" class="rp-link">설정에서 켜기</button></p>
+    <p id="web-hint" class="rp-hint" hidden><span data-i18n="webHint">웹 PDF는 아직 Chrome 기본 뷰어로 열립니다.</span> <button type="button" id="web-hint-open" class="rp-link" data-i18n="webHintOpen">설정에서 켜기</button></p>
 
     <button type="button" id="open-settings" class="btn-secondary rp-settings">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
-      설정
+      <span data-i18n="settings">설정</span>
     </button>
   </main>
   <script src="popup.js"></script>

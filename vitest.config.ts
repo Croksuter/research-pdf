@@ -6,7 +6,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     environment: 'node',
-    setupFiles: ['fake-indexeddb/auto'],
+    setupFiles: ['fake-indexeddb/auto', './test/setup.ts'],
     include: ['test/**/*.test.ts'],
   },
 });
