@@ -13,7 +13,11 @@ Google Drive.
 - Projects: every new PDF starts in the default project; move it to a named
   one ("프로젝트로 이동"). Close a project's tab and reopen it later with the
   same tabs; its other papers stay one click away. A paper open in two
-  projects shows drawings made in either one live.
+  projects shows drawings made in either one live. Give a project an icon,
+  an emoji or a color (its tab in Chrome shows it), and order projects or
+  group them in folders by dragging.
+- Papers are told apart from other PDFs at a glance: journal, conference,
+  preprint, survey and report icons, which you can correct.
 - A home page lists the project's PDFs and every PDF you have opened, with
   reading progress and search. Pinned PDFs sit at the left of their project's
   tab.

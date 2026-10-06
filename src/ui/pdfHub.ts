@@ -52,27 +52,42 @@ import { parsePdfHubOpenMessage } from '../shared/messages';
 import {
   DEFAULT_PROJECT_ID,
   PDF_PROJECTS_STORAGE_KEY,
+  PDF_PROJECT_COLORS,
+  PDF_PROJECT_FOLDERS_STORAGE_KEY,
+  PDF_PROJECT_ICONS,
   cleanPdfProjectName,
   isDocInProject,
   livePdfProjects,
+  newPdfProjectFolderId,
   newPdfProjectId,
+  parsePdfProjectFolders,
   parsePdfProjects,
+  pdfProjectEmojiIcon,
+  pdfProjectLook,
+  pdfProjectTree,
   projectPinnedDocIds,
   projectsOfDoc,
   seedPdfProjects,
+  type PdfFolderUpdate,
   type PdfProject,
+  type PdfProjectFolder,
+  type PdfProjectFolders,
   type PdfProjects,
   type PdfProjectUpdate,
 } from '../shared/pdfProjects';
+import { compareOrderKeys, orderKeyAtEnd, orderKeyBetween, orderKeysBetween } from '../shared/orderKey';
 import { PDF_DOC_STATE_STORAGE_KEY, parsePdfDocRecords, type PdfDocRecords } from '../shared/pdfIdentity';
 import {
   PDF_LIBRARY_STORAGE_KEY,
+  libraryEntryKind,
   libraryEntryName,
   parsePdfLibrary,
   relativeTimeKo,
   searchPdfLibrary,
+  type PdfDocKind,
   type PdfLibrary,
   type PdfLibraryEntry,
+  type PdfLibraryUpdate,
 } from '../shared/pdfLibrary';
 import {
   HUB_MESSAGE_TAG,
@@ -157,6 +172,18 @@ const toastText = byId<HTMLSpanElement>('rpdf-toast-text');
 const toastAction = byId<HTMLButtonElement>('rpdf-toast-action');
 const projectBtn = byId<HTMLButtonElement>('rpdf-project-btn');
 const projectNameEl = byId<HTMLSpanElement>('rpdf-project-name');
+const projectBadgeEl = byId<HTMLSpanElement>('rpdf-project-badge');
+const folderNewBtn = byId<HTMLButtonElement>('rpdf-folder-new');
+const stylePanel = byId<HTMLDivElement>('rpdf-style');
+const styleBack = byId<HTMLButtonElement>('rpdf-style-back');
+const stylePreview = byId<HTMLSpanElement>('rpdf-style-preview');
+const styleTitle = byId<HTMLParagraphElement>('rpdf-style-title');
+const styleIcons = byId<HTMLDivElement>('rpdf-style-icons');
+const styleEmojis = byId<HTMLDivElement>('rpdf-style-emojis');
+const styleEmojiInput = byId<HTMLInputElement>('rpdf-style-emoji-input');
+const styleColors = byId<HTMLDivElement>('rpdf-style-colors');
+const styleReset = byId<HTMLButtonElement>('rpdf-style-reset');
+const styleDone = byId<HTMLButtonElement>('rpdf-style-done');
 const projectsPanel = byId<HTMLDivElement>('rpdf-projects');
 const projectsItems = byId<HTMLDivElement>('rpdf-projects-items');
 const projectNewForm = byId<HTMLFormElement>('rpdf-project-new');
@@ -218,6 +245,7 @@ let projectId = DEFAULT_PROJECT_ID;
 // default project seeded with the library's old pins, like the background.
 let storedProjects: unknown;
 let projects: PdfProjects = parsePdfProjects(undefined);
+let folders: PdfProjectFolders = {};
 // Projects with a hub right now (the background's registry; may be stale).
 let openProjectIds = new Set<string>();
 // Pin changes sent but not yet seen in storage: they win over a stale read.
@@ -279,8 +307,12 @@ function inThisProject(docId: string, index: Map<string, string[]>): boolean {
   return projectId === DEFAULT_PROJECT_ID ? !index.has(docId) : (index.get(docId) ?? []).includes(projectId);
 }
 
-function sendProjectUpdate(update: PdfProjectUpdate): Promise<unknown> {
+function sendProjectUpdate(update: PdfProjectUpdate | PdfFolderUpdate): Promise<unknown> {
   return ask({ type: 'VOCAB_T_PDF_PROJECT_UPDATE', update });
+}
+
+function sendLibraryUpdate(update: PdfLibraryUpdate): Promise<unknown> {
+  return ask({ type: 'VOCAB_T_PDF_LIBRARY_UPDATE', update });
 }
 
 function ask<T = { success?: boolean; error?: string }>(message: Record<string, unknown>): Promise<T | undefined> {
@@ -311,9 +343,10 @@ function libraryIdForUrl(url: string): string | null {
 
 async function loadLibraryState(): Promise<void> {
   try {
-    const stored = await chrome.storage.local.get([PDF_LIBRARY_STORAGE_KEY, PDF_DOC_STATE_STORAGE_KEY, PDF_PROJECTS_STORAGE_KEY]);
+    const stored = await chrome.storage.local.get([PDF_LIBRARY_STORAGE_KEY, PDF_DOC_STATE_STORAGE_KEY, PDF_PROJECTS_STORAGE_KEY, PDF_PROJECT_FOLDERS_STORAGE_KEY]);
     setLibrary(parsePdfLibrary(stored[PDF_LIBRARY_STORAGE_KEY]));
     setProjects(stored[PDF_PROJECTS_STORAGE_KEY]);
+    folders = parsePdfProjectFolders(stored[PDF_PROJECT_FOLDERS_STORAGE_KEY]);
     docRecords = parsePdfDocRecords(stored[PDF_DOC_STATE_STORAGE_KEY]);
   } catch {
     /* an empty home page */
@@ -345,9 +378,13 @@ chrome.storage.onChanged.addListener((changes, area) => {
     return;
   }
   if (area !== 'local') return;
-  if (changes[PDF_LIBRARY_STORAGE_KEY] || changes[PDF_PROJECTS_STORAGE_KEY]) {
-    if (changes[PDF_LIBRARY_STORAGE_KEY]) setLibrary(parsePdfLibrary(changes[PDF_LIBRARY_STORAGE_KEY].newValue));
+  if (changes[PDF_LIBRARY_STORAGE_KEY] || changes[PDF_PROJECTS_STORAGE_KEY] || changes[PDF_PROJECT_FOLDERS_STORAGE_KEY]) {
+    if (changes[PDF_LIBRARY_STORAGE_KEY]) {
+      setLibrary(parsePdfLibrary(changes[PDF_LIBRARY_STORAGE_KEY].newValue));
+      tabs.forEach(updateTabLabel); // kinds
+    }
     if (changes[PDF_PROJECTS_STORAGE_KEY]) setProjects(changes[PDF_PROJECTS_STORAGE_KEY].newValue);
+    if (changes[PDF_PROJECT_FOLDERS_STORAGE_KEY]) folders = parsePdfProjectFolders(changes[PDF_PROJECT_FOLDERS_STORAGE_KEY].newValue);
     if (isHub) {
       // This project was deleted (here, in another hub, on another device).
       if (projects[projectId]?.deletedAt !== 0) { void rehome(); return; }
@@ -420,8 +457,10 @@ function updateTabLabel(tab: HubTab): void {
   tab.button.classList.toggle('is-unloaded', !tab.frame);
   tab.button.draggable = !tab.pinned;
   tab.closeEl.hidden = tab.pinned;
-  tab.iconEl.replaceChildren(icon(tab.pinned ? 'i-pin' : isLocal(tab) ? 'i-file-local' : 'i-file'));
-  tab.button.title = [tab.paperTitle, tab.title, tab.url, tab.pinned ? '고정됨 · 우클릭해 고정 해제' : null]
+  const kind = docKind(tab.docId ?? tab.libraryId);
+  tab.iconEl.replaceChildren(icon(tab.pinned ? 'i-pin' : kindIcon(kind, isLocal(tab))));
+  tab.iconEl.dataset.kind = tab.pinned ? '' : kind;
+  tab.button.title = [tab.paperTitle, tab.title, tab.url, kind !== 'document' ? KIND_LABEL[kind] : null, tab.pinned ? '고정됨 · 우클릭해 고정 해제' : null]
     .filter(Boolean).filter((v, i, all) => all.indexOf(v) === i).join('\n');
   if (tab.frame) tab.frame.title = tab.paperTitle ?? tab.title;
 }
@@ -956,6 +995,10 @@ function showTabMenu(tab: HubTab, x: number, y: number): void {
   item(tab.pinned ? '고정 해제' : '고정', () => setPinned(tab, !tab.pinned));
   item('프로젝트로 이동…', () => showMove(tab));
   const docId = tab.docId ?? tab.libraryId;
+  if (docId && library[docId]) {
+    const rect = tab.button.getBoundingClientRect();
+    item(`문서 종류: ${KIND_LABEL[docKind(docId)]}…`, () => showKindMenu(docId, Math.max(x, rect.left), y));
+  }
   if (projectId !== DEFAULT_PROJECT_ID && docId && isDocInProject(projects, projectId, docId)) {
     item('프로젝트에서 빼기', () => removeFromProject(tab, docId));
   }
@@ -993,7 +1036,9 @@ document.addEventListener('pointerdown', (e) => {
   const target = e.target as Node;
   if (!menu.hidden && !menu.contains(target)) hideMenu();
   if (!listPanel.hidden && !listPanel.contains(target) && !listBtn.contains(target)) hideList();
-  if (!projectsPanel.hidden && !projectsPanel.contains(target) && !projectBtn.contains(target)) hideProjects();
+  // The list's own menu (⋯, right click) belongs to it.
+  if (!projectsPanel.hidden && !projectsPanel.contains(target) && !projectBtn.contains(target) && !menu.contains(target)) hideProjects();
+  if (!stylePanel.hidden && !stylePanel.contains(target) && !projectBtn.contains(target)) hideStyle();
   if (!movePanel.hidden && !movePanel.contains(target) && !moveBtn.contains(target)) hideMove();
 }, true);
 window.addEventListener('blur', () => hidePanels());
@@ -1002,6 +1047,7 @@ function hidePanels(): void {
   hideMenu();
   hideList();
   hideProjects();
+  hideStyle();
   hideMove();
 }
 
@@ -1094,7 +1140,12 @@ function homeRow(entry: PdfLibraryEntry, options: HomeRowOptions = {}): HTMLElem
     page ? `${page} / ${entry.numPages}쪽` : `${entry.numPages}쪽`,
   ].filter(Boolean).join(' · ');
   text.append(el('span', { className: 'rpdf-item-meta', textContent: meta }));
-  main.append(icon(entry.urls[0] && !entry.urls[0].startsWith('file:') ? 'i-file' : 'i-file-local'), text);
+  const kind = libraryEntryKind(entry);
+  const kindMark = icon(kindIcon(kind, !(entry.urls[0] && !entry.urls[0].startsWith('file:'))));
+  kindMark.dataset.kind = kind;
+  main.append(kindMark, text);
+  if (kind !== 'document') main.title = `${KIND_LABEL[kind]}\n${main.title}`;
+  row.addEventListener('contextmenu', (e) => { e.preventDefault(); showKindMenu(entry.docId, e.clientX, e.clientY); });
   const badges = el('span', { className: 'rpdf-item-badges' });
   if (annotated.has(entry.docId)) {
     const pen = el('span', { className: 'rpdf-badge', title: '필기 있음' });
@@ -1164,7 +1215,7 @@ function moreButton(total: number, onMore: () => void): HTMLElement | undefined 
 
 function renderHome(): void {
   const project = currentProject();
-  homeTitle.textContent = project.name;
+  homeTitle.replaceChildren(projectBadge(project), document.createTextNode(project.name));
   const entries = Object.values(library);
   const index = membershipIndex();
   const isDefault = projectId === DEFAULT_PROJECT_ID;
@@ -1360,6 +1411,7 @@ document.addEventListener('keydown', (e) => {
     if (!menu.hidden) { hideMenu(); return; }
     if (!listPanel.hidden) { hideList(); listBtn.focus(); return; }
     if (!projectsPanel.hidden) { hideProjects(); projectBtn.focus(); return; }
+    if (!stylePanel.hidden) { hideStyle(); projectBtn.focus(); return; }
     if (!movePanel.hidden) { hideMove(); moveBtn.focus(); return; }
   }
   if (document.activeElement?.closest('.rpdf-tab') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
@@ -1367,6 +1419,185 @@ document.addEventListener('keydown', (e) => {
     step(e.key === 'ArrowRight' ? 'next' : 'prev');
   }
 });
+
+// ─── Looks: document kinds, project badges, the tab's icon ───
+
+const KIND_LABEL: Record<PdfDocKind, string> = {
+  journal: '저널 논문',
+  conference: '학회 논문',
+  preprint: '프리프린트',
+  survey: '서베이·리뷰',
+  technical: '보고서·학위논문',
+  document: '일반 PDF',
+};
+const KIND_ORDER: PdfDocKind[] = ['journal', 'conference', 'preprint', 'survey', 'technical', 'document'];
+
+/** The document's kind: automatic (what the paper strip found), or one the user picks. */
+function showKindMenu(docId: string, x: number, y: number): void {
+  const entry = library[docId];
+  if (!entry) return;
+  const set = (userKind: PdfDocKind | null) => { void sendLibraryUpdate({ kind: 'user-kind', docId, userKind }); };
+  showMenu([
+    { heading: '문서 종류' },
+    { label: `자동 — ${KIND_LABEL[entry.paperKind ?? 'document']}`, checked: entry.userKind === null, run: () => set(null) },
+    'sep',
+    ...KIND_ORDER.map((kind) => ({ label: KIND_LABEL[kind], checked: entry.userKind === kind, run: () => set(kind) })),
+  ], x, y);
+}
+
+function docKind(docId: string | null): PdfDocKind {
+  const entry = docId ? library[docId] : undefined;
+  return entry ? libraryEntryKind(entry) : 'document';
+}
+
+function kindIcon(kind: PdfDocKind, local: boolean): string {
+  return kind === 'document' ? (local ? 'i-file-local' : 'i-file') : `i-kind-${kind}`;
+}
+
+/** Draws `project`'s icon, emoji or first letter into `badge`. */
+function fillBadge(badge: HTMLElement, project: PdfProject): void {
+  const look = pdfProjectLook(project);
+  badge.dataset.look = look.kind;
+  badge.style.setProperty('--badge', look.color);
+  badge.replaceChildren(look.kind === 'icon' ? icon(`i-proj-${look.value}`) : document.createTextNode(look.value));
+}
+
+function projectBadge(project: PdfProject): HTMLSpanElement {
+  const badge = el('span', { className: 'rpdf-pbadge' });
+  badge.setAttribute('aria-hidden', 'true');
+  fillBadge(badge, project);
+  return badge;
+}
+
+// The hub tab's icon in Chrome is its project's, so hubs of different
+// projects tell apart in the tab strip. The default project, never styled,
+// keeps the app icon.
+const faviconLink = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+const APP_FAVICON = faviconLink?.getAttribute('href') ?? 'icons/icon-32.png';
+let faviconKey = '';
+
+function updateFavicon(): void {
+  if (!faviconLink) return;
+  const project = currentProject();
+  const look = pdfProjectLook(project);
+  const plain = project.id === DEFAULT_PROJECT_ID && !project.icon && !project.color;
+  const key = plain ? 'app' : `${look.kind}|${look.value}|${look.color}`;
+  if (key === faviconKey) return;
+  faviconKey = key;
+  if (plain) { faviconLink.href = APP_FAVICON; return; }
+  void drawFavicon(look).then((url) => { if (url && faviconKey === key) faviconLink.href = url; });
+}
+
+async function drawFavicon(look: ReturnType<typeof pdfProjectLook>): Promise<string | null> {
+  const size = 64;
+  const canvas = el('canvas', { width: size, height: size });
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  if (look.kind === 'emoji') {
+    ctx.font = `${Math.round(size * 0.84)}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+    ctx.fillText(look.value, size / 2, size * 0.55);
+    return canvas.toDataURL('image/png');
+  }
+  ctx.fillStyle = look.color;
+  ctx.beginPath();
+  ctx.roundRect(0, 0, size, size, size * 0.22);
+  ctx.fill();
+  if (look.kind === 'letter') {
+    ctx.fillStyle = '#fff';
+    ctx.font = `700 ${Math.round(size * 0.6)}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+    ctx.fillText(look.value, size / 2, size * 0.55);
+    return canvas.toDataURL('image/png');
+  }
+  const symbol = document.getElementById(`i-proj-${look.value}`);
+  if (symbol) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">${symbol.innerHTML}</svg>`;
+    const image = new Image(size, size);
+    image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    try {
+      await image.decode();
+      const inset = size * 0.16;
+      ctx.drawImage(image, inset, inset, size - inset * 2, size - inset * 2);
+    } catch {
+      /* the colored square alone */
+    }
+  }
+  return canvas.toDataURL('image/png');
+}
+
+// ─── Project icon picker ───
+
+const SUGGESTED_EMOJI = ['📚', '🧪', '🤖', '🧠', '💡', '🎯', '📈', '🧬', '🔭', '🌱', '⚙️', '📝', '🎓', '🗂️', '🔬', '🚀'];
+let styleTarget: string | null = null;
+
+function showStyle(id: string): void {
+  hidePanels();
+  styleTarget = id;
+  stylePanel.hidden = false;
+  projectBtn.setAttribute('aria-expanded', 'true');
+  styleEmojiInput.value = '';
+  renderStyle();
+  styleIcons.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus();
+}
+
+function hideStyle(): void {
+  if (stylePanel.hidden) return;
+  stylePanel.hidden = true;
+  styleTarget = null;
+  projectBtn.setAttribute('aria-expanded', 'false');
+}
+
+function renderStyle(): void {
+  const project = styleTarget ? projects[styleTarget] : undefined;
+  if (!project || project.deletedAt !== 0) { hideStyle(); return; }
+  fillBadge(stylePreview, project);
+  styleTitle.textContent = project.name;
+  const choice = (label: string, selected: boolean, content: Node | string, run: () => void, className = 'rpdf-style-choice') => {
+    const button = el('button', { type: 'button', className, title: label });
+    button.setAttribute('role', 'option');
+    button.setAttribute('aria-label', label);
+    button.setAttribute('aria-selected', String(selected));
+    button.append(content);
+    button.addEventListener('click', run);
+    return button;
+  };
+  styleIcons.replaceChildren(...PDF_PROJECT_ICONS.map((name) =>
+    choice(name, project.icon === `i:${name}`, icon(`i-proj-${name}`), () => setStyle(project, `i:${name}`, project.color))));
+  styleEmojis.replaceChildren(...SUGGESTED_EMOJI.map((emoji) =>
+    choice(emoji, project.icon === `e:${emoji}`, emoji, () => setStyle(project, `e:${emoji}`, project.color))));
+  const color = pdfProjectLook(project).color;
+  styleColors.replaceChildren(...Object.entries(PDF_PROJECT_COLORS).map(([id, hex]) => {
+    const swatch = choice(id, project.color === id || (!project.color && hex === color), '', () => setStyle(project, project.icon, id), 'rpdf-style-swatch');
+    swatch.style.setProperty('--swatch', hex);
+    return swatch;
+  }));
+}
+
+/** Applies the look here at once; storage confirms it a moment later. */
+function setStyle(project: PdfProject, iconValue: string | null, color: string | null): void {
+  void sendProjectUpdate({ kind: 'style', id: project.id, icon: iconValue, color });
+  projects = { ...projects, [project.id]: { ...project, icon: iconValue, color } };
+  if (project.id === projectId) updateProjectLabel();
+  renderStyle();
+}
+
+styleBack.addEventListener('click', () => { hideStyle(); showProjects(); });
+styleDone.addEventListener('click', () => { hideStyle(); projectBtn.focus(); });
+styleReset.addEventListener('click', () => {
+  const project = styleTarget ? projects[styleTarget] : undefined;
+  if (project) setStyle(project, null, null);
+});
+const takeEmoji = () => {
+  const project = styleTarget ? projects[styleTarget] : undefined;
+  const value = pdfProjectEmojiIcon(styleEmojiInput.value);
+  if (!project || !styleEmojiInput.value.trim()) return;
+  if (!value) { showToast('이모지 하나를 입력하세요.'); return; }
+  styleEmojiInput.value = '';
+  setStyle(project, value, project.color);
+};
+styleEmojiInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); takeEmoji(); } });
+styleEmojiInput.addEventListener('change', takeEmoji);
 
 // ─── Projects: switcher, move, rehoming ───
 
@@ -1378,6 +1609,8 @@ function projectDocCount(project: PdfProject, index: Map<string, string[]>): num
 function updateProjectLabel(): void {
   const name = currentProject().name;
   projectNameEl.textContent = name;
+  fillBadge(projectBadgeEl, currentProject());
+  updateFavicon();
   projectBtn.title = `프로젝트: ${name} — 다른 프로젝트 열기, 새로 만들기`;
   projectBtn.setAttribute('aria-label', `프로젝트 ${name}`);
 }
@@ -1396,6 +1629,7 @@ function setProject(id: string): void {
 
 function refreshPanels(): void {
   if (!projectsPanel.hidden) renderProjects();
+  if (!stylePanel.hidden) renderStyle();
   if (!movePanel.hidden && moveTarget) renderMove(moveTarget);
 }
 
@@ -1435,10 +1669,52 @@ async function switchHere(url: string): Promise<void> {
   location.replace(url);
 }
 
-function projectRow(project: PdfProject, index: Map<string, string[]>): HTMLElement {
+// The list: the default project, then folders (one level) and projects in
+// the user's order. Rows drag to reorder or into / out of folders, Alt+↑/↓
+// moves the focused one; "⋯" (or a right click) has the rest.
+
+type ListRef = { kind: 'project' | 'folder'; id: string };
+const COLLAPSED_KEY = 'rpdfFoldersCollapsed';
+let dragging: ListRef | null = null;
+let focusAfterRender: string | null = null;
+
+function collapsedFolders(): Set<string> {
+  try {
+    const value = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]') as unknown;
+    return new Set(Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function setFolderCollapsed(id: string, collapsed: boolean): void {
+  const ids = collapsedFolders();
+  if (collapsed) ids.add(id); else ids.delete(id);
+  try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...ids])); } catch { /* per-device nicety */ }
+}
+
+function rowAction(row: HTMLElement, name: string, label: string, run: (button: HTMLButtonElement) => void, subject: string): HTMLButtonElement {
+  const button = el('button', { type: 'button', className: 'rpdf-li-action', title: label });
+  button.setAttribute('aria-label', `${subject} ${label}`);
+  button.append(icon(name));
+  button.addEventListener('click', (e) => { e.stopPropagation(); run(button); });
+  row.append(button);
+  return button;
+}
+
+function menuAt(button: HTMLElement): { x: number; y: number } {
+  const rect = button.getBoundingClientRect();
+  return { x: rect.left, y: rect.bottom + 4 };
+}
+
+function projectRow(project: PdfProject, index: Map<string, string[]>, folder: string | null): HTMLElement {
   const row = el('div', { className: 'rpdf-li' });
   const current = project.id === projectId;
   row.classList.toggle('is-current', current);
+  row.classList.toggle('is-nested', folder !== null);
+  row.dataset.kind = project.id === DEFAULT_PROJECT_ID ? 'root' : 'project';
+  row.dataset.id = project.id;
+  row.dataset.parent = folder ?? '';
   const main = el('button', { type: 'button', className: 'rpdf-li-main' });
   const text = el('span', { className: 'rpdf-li-text' });
   const open = current || openProjectIds.has(project.id);
@@ -1446,42 +1722,57 @@ function projectRow(project: PdfProject, index: Map<string, string[]>): HTMLElem
     el('span', { className: 'rpdf-li-title', textContent: project.name }),
     el('span', { className: 'rpdf-li-sub', textContent: [current ? '지금 보는 중' : open ? '열림' : null, `문서 ${projectDocCount(project, index)}개`].filter(Boolean).join(' · ') }),
   );
-  const mark = icon(current ? 'i-check' : 'i-folder');
-  if (current || open) mark.classList.add('is-accent');
-  main.append(mark, text);
+  main.append(projectBadge(project), text);
   if (current) main.setAttribute('aria-current', 'true');
   main.addEventListener('click', () => { hideProjects(); void openProject(project.id); });
   row.append(main);
-  const action = (name: string, label: string, run: () => void) => {
-    const button = el('button', { type: 'button', className: 'rpdf-li-action', title: label });
-    button.setAttribute('aria-label', `${project.name} ${label}`);
-    button.append(icon(name));
-    button.addEventListener('click', run);
-    row.append(button);
-  };
-  if (!current) action('i-open-new', '새 탭에서 열기', () => { hideProjects(); void openProject(project.id, 'new-tab'); });
-  action('i-edit', '이름 바꾸기', () => startRename(row, project));
-  if (project.id !== DEFAULT_PROJECT_ID) {
-    action('i-trash', '삭제', () => {
-      const ok = confirm(`‘${project.name}’ 프로젝트를 삭제할까요?\n\n문서와 필기는 지워지지 않습니다. 다른 프로젝트에 없는 문서는 기본 프로젝트로 돌아갑니다.`);
-      if (ok) void sendProjectUpdate({ kind: 'delete', id: project.id });
-    });
-  }
+  if (!current) rowAction(row, 'i-open-new', '새 탭에서 열기', () => { hideProjects(); void openProject(project.id, 'new-tab'); }, project.name);
+  rowAction(row, 'i-more', '더 보기', (button) => { const at = menuAt(button); showProjectMenu(project, at.x, at.y); }, project.name);
+  row.addEventListener('contextmenu', (e) => { e.preventDefault(); showProjectMenu(project, e.clientX, e.clientY); });
+  wireListDrag(row);
   return row;
 }
 
-function startRename(row: HTMLElement, project: PdfProject): void {
-  const input = el('input', { type: 'text', className: 'rpdf-li-rename', value: project.name, maxLength: 60 });
-  input.setAttribute('aria-label', '프로젝트 이름');
+function folderRow(folder: PdfProjectFolder, count: number, shut: boolean): HTMLElement {
+  const row = el('div', { className: 'rpdf-li rpdf-folder' });
+  row.classList.toggle('is-shut', shut);
+  row.dataset.kind = 'folder';
+  row.dataset.id = folder.id;
+  row.dataset.parent = '';
+  const main = el('button', { type: 'button', className: 'rpdf-li-main' });
+  main.setAttribute('aria-expanded', String(!shut));
+  const text = el('span', { className: 'rpdf-li-text' });
+  text.append(
+    el('span', { className: 'rpdf-li-title', textContent: folder.name }),
+    el('span', { className: 'rpdf-li-sub', textContent: count ? `프로젝트 ${count}개` : '비어 있음 — 프로젝트를 끌어다 넣으세요' }),
+  );
+  const chevron = icon('i-chevron');
+  chevron.classList.add('rpdf-folder-chevron');
+  main.append(chevron, icon('i-folder'), text);
+  main.title = shut ? '펼치기' : '접기';
+  main.addEventListener('click', () => { setFolderCollapsed(folder.id, !shut); focusAfterRender = folder.id; renderProjects(); });
+  row.append(main);
+  rowAction(row, 'i-more', '더 보기', (button) => { const at = menuAt(button); showFolderMenu(folder, at.x, at.y); }, folder.name);
+  row.addEventListener('contextmenu', (e) => { e.preventDefault(); showFolderMenu(folder, e.clientX, e.clientY); });
+  wireListDrag(row);
+  return row;
+}
+
+/** Turns a row into a name field; `save` gets the cleaned new name. */
+function startRename(row: HTMLElement, name: string, label: string, save: (name: string) => void): void {
+  const input = el('input', { type: 'text', className: 'rpdf-li-rename', value: name, maxLength: 60 });
+  input.setAttribute('aria-label', label);
   row.replaceChildren(input);
+  row.draggable = false;
   input.focus();
   input.select();
   let done = false;
-  const finish = (save: boolean) => {
+  const finish = (keep: boolean) => {
     if (done) return;
     done = true;
-    const name = cleanPdfProjectName(input.value);
-    if (save && name && name !== project.name) void sendProjectUpdate({ kind: 'rename', id: project.id, name });
+    const next = cleanPdfProjectName(input.value);
+    if (keep && next && next !== name) save(next);
+    focusAfterRender = row.dataset.id ?? null;
     renderProjects();
   };
   input.addEventListener('keydown', (e) => {
@@ -1491,13 +1782,253 @@ function startRename(row: HTMLElement, project: PdfProject): void {
   input.addEventListener('blur', () => finish(true));
 }
 
+function listRow(id: string): HTMLElement | null {
+  return Array.from(projectsItems.querySelectorAll<HTMLElement>('.rpdf-li')).find((row) => row.dataset.id === id) ?? null;
+}
+
 function renderProjects(): void {
   const index = membershipIndex();
-  projectsItems.replaceChildren(
-    el('h3', { className: 'rpdf-li-head', textContent: '프로젝트' }),
-    ...livePdfProjects(projects).map((p) => projectRow(p, index)),
-  );
+  const { root, items } = pdfProjectTree(projects, folders);
+  const collapsed = collapsedFolders();
+  const rows: HTMLElement[] = [el('h3', { className: 'rpdf-li-head', textContent: '프로젝트' }), projectRow(root, index, null)];
+  for (const item of items) {
+    if (item.kind === 'project') { rows.push(projectRow(item.project, index, null)); continue; }
+    const shut = collapsed.has(item.folder.id);
+    rows.push(folderRow(item.folder, item.projects.length, shut));
+    if (!shut) rows.push(...item.projects.map((project) => projectRow(project, index, item.folder.id)));
+  }
+  // Dropping here puts a project or folder last, outside every folder.
+  const end = el('div', { className: 'rpdf-li-end' });
+  end.dataset.kind = 'end';
+  wireListDrag(end);
+  rows.push(end);
+  projectsItems.replaceChildren(...rows);
+  if (focusAfterRender) {
+    listRow(focusAfterRender)?.querySelector<HTMLButtonElement>('.rpdf-li-main')?.focus();
+    focusAfterRender = null;
+  }
 }
+
+// ─── Menus for the list ───
+
+type MenuEntry = { label: string; run: () => void; disabled?: boolean; checked?: boolean } | 'sep' | { heading: string };
+
+/** A small menu at (x, y); the panel it was opened from stays open. */
+function showMenu(entries: MenuEntry[], x: number, y: number): void {
+  menu.replaceChildren();
+  for (const entry of entries) {
+    if (entry === 'sep') { menu.append(el('hr')); continue; }
+    if ('heading' in entry) { menu.append(el('p', { className: 'rpdf-menu-head', textContent: entry.heading })); continue; }
+    const button = el('button', { type: 'button', className: 'rpdf-menu-item', textContent: entry.label, disabled: !!entry.disabled });
+    button.setAttribute('role', entry.checked === undefined ? 'menuitem' : 'menuitemradio');
+    if (entry.checked !== undefined) button.setAttribute('aria-checked', String(entry.checked));
+    button.addEventListener('click', () => { hideMenu(); entry.run(); });
+    menu.append(button);
+  }
+  menu.hidden = false;
+  const { width, height } = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - width - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - height - 8))}px`;
+  menu.querySelector<HTMLButtonElement>('.rpdf-menu-item:not(:disabled)')?.focus();
+}
+
+function showProjectMenu(project: PdfProject, x: number, y: number): void {
+  const entries: MenuEntry[] = [
+    { label: '아이콘·색 바꾸기…', run: () => showStyle(project.id) },
+    { label: '이름 바꾸기', run: () => { const row = listRow(project.id); if (row) startRename(row, project.name, '프로젝트 이름', (name) => { void sendProjectUpdate({ kind: 'rename', id: project.id, name }); }); } },
+  ];
+  if (project.id !== DEFAULT_PROJECT_ID) {
+    const { items } = pdfProjectTree(projects, folders);
+    const list = items.filter((item): item is Extract<typeof item, { kind: 'folder' }> => item.kind === 'folder');
+    entries.push('sep', { heading: '폴더로 옮기기' });
+    for (const item of list) {
+      entries.push({ label: item.folder.name, disabled: project.folder === item.folder.id, run: () => placeItem({ kind: 'project', id: project.id }, item.folder.id, Infinity) });
+    }
+    if (project.folder && folders[project.folder]?.deletedAt === 0) {
+      entries.push({ label: '폴더 밖으로', run: () => placeAfterFolder(project.id, project.folder as string) });
+    }
+    entries.push({ label: '새 폴더 만들어 넣기…', run: () => { void newFolderWith(project.id); } });
+    entries.push('sep', {
+      label: '삭제',
+      run: () => {
+        const ok = confirm(`‘${project.name}’ 프로젝트를 삭제할까요?\n\n문서와 필기는 지워지지 않습니다. 다른 프로젝트에 없는 문서는 기본 프로젝트로 돌아갑니다.`);
+        if (ok) void sendProjectUpdate({ kind: 'delete', id: project.id });
+      },
+    });
+  }
+  showMenu(entries, x, y);
+}
+
+function showFolderMenu(folder: PdfProjectFolder, x: number, y: number): void {
+  showMenu([
+    { label: '이름 바꾸기', run: () => { const row = listRow(folder.id); if (row) startRename(row, folder.name, '폴더 이름', (name) => { void sendProjectUpdate({ kind: 'folder-rename', id: folder.id, name }); }); } },
+    {
+      label: '폴더 삭제 (프로젝트는 남김)',
+      run: () => {
+        void sendProjectUpdate({ kind: 'folder-delete', id: folder.id });
+        showToast(`‘${folder.name}’ 폴더를 지웠습니다. 안의 프로젝트는 목록에 그대로 있습니다.`);
+      },
+    },
+  ], x, y);
+}
+
+// ─── Folders and order ───
+
+/** The items of one level (null: the top), in list order. */
+function siblingsOf(parent: string | null): Array<{ ref: ListRef; order: string | null }> {
+  const { items } = pdfProjectTree(projects, folders);
+  if (parent === null) {
+    return items.map((item) => (item.kind === 'folder'
+      ? { ref: { kind: 'folder' as const, id: item.folder.id }, order: item.folder.order }
+      : { ref: { kind: 'project' as const, id: item.project.id }, order: item.project.order }));
+  }
+  const folder = items.find((item) => item.kind === 'folder' && item.folder.id === parent);
+  return folder?.kind === 'folder' ? folder.projects.map((p) => ({ ref: { kind: 'project' as const, id: p.id }, order: p.order })) : [];
+}
+
+const sameRef = (a: ListRef, b: ListRef) => a.kind === b.kind && a.id === b.id;
+
+/**
+ * Puts `ref` into `parent` (a folder, or null: the top) at `index` among the
+ * items there other than itself. Only its own key changes, unless the level
+ * still has unkeyed items: then the whole level gets keys, in the order shown.
+ */
+function placeItem(ref: ListRef, parent: string | null, index: number): void {
+  if (ref.kind === 'folder') parent = null;
+  const siblings = siblingsOf(parent).filter((s) => !sameRef(s.ref, ref));
+  const at = Math.max(0, Math.min(index, siblings.length));
+  const before = at > 0 ? siblings[at - 1].order : null;
+  const after = at < siblings.length ? siblings[at].order : null;
+  const update: Extract<PdfFolderUpdate, { kind: 'arrange' }> = { kind: 'arrange', projects: [], folders: [] };
+  const put = (item: ListRef, order: string) => {
+    if (item.kind === 'project') update.projects.push({ id: item.id, folder: parent, order });
+    else update.folders.push({ id: item.id, order });
+  };
+  const keyed = siblings.every((s) => s.order !== null) && (before === null || after === null || compareOrderKeys(before, after) < 0);
+  if (keyed) {
+    put(ref, orderKeyBetween(before, after));
+  } else {
+    const list = [...siblings.slice(0, at).map((s) => s.ref), ref, ...siblings.slice(at).map((s) => s.ref)];
+    const keys = orderKeysBetween(null, null, list.length);
+    list.forEach((item, i) => put(item, keys[i]));
+  }
+  focusAfterRender = ref.id;
+  void sendProjectUpdate(update);
+}
+
+/** Out of its folder, right after it. */
+function placeAfterFolder(projectIdToMove: string, folderId: string): void {
+  const top = siblingsOf(null);
+  const at = top.findIndex((s) => s.ref.kind === 'folder' && s.ref.id === folderId);
+  placeItem({ kind: 'project', id: projectIdToMove }, null, at + 1);
+}
+
+/** A key for a new item at the end of the top level, if the level is keyed. */
+function topEndKey(): string | null {
+  const top = siblingsOf(null);
+  if (top.some((s) => s.order === null)) return null;
+  const last = top[top.length - 1]?.order ?? null;
+  return orderKeyAtEnd(last);
+}
+
+async function createFolder(rawName: string): Promise<string | null> {
+  const name = cleanPdfProjectName(rawName);
+  if (!name) return null;
+  const id = newPdfProjectFolderId();
+  const response = await sendProjectUpdate({ kind: 'folder-create', id, name, order: topEndKey() }) as { success?: boolean } | undefined;
+  if (!response?.success) { showToast('폴더를 만들지 못했습니다.'); return null; }
+  return id;
+}
+
+async function newFolderWith(id: string): Promise<void> {
+  const name = prompt('새 폴더 이름');
+  const folder = name ? await createFolder(name) : null;
+  if (!folder) return;
+  // The folder must be in storage (and read back here) before placing into it.
+  folders = { ...folders, [folder]: { id: folder, name: cleanPdfProjectName(name) ?? '', createdAt: Date.now(), renamedAt: Date.now(), deletedAt: 0, order: null, placedAt: 0 } };
+  placeItem({ kind: 'project', id }, folder, Infinity);
+}
+
+// Drag and drop: where a drop on `row` would put the dragged item.
+function dropPlace(row: HTMLElement, clientY: number): { parent: string | null; index: number; mark: 'before' | 'after' | 'into' } | null {
+  const item = dragging;
+  if (!item) return null;
+  const kind = row.dataset.kind;
+  const id = row.dataset.id ?? '';
+  const parent = row.dataset.parent ? row.dataset.parent : null;
+  const rect = row.getBoundingClientRect();
+  const f = rect.height ? (clientY - rect.top) / rect.height : 0.5;
+  const indexIn = (level: string | null, target: ListRef) => siblingsOf(level).filter((s) => !sameRef(s.ref, item)).findIndex((s) => sameRef(s.ref, target));
+  if (kind === 'end') return { parent: null, index: Infinity, mark: 'before' };
+  if (kind === 'root') return { parent: null, index: 0, mark: 'after' };
+  if (kind === 'folder') {
+    const target: ListRef = { kind: 'folder', id };
+    if (sameRef(target, item)) return null;
+    const at = indexIn(null, target);
+    if (item.kind === 'folder') return f < 0.5 ? { parent: null, index: at, mark: 'before' } : { parent: null, index: at + 1, mark: 'after' };
+    if (f < 0.3) return { parent: null, index: at, mark: 'before' };
+    if (f > 0.75 && row.classList.contains('is-shut')) return { parent: null, index: at + 1, mark: 'after' };
+    return { parent: id, index: Infinity, mark: 'into' };
+  }
+  if (kind === 'project') {
+    const target: ListRef = { kind: 'project', id };
+    if (sameRef(target, item)) return null;
+    if (item.kind === 'folder' && parent !== null) return null;
+    const at = indexIn(parent, target);
+    return f < 0.5 ? { parent, index: at, mark: 'before' } : { parent, index: at + 1, mark: 'after' };
+  }
+  return null;
+}
+
+function clearDropMarks(): void {
+  for (const row of Array.from(projectsItems.querySelectorAll('.drop-before, .drop-after, .drop-into'))) row.classList.remove('drop-before', 'drop-after', 'drop-into');
+}
+
+function wireListDrag(row: HTMLElement): void {
+  const kind = row.dataset.kind;
+  if (kind === 'project' || kind === 'folder') {
+    row.draggable = true;
+    row.addEventListener('dragstart', (e) => {
+      dragging = { kind, id: row.dataset.id ?? '' };
+      row.classList.add('is-dragging');
+      if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', row.dataset.id ?? ''); }
+    });
+    row.addEventListener('dragend', () => { dragging = null; row.classList.remove('is-dragging'); clearDropMarks(); });
+  }
+  row.addEventListener('dragover', (e) => {
+    const place = dropPlace(row, e.clientY);
+    clearDropMarks();
+    if (!place) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    row.classList.add(`drop-${place.mark}`);
+  });
+  row.addEventListener('dragleave', () => row.classList.remove('drop-before', 'drop-after', 'drop-into'));
+  row.addEventListener('drop', (e) => {
+    const place = dropPlace(row, e.clientY);
+    const item = dragging;
+    clearDropMarks();
+    if (!place || !item) return;
+    e.preventDefault();
+    dragging = null;
+    placeItem(item, place.parent, place.index);
+  });
+}
+
+// Alt+↑/↓: the focused project or folder one place up or down its level.
+projectsItems.addEventListener('keydown', (e) => {
+  if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+  const row = (e.target as HTMLElement).closest<HTMLElement>('.rpdf-li');
+  const kind = row?.dataset.kind;
+  if (!row || (kind !== 'project' && kind !== 'folder')) return;
+  e.preventDefault();
+  const ref: ListRef = { kind, id: row.dataset.id ?? '' };
+  const parent = row.dataset.parent ? row.dataset.parent : null;
+  const at = siblingsOf(parent).findIndex((s) => sameRef(s.ref, ref));
+  const to = e.key === 'ArrowUp' ? at - 1 : at + 1;
+  if (at < 0 || to < 0 || to >= siblingsOf(parent).length) return;
+  placeItem(ref, parent, to);
+});
 
 function showProjects(): void {
   hidePanels();
@@ -1515,7 +2046,20 @@ function hideProjects(): void {
   projectBtn.setAttribute('aria-expanded', 'false');
 }
 
-projectBtn.addEventListener('click', () => { if (projectsPanel.hidden) showProjects(); else hideProjects(); });
+projectBtn.addEventListener('click', () => {
+  if (!stylePanel.hidden) hideStyle();
+  else if (projectsPanel.hidden) showProjects();
+  else hideProjects();
+});
+folderNewBtn.addEventListener('click', () => {
+  const name = projectNewName.value;
+  if (!cleanPdfProjectName(name)) { projectNewName.focus(); showToast('폴더 이름을 입력한 뒤 폴더 버튼을 누르세요.'); return; }
+  void createFolder(name).then((id) => {
+    if (!id) return;
+    projectNewName.value = '';
+    focusAfterRender = id;
+  });
+});
 projectNewForm.addEventListener('submit', (e) => {
   e.preventDefault();
   const name = projectNewName.value;
@@ -1539,14 +2083,14 @@ function renderMove(tab: HubTab): void {
   const docId = tab.docId ?? tab.libraryId ?? (tab.url ? libraryIdForUrl(tab.url) : null);
   const from = moveSource(docId);
   moveTitle.textContent = `‘${tabName(tab)}’ 옮기기`;
-  // Every project is listed; the ones already holding the document are shown
-  // disabled rather than left out, so none seems to have vanished.
+  // Every project is listed, grouped as in the project list; the ones already
+  // holding the document are shown disabled rather than left out, so none
+  // seems to have vanished.
   const holds = (id: string) => id === from || (!!docId && isDocInProject(projects, id, docId));
-  const rank = (id: string) => (holds(id) ? 2 : 0) + (openProjectIds.has(id) ? 0 : 1);
-  const targets = livePdfProjects(projects).sort((a, b) => rank(a.id) - rank(b.id));
-  const rows = targets.map((project) => {
+  const projectRowFor = (project: PdfProject, nested: boolean) => {
     const inside = holds(project.id);
     const row = el('div', { className: inside ? 'rpdf-li is-disabled' : 'rpdf-li' });
+    row.classList.toggle('is-nested', nested);
     const main = el('button', { type: 'button', className: 'rpdf-li-main' });
     const open = openProjectIds.has(project.id);
     const where = project.id === projectId ? '지금 이 프로젝트' : '이미 들어 있음';
@@ -1555,9 +2099,7 @@ function renderMove(tab: HubTab): void {
       el('span', { className: 'rpdf-li-title', textContent: project.name }),
       el('span', { className: 'rpdf-li-sub', textContent: [open ? '열림' : '닫힘', inside ? where : null].filter(Boolean).join(' · ') }),
     );
-    const mark = icon('i-folder');
-    if (open && !inside) mark.classList.add('is-accent');
-    main.append(mark, text);
+    main.append(projectBadge(project), text);
     if (inside) {
       main.disabled = true;
       main.title = '이 문서가 이미 들어 있는 프로젝트입니다';
@@ -1575,8 +2117,18 @@ function renderMove(tab: HubTab): void {
       row.append(add);
     }
     return row;
-  });
-  if (!targets.some((p) => !holds(p.id))) rows.push(el('p', { className: 'rpdf-li-empty', textContent: '옮길 다른 프로젝트가 없습니다. 아래에서 새로 만드세요.' }));
+  };
+  const { root, items } = pdfProjectTree(projects, folders);
+  const rows: HTMLElement[] = [projectRowFor(root, false)];
+  for (const item of items) {
+    if (item.kind === 'project') { rows.push(projectRowFor(item.project, false)); continue; }
+    if (item.projects.length === 0) continue;
+    const head = el('p', { className: 'rpdf-li-folder-head' });
+    head.append(icon('i-folder'), el('span', { textContent: item.folder.name }));
+    rows.push(head, ...item.projects.map((project) => projectRowFor(project, true)));
+  }
+  const every = [root, ...items.flatMap((item) => (item.kind === 'project' ? [item.project] : item.projects))];
+  if (!every.some((p) => !holds(p.id))) rows.push(el('p', { className: 'rpdf-li-empty', textContent: '옮길 다른 프로젝트가 없습니다. 아래에서 새로 만드세요.' }));
   moveItems.replaceChildren(...rows);
 }
 

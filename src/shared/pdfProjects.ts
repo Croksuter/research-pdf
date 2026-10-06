@@ -11,16 +11,28 @@
 // without any write, and moving it to another project takes it out. Its rows
 // here only carry pins. It cannot be deleted.
 //
+// Projects can be listed in folders, one level deep: a folder holds projects
+// and nothing else, has no hub and no documents. Projects and folders are
+// ordered by order keys (shared/orderKey.ts); the default project stays on
+// top, outside every folder. Each project can have its own look (an icon from
+// the set, an emoji, or its first letter, on a color), which also marks its
+// hub tab in Chrome.
+//
 // Stored in chrome.storage.local (written by the background only, see
 // background/pdfProjectStore.ts) and synced through Drive. The merge is a
 // join: per project the latest rename wins the name, a deletion is final,
-// per member the latest change wins, the latest saved layout wins. It can be
+// per member the latest change wins, the latest saved layout wins, the latest
+// look and the latest placement (folder + order) win. Folders merge the same
+// way. It can be
 // applied over local rows at any time without losing a concurrent write.
 
 import { PDF_HUB_MAX_DOCS, PDF_HUB_SHOW_HOME, isPdfViewerSourceUrl } from './localPdf';
 import type { PdfLibraryEntry } from './pdfLibrary';
+import { compareOrderKeys, isOrderKey, orderKeysBetween } from './orderKey';
 
 export const PDF_PROJECTS_STORAGE_KEY = 'rpdfProjects';
+export const PDF_PROJECT_FOLDERS_STORAGE_KEY = 'rpdfProjectFolders';
+export const PDF_PROJECT_FOLDERS_MAX = 100;
 export const DEFAULT_PROJECT_ID = 'default';
 export const DEFAULT_PROJECT_NAME = '기본';
 export const PDF_PROJECTS_MAX = 200;
@@ -60,9 +72,87 @@ export interface PdfProject {
   /** Sorted by `docId`. */
   members: PdfProjectMember[];
   layout: PdfProjectLayout;
+  /** `i:<name>` (PDF_PROJECT_ICONS), `e:<emoji>`, or null: the name's first letter. */
+  icon: string | null;
+  /** A PDF_PROJECT_COLORS id, or null: one picked from the id. */
+  color: string | null;
+  /** Last change of `icon` or `color` (0 = never). */
+  styledAt: number;
+  /** The folder it is listed in (null: the top level). Never set on the default project. */
+  folder: string | null;
+  /** Order key among its siblings; null sorts after keyed ones, by name. */
+  order: string | null;
+  /** Last change of `folder` or `order` (0 = never). */
+  placedAt: number;
 }
 
 export type PdfProjects = Record<string, PdfProject>;
+
+/** A named group of projects in the project list; nothing else. */
+export interface PdfProjectFolder {
+  id: string;
+  name: string;
+  createdAt: number;
+  renamedAt: number;
+  /** When it was deleted (0 = live). Final. */
+  deletedAt: number;
+  order: string | null;
+  placedAt: number;
+}
+
+export type PdfProjectFolders = Record<string, PdfProjectFolder>;
+
+// ─── Looks ───
+
+/** Icon set a project can use (symbols `i-proj-<name>` in pdf-hub.html). */
+export const PDF_PROJECT_ICONS = [
+  'book', 'flask', 'atom', 'brain', 'robot', 'cpu', 'code', 'chart',
+  'database', 'globe', 'leaf', 'dna', 'microscope', 'sigma', 'lightbulb', 'target',
+  'puzzle', 'briefcase', 'cap', 'star', 'heart', 'flag', 'bolt', 'rocket',
+  'coffee', 'camera', 'music', 'eye', 'sun', 'moon', 'gear', 'pen',
+] as const;
+
+export const PDF_PROJECT_COLORS: Record<string, string> = {
+  blue: '#3b82f6',
+  indigo: '#6366f1',
+  violet: '#8b5cf6',
+  pink: '#ec4899',
+  red: '#ef4444',
+  orange: '#f97316',
+  amber: '#d97706',
+  green: '#16a34a',
+  teal: '#0d9488',
+  slate: '#64748b',
+};
+
+const ICON_PATTERN = /^i:[a-z0-9-]{1,24}$/u;
+const EMOJI_PATTERN = /^e:(?=.*[\p{Extended_Pictographic}\p{Regional_Indicator}])\S{1,16}$/u;
+const COLOR_PATTERN = /^[a-z]{1,16}$/u;
+
+export function isPdfProjectIcon(value: unknown): value is string {
+  return typeof value === 'string' && (ICON_PATTERN.test(value) || EMOJI_PATTERN.test(value));
+}
+
+/** An emoji typed or pasted by the user, as an icon value (`e:…`), or null. */
+export function pdfProjectEmojiIcon(text: string): string | null {
+  const segments = [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text.trim())];
+  const first = segments[0]?.segment;
+  const icon = first ? `e:${first}` : null;
+  return icon && EMOJI_PATTERN.test(icon) ? icon : null;
+}
+
+/** What a project is drawn with: its icon or first letter, on its color. */
+export function pdfProjectLook(project: Pick<PdfProject, 'id' | 'name' | 'icon' | 'color'>): { kind: 'icon' | 'emoji' | 'letter'; value: string; color: string } {
+  const colors = Object.keys(PDF_PROJECT_COLORS);
+  let hash = 0;
+  for (const ch of project.id) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  const color = PDF_PROJECT_COLORS[project.color ?? ''] ?? PDF_PROJECT_COLORS[colors[hash % colors.length]];
+  const icon = project.icon ?? '';
+  if (icon.startsWith('i:') && (PDF_PROJECT_ICONS as readonly string[]).includes(icon.slice(2))) return { kind: 'icon', value: icon.slice(2), color };
+  if (icon.startsWith('e:') && EMOJI_PATTERN.test(icon)) return { kind: 'emoji', value: icon.slice(2), color };
+  const letter = [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(project.name.trim())][0]?.segment ?? '?';
+  return { kind: 'letter', value: letter.toUpperCase(), color };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -141,7 +231,59 @@ export function parsePdfProject(value: unknown): PdfProject | null {
   }
   members.sort((a, b) => a.docId.localeCompare(b.docId));
   const isDefault = value.id === DEFAULT_PROJECT_ID;
-  return { id: value.id, name, createdAt, renamedAt, deletedAt: isDefault ? 0 : deletedAt, members, layout };
+  // Looks and placement came later: rows without them read as never set.
+  const icon = value.icon === undefined || value.icon === null ? null : isPdfProjectIcon(value.icon) ? value.icon : undefined;
+  const color = value.color === undefined || value.color === null ? null : typeof value.color === 'string' && COLOR_PATTERN.test(value.color) ? value.color : undefined;
+  const styledAt = value.styledAt === undefined ? 0 : time(value.styledAt);
+  const folder = value.folder === undefined || value.folder === null ? null : isPdfProjectId(value.folder) ? value.folder : undefined;
+  const order = value.order === undefined || value.order === null ? null : isOrderKey(value.order) ? value.order : undefined;
+  const placedAt = value.placedAt === undefined ? 0 : time(value.placedAt);
+  if (icon === undefined || color === undefined || styledAt === null || folder === undefined || order === undefined || placedAt === null) return null;
+  return {
+    id: value.id, name, createdAt, renamedAt, deletedAt: isDefault ? 0 : deletedAt, members, layout,
+    icon, color, styledAt, folder: isDefault ? null : folder, order: isDefault ? null : order, placedAt,
+  };
+}
+
+export function isPdfProjectFolderId(value: unknown): value is string {
+  return isPdfProjectId(value) && value !== DEFAULT_PROJECT_ID;
+}
+
+export function parsePdfProjectFolder(value: unknown): PdfProjectFolder | null {
+  if (!isRecord(value) || !isPdfProjectFolderId(value.id)) return null;
+  const name = cleanPdfProjectName(value.name);
+  const createdAt = time(value.createdAt);
+  const renamedAt = time(value.renamedAt);
+  const deletedAt = time(value.deletedAt);
+  const placedAt = time(value.placedAt);
+  const order = value.order === null ? null : isOrderKey(value.order) ? value.order : undefined;
+  if (!name || createdAt === null || renamedAt === null || deletedAt === null || placedAt === null || order === undefined) return null;
+  return { id: value.id, name, createdAt, renamedAt, deletedAt, order, placedAt };
+}
+
+export function parsePdfProjectFolders(value: unknown): PdfProjectFolders {
+  const out: PdfProjectFolders = {};
+  if (isRecord(value)) {
+    for (const [key, raw] of Object.entries(value)) {
+      const folder = parsePdfProjectFolder(raw);
+      if (folder && folder.id === key) out[key] = folder;
+    }
+  }
+  return out;
+}
+
+/** Strict list form (sync snapshot). */
+export function parsePdfProjectFolderList(value: unknown): PdfProjectFolder[] | null {
+  if (!Array.isArray(value) || value.length > PDF_PROJECT_FOLDERS_MAX * 2) return null;
+  const seen = new Set<string>();
+  const out: PdfProjectFolder[] = [];
+  for (const raw of value) {
+    const folder = parsePdfProjectFolder(raw);
+    if (!folder || seen.has(folder.id)) return null;
+    seen.add(folder.id);
+    out.push(folder);
+  }
+  return out;
 }
 
 /** Lenient map form (local storage): bad rows are dropped. */
@@ -171,7 +313,10 @@ export function parsePdfProjectList(value: unknown): PdfProject[] | null {
 }
 
 export function emptyPdfProject(id: string, name: string, now: number): PdfProject {
-  return { id, name, createdAt: now, renamedAt: id === DEFAULT_PROJECT_ID ? 0 : now, deletedAt: 0, members: [], layout: { ...EMPTY_LAYOUT } };
+  return {
+    id, name, createdAt: now, renamedAt: id === DEFAULT_PROJECT_ID ? 0 : now, deletedAt: 0, members: [], layout: { ...EMPTY_LAYOUT },
+    icon: null, color: null, styledAt: 0, folder: null, order: null, placedAt: 0,
+  };
 }
 
 function withDefaultProject(projects: PdfProjects): PdfProjects {
@@ -211,6 +356,8 @@ export function mergePdfProjects(a: PdfProject, b: PdfProject): PdfProject {
     const existing = byDoc.get(member.docId);
     byDoc.set(member.docId, existing ? later(existing, member, (m) => m.changedAt) : member);
   }
+  const look = later({ icon: a.icon, color: a.color, styledAt: a.styledAt }, { icon: b.icon, color: b.color, styledAt: b.styledAt }, (l) => l.styledAt);
+  const place = later({ folder: a.folder, order: a.order, placedAt: a.placedAt }, { folder: b.folder, order: b.order, placedAt: b.placedAt }, (p) => p.placedAt);
   return {
     id: a.id,
     name: named.name,
@@ -219,7 +366,49 @@ export function mergePdfProjects(a: PdfProject, b: PdfProject): PdfProject {
     deletedAt,
     members: [...byDoc.values()].sort((x, y) => x.docId.localeCompare(y.docId)),
     layout: later(a.layout, b.layout, (l) => l.savedAt),
+    ...look,
+    ...place,
   };
+}
+
+/** Joins two copies of one folder; commutative and idempotent. */
+export function mergePdfProjectFolders(a: PdfProjectFolder, b: PdfProjectFolder): PdfProjectFolder {
+  const named = later(a, b, (f) => f.renamedAt);
+  const place = later({ order: a.order, placedAt: a.placedAt }, { order: b.order, placedAt: b.placedAt }, (p) => p.placedAt);
+  return {
+    id: a.id,
+    name: named.name,
+    createdAt: Math.min(a.createdAt, b.createdAt),
+    renamedAt: named.renamedAt,
+    deletedAt: Math.max(a.deletedAt, b.deletedAt),
+    ...place,
+  };
+}
+
+/** Live folders up to the cap (most recently created first), tombstones for a while. Sorted by id. */
+export function boundPdfProjectFolders(folders: readonly PdfProjectFolder[], now: number = Date.now()): PdfProjectFolder[] {
+  const live = folders
+    .filter((f) => f.deletedAt === 0)
+    .sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id))
+    .slice(0, PDF_PROJECT_FOLDERS_MAX);
+  const tombstones = folders
+    .filter((f) => f.deletedAt > 0 && now - f.deletedAt <= PDF_PROJECT_TOMBSTONE_MAX_AGE_MS)
+    .sort((a, b) => b.deletedAt - a.deletedAt || a.id.localeCompare(b.id))
+    .slice(0, PDF_PROJECT_FOLDERS_MAX);
+  return [...live, ...tombstones].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+export function mergePdfProjectFolderLists(left: readonly PdfProjectFolder[], right: readonly PdfProjectFolder[], now: number = Date.now()): PdfProjectFolder[] {
+  const byId = new Map<string, PdfProjectFolder>();
+  for (const folder of [...left, ...right]) {
+    const existing = byId.get(folder.id);
+    byId.set(folder.id, existing ? mergePdfProjectFolders(existing, folder) : folder);
+  }
+  return boundPdfProjectFolders([...byId.values()], now);
+}
+
+export function pdfProjectFoldersFromList(list: readonly PdfProjectFolder[]): PdfProjectFolders {
+  return Object.fromEntries(list.map((f) => [f.id, f]));
 }
 
 /**
@@ -276,7 +465,9 @@ export type PdfProjectUpdate =
   | { kind: 'pin'; id: string; docId: string; pinned: boolean }
   // Out of `from` (unless it is the default project) and into `to`.
   | { kind: 'move'; docId: string; from: string; to: string }
-  | { kind: 'layout'; id: string; urls: string[]; active: number; show: string | null };
+  | { kind: 'layout'; id: string; urls: string[]; active: number; show: string | null }
+  // Icon and color together (null: the defaults).
+  | { kind: 'style'; id: string; icon: string | null; color: string | null };
 
 function setMember(project: PdfProject, docId: string, change: (m: PdfProjectMember) => PdfProjectMember, now: number): PdfProject {
   const current = project.members.find((m) => m.docId === docId) ?? { docId, member: false, pinned: false, changedAt: 0 };
@@ -342,6 +533,12 @@ export function applyPdfProjectUpdate(projects: PdfProjects, update: PdfProjectU
       next[update.id] = { ...project, layout };
       break;
     }
+    case 'style': {
+      const project = live(update.id);
+      if (!project || (project.icon === update.icon && project.color === update.color)) return projects;
+      next[update.id] = { ...project, icon: update.icon, color: update.color, styledAt: Math.max(now, project.styledAt + 1) };
+      break;
+    }
     default:
       return projects;
   }
@@ -384,6 +581,12 @@ export function parsePdfProjectUpdate(value: unknown): PdfProjectUpdate | null {
       if (!isPdfProjectId(value.id)) return null;
       const layout = parseLayout({ urls: value.urls, active: value.active, show: value.show ?? null, savedAt: 0 });
       return layout ? { kind: 'layout', id: value.id, urls: layout.urls, active: layout.active, show: layout.show } : null;
+    }
+    case 'style': {
+      if (!isPdfProjectId(value.id)) return null;
+      const icon = value.icon === null ? null : isPdfProjectIcon(value.icon) ? value.icon : undefined;
+      const color = value.color === null ? null : typeof value.color === 'string' && value.color in PDF_PROJECT_COLORS ? value.color : undefined;
+      return icon === undefined || color === undefined ? null : { kind: 'style', id: value.id, icon, color };
     }
     default:
       return null;
@@ -440,4 +643,168 @@ export function projectDocIds(projects: readonly PdfProject[]): Set<string> {
 export function targetProjectForDoc(projects: PdfProjects, docId: string | null, isOpen: (projectId: string) => boolean): string {
   if (!docId) return DEFAULT_PROJECT_ID;
   return projectsOfDoc(projects, docId).find(isOpen) ?? DEFAULT_PROJECT_ID;
+}
+
+// ─── Folders and order (the project list) ───
+
+/** Sibling order: keyed first by key, then the rest by name. */
+function compareListed(a: { order: string | null; name: string; id: string }, b: { order: string | null; name: string; id: string }): number {
+  if (a.order !== null && b.order !== null && a.order !== b.order) return compareOrderKeys(a.order, b.order);
+  if ((a.order === null) !== (b.order === null)) return a.order === null ? 1 : -1;
+  return a.name.localeCompare(b.name, 'ko') || compareOrderKeys(a.id, b.id);
+}
+
+export type PdfProjectTreeItem =
+  | { kind: 'project'; project: PdfProject }
+  | { kind: 'folder'; folder: PdfProjectFolder; projects: PdfProject[] };
+
+/**
+ * The project list as shown: the default project, then folders and loose
+ * projects in order, each folder with its projects in order. A project whose
+ * folder is gone (deleted, or not synced yet) is listed at the top level.
+ */
+export function pdfProjectTree(projects: PdfProjects, folders: PdfProjectFolders): { root: PdfProject; items: PdfProjectTreeItem[] } {
+  const liveFolders = Object.values(folders).filter((f) => f.deletedAt === 0);
+  const inFolder = new Map<string, PdfProject[]>(liveFolders.map((f) => [f.id, []]));
+  const loose: PdfProject[] = [];
+  for (const project of Object.values(projects)) {
+    if (project.deletedAt !== 0 || project.id === DEFAULT_PROJECT_ID) continue;
+    const list = project.folder ? inFolder.get(project.folder) : undefined;
+    (list ?? loose).push(project);
+  }
+  const items: Array<PdfProjectTreeItem & { sort: { order: string | null; name: string; id: string } }> = [
+    ...liveFolders.map((folder) => ({ kind: 'folder' as const, folder, projects: (inFolder.get(folder.id) ?? []).sort(compareListed), sort: folder })),
+    ...loose.map((project) => ({ kind: 'project' as const, project, sort: project })),
+  ];
+  items.sort((a, b) => compareListed(a.sort, b.sort));
+  return {
+    root: projects[DEFAULT_PROJECT_ID] ?? emptyPdfProject(DEFAULT_PROJECT_ID, DEFAULT_PROJECT_NAME, 0),
+    items: items.map(({ sort: _sort, ...item }) => item as PdfProjectTreeItem),
+  };
+}
+
+/** Projects in list order: the default first, then as the tree shows them. */
+export function orderedPdfProjects(projects: PdfProjects, folders: PdfProjectFolders): PdfProject[] {
+  const { root, items } = pdfProjectTree(projects, folders);
+  return [root, ...items.flatMap((item) => (item.kind === 'project' ? [item.project] : item.projects))];
+}
+
+export interface PdfProjectPlacement { id: string; folder: string | null; order: string }
+
+export type PdfFolderUpdate =
+  | { kind: 'folder-create'; id: string; name: string; order: string | null }
+  | { kind: 'folder-rename'; id: string; name: string }
+  // Its projects move out to the top level, where the folder was.
+  | { kind: 'folder-delete'; id: string }
+  // New places for projects and folders, written together (a drag, a reorder).
+  | { kind: 'arrange'; projects: PdfProjectPlacement[]; folders: Array<{ id: string; order: string }> };
+
+export interface PdfProjectState { projects: PdfProjects; folders: PdfProjectFolders }
+
+const placed = (previous: number, now: number) => Math.max(now, previous + 1);
+
+export function applyPdfFolderUpdate(state: PdfProjectState, update: PdfFolderUpdate, now: number = Date.now()): PdfProjectState {
+  const liveFolder = (id: string) => (state.folders[id]?.deletedAt === 0 ? state.folders[id] : null);
+  const projects: PdfProjects = { ...state.projects };
+  const folders: PdfProjectFolders = { ...state.folders };
+  let changed = false;
+  switch (update.kind) {
+    case 'folder-create': {
+      if (state.folders[update.id] || state.projects[update.id]) return state;
+      folders[update.id] = { id: update.id, name: update.name, createdAt: now, renamedAt: now, deletedAt: 0, order: update.order, placedAt: now };
+      changed = true;
+      break;
+    }
+    case 'folder-rename': {
+      const folder = liveFolder(update.id);
+      if (!folder || folder.name === update.name) return state;
+      folders[update.id] = { ...folder, name: update.name, renamedAt: Math.max(now, folder.renamedAt + 1) };
+      changed = true;
+      break;
+    }
+    case 'folder-delete': {
+      const folder = liveFolder(update.id);
+      if (!folder) return state;
+      // Out where the folder stood: between it and whatever followed it.
+      const { items } = pdfProjectTree(state.projects, state.folders);
+      const at = items.findIndex((item) => item.kind === 'folder' && item.folder.id === update.id);
+      const inside = at >= 0 ? (items[at] as Extract<PdfProjectTreeItem, { kind: 'folder' }>).projects : [];
+      const keyOf = (item: PdfProjectTreeItem | undefined) => (item ? (item.kind === 'folder' ? item.folder.order : item.project.order) : null);
+      const after = keyOf(items[at + 1]);
+      const before = folder.order;
+      const keys = before !== null && (after === null || compareOrderKeys(before, after) < 0)
+        ? orderKeysBetween(before, after, inside.length)
+        : null;
+      inside.forEach((project, i) => {
+        projects[project.id] = { ...project, folder: null, order: keys ? keys[i] : project.order, placedAt: placed(project.placedAt, now) };
+      });
+      folders[update.id] = { ...folder, deletedAt: Math.max(now, 1) };
+      changed = true;
+      break;
+    }
+    case 'arrange': {
+      for (const place of update.projects) {
+        const project = state.projects[place.id];
+        if (!project || project.deletedAt !== 0 || place.id === DEFAULT_PROJECT_ID) continue;
+        if (place.folder !== null && !liveFolder(place.folder)) continue;
+        if (project.folder === place.folder && project.order === place.order) continue;
+        projects[place.id] = { ...project, folder: place.folder, order: place.order, placedAt: placed(project.placedAt, now) };
+        changed = true;
+      }
+      for (const place of update.folders) {
+        const folder = liveFolder(place.id);
+        if (!folder || folder.order === place.order) continue;
+        folders[place.id] = { ...folder, order: place.order, placedAt: placed(folder.placedAt, now) };
+        changed = true;
+      }
+      break;
+    }
+    default:
+      return state;
+  }
+  if (!changed) return state;
+  return {
+    projects: pdfProjectsFromList(boundPdfProjects(Object.values(projects), now)),
+    folders: pdfProjectFoldersFromList(boundPdfProjectFolders(Object.values(folders), now)),
+  };
+}
+
+export function parsePdfFolderUpdate(value: unknown): PdfFolderUpdate | null {
+  if (!isRecord(value)) return null;
+  switch (value.kind) {
+    case 'folder-create': {
+      const name = cleanPdfProjectName(value.name);
+      const order = value.order === null || value.order === undefined ? null : isOrderKey(value.order) ? value.order : undefined;
+      return isPdfProjectFolderId(value.id) && name && order !== undefined ? { kind: 'folder-create', id: value.id, name, order } : null;
+    }
+    case 'folder-rename': {
+      const name = cleanPdfProjectName(value.name);
+      return isPdfProjectFolderId(value.id) && name ? { kind: 'folder-rename', id: value.id, name } : null;
+    }
+    case 'folder-delete':
+      return isPdfProjectFolderId(value.id) ? { kind: 'folder-delete', id: value.id } : null;
+    case 'arrange': {
+      if (!Array.isArray(value.projects) || !Array.isArray(value.folders)) return null;
+      if (value.projects.length > PDF_PROJECTS_MAX || value.folders.length > PDF_PROJECT_FOLDERS_MAX) return null;
+      const projectPlaces: PdfProjectPlacement[] = [];
+      for (const raw of value.projects) {
+        if (!isRecord(raw) || !isPdfProjectId(raw.id) || !isOrderKey(raw.order)) return null;
+        if (raw.folder !== null && !isPdfProjectFolderId(raw.folder)) return null;
+        projectPlaces.push({ id: raw.id, folder: raw.folder, order: raw.order });
+      }
+      const folderPlaces: Array<{ id: string; order: string }> = [];
+      for (const raw of value.folders) {
+        if (!isRecord(raw) || !isPdfProjectFolderId(raw.id) || !isOrderKey(raw.order)) return null;
+        folderPlaces.push({ id: raw.id, order: raw.order });
+      }
+      return { kind: 'arrange', projects: projectPlaces, folders: folderPlaces };
+    }
+    default:
+      return null;
+  }
+}
+
+/** A fresh folder id: `f` + 12 base-36 characters. */
+export function newPdfProjectFolderId(random: () => number = Math.random): string {
+  return `f${newPdfProjectId(random).slice(1)}`;
 }

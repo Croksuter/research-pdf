@@ -682,7 +682,6 @@ body.is-dropping .rpdf-frames { box-shadow: inset 0 0 0 3px var(--hub-accent); }
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.rpdf-project-btn > svg:first-child { color: var(--hub-accent); }
 .rpdf-project-btn .rpdf-chevron { width: 12px; height: 12px; stroke-width: 2; color: var(--hub-muted); }
 .rpdf-project-name {
   overflow: hidden;
@@ -762,3 +761,140 @@ body.is-dropping .rpdf-frames { box-shadow: inset 0 0 0 3px var(--hub-accent); }
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+
+/* ── Project badges: icon, emoji or first letter on the project's color ── */
+.rpdf-pbadge {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: var(--badge, var(--hub-accent));
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  overflow: hidden;
+}
+.rpdf-pbadge svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.rpdf-pbadge[data-look="emoji"] { background: transparent; font-size: 15px; font-weight: 400; }
+.rpdf-li-main .rpdf-pbadge { width: 22px; height: 22px; border-radius: 6px; font-size: 12.5px; }
+.rpdf-li-main .rpdf-pbadge svg { width: 14px; height: 14px; }
+.rpdf-li-main .rpdf-pbadge[data-look="emoji"] { font-size: 18px; }
+.rpdf-home-title { display: flex; align-items: center; gap: 10px; }
+.rpdf-home-title .rpdf-pbadge { width: 28px; height: 28px; border-radius: 8px; font-size: 15px; }
+.rpdf-home-title .rpdf-pbadge svg { width: 18px; height: 18px; }
+.rpdf-home-title .rpdf-pbadge[data-look="emoji"] { font-size: 24px; }
+
+/* ── Folders in the project list ── */
+.rpdf-li.is-nested { margin-left: 18px; }
+.rpdf-folder .rpdf-li-main > svg { color: var(--hub-muted); }
+.rpdf-folder .rpdf-li-title { font-weight: 600; }
+.rpdf-folder-chevron { width: 12px !important; height: 12px !important; stroke-width: 2.2 !important; transition: transform 0.12s; }
+.rpdf-folder.is-shut .rpdf-folder-chevron { transform: rotate(-90deg); }
+.rpdf-li[draggable="true"] { cursor: grab; }
+.rpdf-li.is-dragging { opacity: 0.4; }
+.rpdf-li.drop-before { box-shadow: inset 0 2px 0 var(--hub-accent); }
+.rpdf-li.drop-after { box-shadow: inset 0 -2px 0 var(--hub-accent); }
+.rpdf-li.drop-into { background: rgba(138, 180, 248, 0.16); box-shadow: inset 0 0 0 1px var(--hub-accent); }
+.rpdf-li-end { min-height: 10px; border-radius: 6px; }
+.rpdf-li-end.drop-before { box-shadow: inset 0 2px 0 var(--hub-accent); }
+.rpdf-li-folder-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 8px 2px;
+  color: var(--hub-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.rpdf-li-folder-head svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+.rpdf-li-action svg { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
+.rpdf-new .rpdf-li-action { margin-right: -4px; color: var(--hub-muted); }
+.rpdf-new .rpdf-li-action:hover { color: var(--hub-fg); }
+.rpdf-new .rpdf-li-action svg { width: 16px; height: 16px; stroke-width: 1.8; }
+
+/* ── Menu headings and choices ── */
+.rpdf-menu-head { margin: 4px 10px 2px; color: var(--hub-muted); font-size: 11.5px; font-weight: 600; }
+.rpdf-menu-item[aria-checked="true"]::before { content: "✓"; display: inline-block; width: 1.2em; margin-left: -0.2em; color: var(--hub-accent); }
+.rpdf-menu-item[aria-checked="false"]::before { content: ""; display: inline-block; width: 1.2em; margin-left: -0.2em; }
+
+/* ── Project icon picker ── */
+.rpdf-style { gap: 4px; }
+.rpdf-style-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.rpdf-style-head .rpdf-li-action { margin: 0; }
+.rpdf-pbadge-lg { width: 34px; height: 34px; border-radius: 9px; font-size: 18px; }
+.rpdf-pbadge-lg svg { width: 20px; height: 20px; }
+.rpdf-pbadge-lg[data-look="emoji"] { font-size: 28px; }
+.rpdf-style-title { margin: 0; overflow: hidden; font-weight: 600; white-space: nowrap; text-overflow: ellipsis; }
+.rpdf-style-label { margin: 8px 4px 2px; color: var(--hub-muted); font-size: 11.5px; font-weight: 600; }
+.rpdf-style-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; }
+.rpdf-style-choice {
+  display: grid;
+  place-items: center;
+  height: 34px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--hub-fg-inactive);
+  font: inherit;
+  font-size: 19px;
+  cursor: pointer;
+}
+.rpdf-style-choice svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.rpdf-style-choice:hover { background: var(--hub-tab-hover); color: var(--hub-fg); }
+.rpdf-style-choice[aria-selected="true"] { background: var(--hub-tab-active); color: var(--hub-fg); box-shadow: inset 0 0 0 1.5px var(--hub-accent); }
+.rpdf-style-choice:focus-visible,
+.rpdf-style-swatch:focus-visible { outline: 2px solid var(--hub-accent); outline-offset: 1px; }
+.rpdf-style-input {
+  width: 100%;
+  height: 30px;
+  margin-top: 4px;
+  padding: 0 10px;
+  border: 1px solid var(--hub-border);
+  border-radius: 7px;
+  background: var(--hub-tab-active);
+  color: var(--hub-fg);
+  font: inherit;
+}
+.rpdf-style-input:focus { outline: 0; border-color: var(--hub-accent); }
+.rpdf-style-colors { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 4px; }
+.rpdf-style-swatch {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--swatch);
+  cursor: pointer;
+}
+.rpdf-style-swatch[aria-selected="true"] { box-shadow: 0 0 0 2px var(--hub-strip-bg), 0 0 0 4px var(--hub-fg); }
+.rpdf-style-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
+.rpdf-style-text-btn {
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hub-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.rpdf-style-text-btn:hover { background: var(--hub-tab-hover); color: var(--hub-fg); }
+.rpdf-style .rpdf-primary { height: 30px; }
+
+/* ── Document kinds: the icon tells a paper from a plain PDF ── */
+[data-kind="journal"] { --kind: #8ab4f8; }
+[data-kind="conference"] { --kind: #c58af9; }
+[data-kind="preprint"] { --kind: #fdd663; }
+[data-kind="survey"] { --kind: #81c995; }
+[data-kind="technical"] { --kind: #f6aea9; }
+.rpdf-tab-icon[data-kind]:not([data-kind=""]):not([data-kind="document"]) svg,
+.rpdf-item-main > svg[data-kind]:not([data-kind="document"]) { color: var(--kind); }

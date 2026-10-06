@@ -26,7 +26,7 @@ import {
 } from '../src/shared/pdfSync';
 import { parsePdfSyncHintRequest, parseSetPdfSyncEnabledRequest } from '../src/shared/messages';
 import { PDF_LIBRARY_STORAGE_KEY, type PdfLibraryEntry } from '../src/shared/pdfLibrary';
-import type { PdfProject } from '../src/shared/pdfProjects';
+import type { PdfProject, PdfProjectFolder } from '../src/shared/pdfProjects';
 import researchManifest from '../manifest.json';
 import { FakeGoogle, createFakeGoogle } from './fakeGoogleDrive';
 import { clearAllStores } from './helpers';
@@ -52,18 +52,19 @@ function doc(docId: string, page: number, updatedAt: number): PdfDocRecord {
   };
 }
 
-function snapshot(docs: PdfDocRecord[] = [], annotations: PdfAnnotationCache[] = [], library: PdfLibraryEntry[] = [], projects: PdfProject[] = []): PdfSyncSnapshot {
-  return { version: 3, exportedAt: '2026-09-01T00:00:00.000Z', docs, annotations, library, projects };
+function snapshot(docs: PdfDocRecord[] = [], annotations: PdfAnnotationCache[] = [], library: PdfLibraryEntry[] = [], projects: PdfProject[] = [], folders: PdfProjectFolder[] = []): PdfSyncSnapshot {
+  return { version: 4, exportedAt: '2026-09-01T00:00:00.000Z', docs, annotations, library, projects, folders };
 }
 
 function project(id: string, overrides: Partial<PdfProject> = {}): PdfProject {
-  return { id, name: id, createdAt: ago(500), renamedAt: ago(500), deletedAt: 0, members: [], layout: { urls: [], active: 0, show: null, savedAt: 0 }, ...overrides };
+  return { id, name: id, createdAt: ago(500), renamedAt: ago(500), deletedAt: 0, members: [], layout: { urls: [], active: 0, show: null, savedAt: 0 },
+    icon: null, color: null, styledAt: 0, folder: null, order: null, placedAt: 0, ...overrides };
 }
 
 function entry(docId: string, overrides: Partial<PdfLibraryEntry> = {}): PdfLibraryEntry {
   return {
     docId, urls: [`https://example.org/${docId.slice(0, 4)}.pdf`], fileName: null, docTitle: null, title: null, venue: null, year: null,
-    numPages: 10, openedAt: ago(60), pinned: false, pinChangedAt: 0, ...overrides,
+    numPages: 10, openedAt: ago(60), pinned: false, pinChangedAt: 0, paperKind: null, userKind: null, userKindAt: 0, ...overrides,
   };
 }
 
@@ -149,12 +150,23 @@ describe('pdf sync merge', () => {
 
   it('reads an older build\'s document with what it lacks empty', () => {
     const parsed = parsePdfSyncSnapshot({ version: 1, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [] });
-    expect(parsed).toEqual({ version: 3, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [] });
+    expect(parsed).toEqual({ version: 4, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [], folders: [] });
     expect(parsePdfSyncSnapshot({ version: 2, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [] })?.projects).toEqual([]);
+    // Version 3: projects without looks or places, library rows without kinds.
+    const v3 = parsePdfSyncSnapshot({
+      version: 3, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [],
+      library: [{ docId: DOC_A, urls: [], fileName: null, docTitle: null, title: null, venue: null, year: null, numPages: 3, openedAt: 1, pinned: false, pinChangedAt: 0 }],
+      projects: [{ id: 'pa', name: 'A', createdAt: 1, renamedAt: 1, deletedAt: 0, members: [], layout: { urls: [], active: 0, show: null, savedAt: 0 } }],
+    });
+    expect(v3?.folders).toEqual([]);
+    expect(v3?.projects[0]).toMatchObject({ icon: null, color: null, styledAt: 0, folder: null, order: null, placedAt: 0 });
+    expect(v3?.library[0]).toMatchObject({ paperKind: null, userKind: null, userKindAt: 0 });
   });
 
   it('refuses a document another build could not read back', () => {
+    expect(parsePdfSyncSnapshot({ version: 5, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [], folders: [] })).toBeNull();
     expect(parsePdfSyncSnapshot({ version: 4, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [] })).toBeNull();
+    expect(parsePdfSyncSnapshot({ version: 4, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [], folders: [{ id: 'f1' }] })).toBeNull();
     expect(parsePdfSyncSnapshot({ version: 3, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [] })).toBeNull();
     expect(parsePdfSyncSnapshot({ version: 3, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [{ id: 'x' }] })).toBeNull();
     expect(parsePdfSyncSnapshot({ version: 2, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [] })).toBeNull();
@@ -221,7 +233,7 @@ describe('drive sync', () => {
 
     expect(google.files.size).toBe(1);
     const body = await google.headBody<PdfSyncSnapshot>();
-    expect(body.version).toBe(3);
+    expect(body.version).toBe(4);
     expect(body.docs.map((entry) => entry.page)).toEqual([4]);
     expect(keysOf(body.annotations[0])).toEqual(['k1']);
     expect(JSON.stringify(body)).not.toContain('perm-main');

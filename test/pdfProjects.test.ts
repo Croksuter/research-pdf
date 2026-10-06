@@ -21,7 +21,16 @@ import {
   projectsOfDoc,
   seedPdfProjects,
   targetProjectForDoc,
+  PDF_PROJECT_COLORS,
+  applyPdfFolderUpdate,
+  mergePdfProjectFolderLists,
+  parsePdfFolderUpdate,
+  pdfProjectEmojiIcon,
+  pdfProjectLook,
+  pdfProjectTree,
   type PdfProject,
+  type PdfProjectFolder,
+  type PdfProjectState,
   type PdfProjects,
 } from '../src/shared/pdfProjects';
 import { parsePdfProjectMoveRequest, parsePdfProjectOpenRequest, parsePdfProjectUpdateRequest } from '../src/shared/messages';
@@ -31,11 +40,12 @@ const A = 'https://arxiv.org/pdf/2401.00001';
 const B = 'https://a.org/b.pdf';
 
 function libraryEntry(docId: string, pinned = false, pinChangedAt = 0): PdfLibraryEntry {
-  return { docId, urls: [B], fileName: null, docTitle: null, title: null, venue: null, year: null, numPages: 3, openedAt: NOW - 1_000, pinned, pinChangedAt };
+  return { docId, urls: [B], fileName: null, docTitle: null, title: null, venue: null, year: null, numPages: 3, openedAt: NOW - 1_000, pinned, pinChangedAt, paperKind: null, userKind: null, userKindAt: 0 };
 }
 
 function project(id: string, overrides: Partial<PdfProject> = {}): PdfProject {
-  return { id, name: id, createdAt: NOW - 10_000, renamedAt: NOW - 10_000, deletedAt: 0, members: [], layout: { urls: [], active: 0, show: null, savedAt: 0 }, ...overrides };
+  return { id, name: id, createdAt: NOW - 10_000, renamedAt: NOW - 10_000, deletedAt: 0, members: [], layout: { urls: [], active: 0, show: null, savedAt: 0 },
+    icon: null, color: null, styledAt: 0, folder: null, order: null, placedAt: 0, ...overrides };
 }
 
 /** Default + one project `pa` holding d1 (pinned) and d2. */
@@ -178,5 +188,102 @@ describe('projects', () => {
     expect(parsePdfProjectMoveRequest({ ...move, url: null })).toEqual({ ...move, url: null });
     expect(parsePdfProjectMoveRequest({ ...move, to: 'default' })).toBeNull();
     expect(parsePdfProjectMoveRequest({ ...move, url: 'chrome://x' })).toBeNull();
+  });
+});
+
+describe('project looks', () => {
+  it('draws a project with its icon, emoji or first letter, on its color', () => {
+    expect(pdfProjectLook(project('pa', { name: 'robotics', icon: 'i:robot', color: 'teal' }))).toEqual({ kind: 'icon', value: 'robot', color: PDF_PROJECT_COLORS.teal });
+    expect(pdfProjectLook(project('pa', { name: 'x', icon: 'e:🤖' }))).toMatchObject({ kind: 'emoji', value: '🤖' });
+    expect(pdfProjectLook(project('pa', { name: '  로보틱스' }))).toMatchObject({ kind: 'letter', value: '로' });
+    // An icon a newer build knows falls back to the letter; a color likewise to the id's.
+    expect(pdfProjectLook(project('pa', { name: 'abc', icon: 'i:hologram', color: 'ultraviolet' }))).toEqual(pdfProjectLook(project('pa', { name: 'abc' })));
+  });
+
+  it('takes one emoji from typed text', () => {
+    expect(pdfProjectEmojiIcon(' 🧪 ')).toBe('e:🧪');
+    expect(pdfProjectEmojiIcon('👩🏽‍🔬 lab')).toBe('e:👩🏽‍🔬');
+    expect(pdfProjectEmojiIcon('🇰🇷')).toBe('e:🇰🇷');
+    expect(pdfProjectEmojiIcon('a')).toBeNull();
+    expect(pdfProjectEmojiIcon('')).toBeNull();
+  });
+
+  it('styles a project; the latest look wins a merge', () => {
+    let projects: PdfProjects = { pa: project('pa') };
+    projects = applyPdfProjectUpdate(projects, { kind: 'style', id: 'pa', icon: 'i:flask', color: 'red' }, NOW);
+    expect(projects.pa).toMatchObject({ icon: 'i:flask', color: 'red', styledAt: NOW });
+    const other = project('pa', { icon: 'e:🧪', color: null, styledAt: NOW + 5 });
+    expect(mergePdfProjects(projects.pa, other)).toMatchObject({ icon: 'e:🧪', color: null, styledAt: NOW + 5 });
+    expect(mergePdfProjects(other, projects.pa)).toEqual(mergePdfProjects(projects.pa, other));
+    expect(parsePdfProjectUpdate({ kind: 'style', id: 'pa', icon: 'i:flask', color: 'nope' })).toBeNull();
+    expect(parsePdfProjectUpdate({ kind: 'style', id: 'pa', icon: 'javascript:x', color: null })).toBeNull();
+    expect(parsePdfProjectUpdate({ kind: 'style', id: 'pa', icon: null, color: null })).toEqual({ kind: 'style', id: 'pa', icon: null, color: null });
+  });
+});
+
+describe('project folders and order', () => {
+  const folder = (id: string, overrides: Partial<PdfProjectFolder> = {}): PdfProjectFolder => ({
+    id, name: id, createdAt: NOW - 10_000, renamedAt: NOW - 10_000, deletedAt: 0, order: null, placedAt: 0, ...overrides,
+  });
+  const names = (state: PdfProjectState) => {
+    const { root, items } = pdfProjectTree(state.projects, state.folders);
+    return [root.id, ...items.map((item) => (item.kind === 'folder' ? `${item.folder.id}[${item.projects.map((p) => p.id).join(',')}]` : item.project.id))];
+  };
+
+  it('lists the default project first, then folders and projects by key, unkeyed ones by name', () => {
+    const state: PdfProjectState = {
+      projects: {
+        default: project('default'),
+        pz: project('pz', { name: 'Zeta' }),
+        pa: project('pa', { name: 'Alpha' }),
+        pk: project('pk', { order: '5' }),
+        pi: project('pi', { folder: 'f1', order: '2' }),
+        pj: project('pj', { folder: 'f1', order: '1' }),
+        po: project('po', { folder: 'fgone', order: '1' }),
+      },
+      folders: { f1: folder('f1', { order: '3' }), fgone: folder('fgone', { deletedAt: NOW }) },
+    };
+    expect(names(state)).toEqual(['default', 'po', 'f1[pj,pi]', 'pk', 'pa', 'pz']);
+  });
+
+  it('creates, arranges and deletes folders; a deleted folder lets its projects out where it stood', () => {
+    let state: PdfProjectState = {
+      projects: { default: project('default'), pa: project('pa', { order: '1' }), pb: project('pb', { order: '3' }), pc: project('pc', { order: '5' }) },
+      folders: {},
+    };
+    state = applyPdfFolderUpdate(state, { kind: 'folder-create', id: 'f1', name: 'Lab', order: '2' }, NOW);
+    state = applyPdfFolderUpdate(state, { kind: 'arrange', projects: [{ id: 'pc', folder: 'f1', order: '1' }, { id: 'pb', folder: 'f1', order: '2' }], folders: [] }, NOW + 1);
+    expect(names(state)).toEqual(['default', 'pa', 'f1[pc,pb]']);
+    // The default project and unknown folders are not placed.
+    const same = applyPdfFolderUpdate(state, { kind: 'arrange', projects: [{ id: 'default', folder: null, order: '9' }, { id: 'pa', folder: 'nope', order: '9' }], folders: [] }, NOW + 2);
+    expect(same).toBe(state);
+    state = applyPdfFolderUpdate(state, { kind: 'folder-rename', id: 'f1', name: 'Lab 2' }, NOW + 3);
+    expect(state.folders.f1.name).toBe('Lab 2');
+    state = applyPdfFolderUpdate(state, { kind: 'folder-delete', id: 'f1' }, NOW + 4);
+    expect(state.folders.f1.deletedAt).toBe(NOW + 4);
+    expect(names(state)).toEqual(['default', 'pa', 'pc', 'pb']);
+    expect(state.projects.pc.folder).toBeNull();
+  });
+
+  it('merges placement and folders: latest wins, deletion is final', () => {
+    const a = project('pa', { folder: 'f1', order: '1', placedAt: NOW });
+    const b = project('pa', { folder: null, order: '7', placedAt: NOW + 1 });
+    expect(mergePdfProjects(a, b)).toMatchObject({ folder: null, order: '7', placedAt: NOW + 1 });
+    const merged = mergePdfProjectFolderLists(
+      [folder('f1', { name: 'old', renamedAt: 1, order: '2', placedAt: 5 })],
+      [folder('f1', { name: 'new', renamedAt: 2, deletedAt: NOW, order: '1', placedAt: 3 })],
+      NOW,
+    );
+    expect(merged).toEqual([folder('f1', { name: 'new', renamedAt: 2, deletedAt: NOW, order: '2', placedAt: 5 })]);
+  });
+
+  it('parses folder updates strictly', () => {
+    expect(parsePdfFolderUpdate({ kind: 'folder-create', id: 'f1', name: ' Lab ', order: null })).toEqual({ kind: 'folder-create', id: 'f1', name: 'Lab', order: null });
+    expect(parsePdfFolderUpdate({ kind: 'folder-create', id: 'default', name: 'x', order: null })).toBeNull();
+    expect(parsePdfFolderUpdate({ kind: 'arrange', projects: [{ id: 'pa', folder: null, order: 'a0' }], folders: [] })).toBeNull();
+    expect(parsePdfFolderUpdate({ kind: 'arrange', projects: [{ id: 'pa', folder: 'f1', order: 'a' }], folders: [{ id: 'f1', order: 'b' }] }))
+      .toEqual({ kind: 'arrange', projects: [{ id: 'pa', folder: 'f1', order: 'a' }], folders: [{ id: 'f1', order: 'b' }] });
+    expect(parsePdfProjectUpdateRequest({ type: 'VOCAB_T_PDF_PROJECT_UPDATE', update: { kind: 'folder-delete', id: 'f1' } }))
+      .toEqual({ type: 'VOCAB_T_PDF_PROJECT_UPDATE', update: { kind: 'folder-delete', id: 'f1' } });
   });
 });

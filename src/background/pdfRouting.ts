@@ -38,7 +38,7 @@ import { DEFAULT_PROJECT_ID, isPdfProjectId } from '../shared/pdfProjects';
 import { getSetting } from '../db/settingsRepository';
 import { debugError, debugLog } from '../shared/debugLog';
 import { claimPdfHub, movePdfToProject, noteTopLevelCommit, openPdfProject, promoteEmbeddedPdf } from './pdfHub';
-import { updatePdfProjects } from './pdfProjectStore';
+import { updatePdfProjectFolders, updatePdfProjects } from './pdfProjectStore';
 import { isExtensionPageSender } from './messageDispatcher';
 import { requestPdfSyncSoon } from './pdfSyncService';
 
@@ -395,7 +395,11 @@ export const pdfMessageHandlers: Record<string, PdfMessageHandler> = {
   VOCAB_T_PDF_PROJECT_UPDATE: async (m, sender) => {
     const request = parsePdfProjectUpdateRequest(m);
     if (!request || !isHubPageSender(sender)) return { success: false, error: '프로젝트 요청 형식이 올바르지 않습니다.' };
-    if (await updatePdfProjects(request.update)) requestPdfSyncSoon();
+    const { update } = request;
+    const changed = update.kind === 'folder-create' || update.kind === 'folder-rename' || update.kind === 'folder-delete' || update.kind === 'arrange'
+      ? await updatePdfProjectFolders(update)
+      : await updatePdfProjects(update);
+    if (changed) requestPdfSyncSoon();
     return { success: true };
   },
   VOCAB_T_PDF_PROJECT_OPEN: (m, sender) => {

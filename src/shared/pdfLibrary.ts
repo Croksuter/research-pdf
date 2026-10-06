@@ -11,7 +11,12 @@
 // viewer's state. The merge is a join — per field, never a deletion — so it
 // can be applied over local rows at any time without losing a concurrent
 // write: the most recent open wins the names, the latest pin change wins the
-// pin, URLs are unioned. Every device then applies the same bounds.
+// pin, the latest choice of kind wins it, URLs are unioned. Every device then
+// applies the same bounds.
+//
+// A document's kind — a journal or conference paper, a preprint, a survey, a
+// report, or a plain PDF — is what the paper strip found it to be, unless the
+// user said otherwise. The hub draws it as the document's icon.
 
 export const PDF_LIBRARY_STORAGE_KEY = 'rpdfLibrary';
 export const PDF_LIBRARY_MAX = 1_000;
@@ -22,6 +27,20 @@ const DOC_ID_MAX_CHARS = 128;
 const URL_MAX_CHARS = 2_048;
 const TEXT_MAX_CHARS = 300;
 const MAX_PAGES = 100_000;
+
+/** Paper kinds, as the paper strip classifies them (classifyPaperKind). */
+export const PDF_PAPER_KINDS = ['journal', 'conference', 'preprint', 'survey', 'technical'] as const;
+export type PdfPaperKind = typeof PDF_PAPER_KINDS[number];
+/** What the user can set: a paper kind, or 'document' (not a paper). */
+export type PdfDocKind = PdfPaperKind | 'document';
+
+export function isPdfPaperKind(value: unknown): value is PdfPaperKind {
+  return typeof value === 'string' && (PDF_PAPER_KINDS as readonly string[]).includes(value);
+}
+
+export function isPdfDocKind(value: unknown): value is PdfDocKind {
+  return value === 'document' || isPdfPaperKind(value);
+}
 
 export interface PdfLibraryEntry {
   docId: string;
@@ -39,6 +58,17 @@ export interface PdfLibraryEntry {
   pinned: boolean;
   /** When `pinned` last changed (0 = never): the latest change wins a merge. */
   pinChangedAt: number;
+  /** What the paper strip found it to be; null: not identified as a paper. */
+  paperKind: PdfPaperKind | null;
+  /** The user's choice over `paperKind` (null: automatic). */
+  userKind: PdfDocKind | null;
+  /** When `userKind` last changed (0 = never). */
+  userKindAt: number;
+}
+
+/** The kind a row is shown as: the user's choice, else the detected one, else a plain PDF. */
+export function libraryEntryKind(entry: Pick<PdfLibraryEntry, 'paperKind' | 'userKind'>): PdfDocKind {
+  return entry.userKind ?? entry.paperKind ?? 'document';
 }
 
 export type PdfLibrary = Record<string, PdfLibraryEntry>;
@@ -78,6 +108,9 @@ export function parsePdfLibraryEntry(value: unknown): PdfLibraryEntry | null {
   if (openedAt === null || pinChangedAt === null || typeof value.pinned !== 'boolean' || !Array.isArray(value.urls)) return null;
   const urls = [...new Set(value.urls.map(librarySourceUrl).filter((url): url is string => url !== null))].slice(0, PDF_LIBRARY_MAX_URLS);
   const year = Number.isInteger(value.year) && (value.year as number) > 0 && (value.year as number) < 10_000 ? value.year as number : null;
+  // Kinds came later: rows without them read as never set.
+  const userKindAt = value.userKindAt === undefined ? 0 : time(value.userKindAt);
+  if (userKindAt === null) return null;
   return {
     docId,
     urls,
@@ -90,6 +123,9 @@ export function parsePdfLibraryEntry(value: unknown): PdfLibraryEntry | null {
     openedAt,
     pinned: value.pinned,
     pinChangedAt,
+    paperKind: isPdfPaperKind(value.paperKind) ? value.paperKind : null,
+    userKind: isPdfDocKind(value.userKind) ? value.userKind : null,
+    userKindAt,
   };
 }
 
@@ -134,6 +170,7 @@ function order(a: PdfLibraryEntry, b: PdfLibraryEntry, key: (e: PdfLibraryEntry)
 export function mergePdfLibraryEntries(a: PdfLibraryEntry, b: PdfLibraryEntry): PdfLibraryEntry {
   const [newer, older] = order(a, b, (e) => e.openedAt);
   const [pin] = order(a, b, (e) => e.pinChangedAt * 2 + (e.pinned ? 1 : 0));
+  const [chosen] = order(a, b, (e) => e.userKindAt);
   return {
     docId: newer.docId,
     urls: [...new Set([...newer.urls, ...older.urls])].slice(0, PDF_LIBRARY_MAX_URLS),
@@ -146,6 +183,9 @@ export function mergePdfLibraryEntries(a: PdfLibraryEntry, b: PdfLibraryEntry): 
     openedAt: newer.openedAt,
     pinned: pin.pinned,
     pinChangedAt: pin.pinChangedAt,
+    paperKind: newer.paperKind ?? older.paperKind,
+    userKind: chosen.userKind,
+    userKindAt: chosen.userKindAt,
   };
 }
 
@@ -186,8 +226,10 @@ export type PdfLibraryUpdate =
   | { kind: 'opened'; docId: string; url: string | null; fileName: string | null; numPages: number }
   // Names found after opening: the PDF's Title metadata, the detected paper.
   // Null leaves a field as it was.
-  | { kind: 'meta'; docId: string; docTitle: string | null; title: string | null; venue: string | null; year: number | null }
-  | { kind: 'pin'; docId: string; pinned: boolean };
+  | { kind: 'meta'; docId: string; docTitle: string | null; title: string | null; venue: string | null; year: number | null; paperKind?: PdfPaperKind | null }
+  | { kind: 'pin'; docId: string; pinned: boolean }
+  // The user's kind for the document (null: back to automatic).
+  | { kind: 'user-kind'; docId: string; userKind: PdfDocKind | null };
 
 export function applyPdfLibraryUpdate(library: PdfLibrary, update: PdfLibraryUpdate, now: number = Date.now(), keep: ReadonlySet<string> = new Set()): PdfLibrary {
   const current = library[update.docId];
@@ -206,6 +248,9 @@ export function applyPdfLibraryUpdate(library: PdfLibrary, update: PdfLibraryUpd
       openedAt: Math.max(now, current?.openedAt ?? 0),
       pinned: current?.pinned ?? false,
       pinChangedAt: current?.pinChangedAt ?? 0,
+      paperKind: current?.paperKind ?? null,
+      userKind: current?.userKind ?? null,
+      userKindAt: current?.userKindAt ?? 0,
     };
   } else if (!current) {
     return library; // meta and pins only ever apply to a document that was opened
@@ -216,7 +261,12 @@ export function applyPdfLibraryUpdate(library: PdfLibrary, update: PdfLibraryUpd
       title: text(update.title) ?? current.title,
       venue: text(update.venue) ?? current.venue,
       year: update.year ?? current.year,
+      paperKind: update.paperKind ?? current.paperKind,
     };
+    if (JSON.stringify(next) === JSON.stringify(current)) return library;
+  } else if (update.kind === 'user-kind') {
+    if (current.userKind === update.userKind) return library;
+    next = { ...current, userKind: update.userKind, userKindAt: Math.max(now, current.userKindAt + 1) };
   } else {
     if (current.pinned === update.pinned) return library;
     next = { ...current, pinned: update.pinned, pinChangedAt: Math.max(now, current.pinChangedAt + 1) };
@@ -237,8 +287,10 @@ export function parsePdfLibraryUpdate(value: unknown): PdfLibraryUpdate | null {
     }
     case 'meta': {
       const year = Number.isInteger(value.year) && (value.year as number) > 0 && (value.year as number) < 10_000 ? value.year as number : null;
-      return { kind: 'meta', docId, docTitle: text(value.docTitle), title: text(value.title), venue: text(value.venue), year };
+      return { kind: 'meta', docId, docTitle: text(value.docTitle), title: text(value.title), venue: text(value.venue), year, paperKind: isPdfPaperKind(value.paperKind) ? value.paperKind : null };
     }
+    case 'user-kind':
+      return value.userKind === null || isPdfDocKind(value.userKind) ? { kind: 'user-kind', docId, userKind: value.userKind } : null;
     case 'pin':
       return typeof value.pinned === 'boolean' ? { kind: 'pin', docId, pinned: value.pinned } : null;
     default:

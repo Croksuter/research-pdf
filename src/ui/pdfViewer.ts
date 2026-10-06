@@ -29,6 +29,7 @@ import { FigureCapture } from './pdfViewer/figureCapture';
 import { byId } from './pdfViewer/dom';
 import { PresentationMode } from './pdfViewer/presentation';
 import { isPrinting, printDocument } from './pdfViewer/print';
+import { classifyPaperKind } from '../shared/paperIdentifiers';
 import { PaperStrip } from './pdfViewer/paperStrip';
 import { showDocumentProperties } from './pdfViewer/properties';
 import { Sidebar } from './pdfViewer/sidebar';
@@ -158,7 +159,7 @@ const presentation = new PresentationMode(container, pdfViewer, eventBus);
 const paperStrip = new PaperStrip(() => eventBus.dispatch('resize', { source: paperStrip }), (meta) => {
   setTitles({ paper: meta.title.trim() });
   if (currentIdentity) {
-    recordInLibrary({ kind: 'meta', docId: currentIdentity.docId, docTitle: null, title: meta.title, venue: meta.venue, year: meta.year });
+    recordInLibrary({ kind: 'meta', docId: currentIdentity.docId, docTitle: null, title: meta.title, venue: meta.venue, year: meta.year, paperKind: classifyPaperKind(meta) });
   }
 });
 // Figure copy: a dragged region rendered again as an image, with its source.

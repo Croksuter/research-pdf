@@ -6,7 +6,7 @@
 
 import { PDF_HUB_MAX_DOCS, isPdfViewerSourceUrl, type PdfHubDoc } from './localPdf';
 import { parsePdfLibraryUpdate, type PdfLibraryUpdate } from './pdfLibrary';
-import { isPdfProjectId, parsePdfProjectUpdate, type PdfProjectUpdate } from './pdfProjects';
+import { isPdfProjectId, parsePdfFolderUpdate, parsePdfProjectUpdate, type PdfFolderUpdate, type PdfProjectUpdate } from './pdfProjects';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -103,12 +103,12 @@ export function parsePdfHubStateRequest(value: unknown): PdfHubStateRequest | nu
 
 export interface PdfProjectUpdateRequest {
   type: 'VOCAB_T_PDF_PROJECT_UPDATE';
-  update: PdfProjectUpdate;
+  update: PdfProjectUpdate | PdfFolderUpdate;
 }
 
 export function parsePdfProjectUpdateRequest(value: unknown): PdfProjectUpdateRequest | null {
   if (!isRecord(value) || value.type !== 'VOCAB_T_PDF_PROJECT_UPDATE' || Object.keys(value).length !== 2) return null;
-  const update = parsePdfProjectUpdate(value.update);
+  const update = parsePdfProjectUpdate(value.update) ?? parsePdfFolderUpdate(value.update);
   return update && update.kind !== 'layout' && update.kind !== 'move' ? { type: 'VOCAB_T_PDF_PROJECT_UPDATE', update } : null;
 }
 

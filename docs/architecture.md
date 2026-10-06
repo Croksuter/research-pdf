@@ -101,14 +101,31 @@ no longer scatter across tabs that look like web pages.
 
 `shared/pdfProjects.ts`, `chrome.storage.local` key `rpdfProjects`, written by
 the background only (`background/pdfProjectStore.ts`). A project has a name,
-its members (`docId` → registered, pinned, changed at), and the tabs it was
-last open with (layout: URLs, active, what was in front).
+its members (`docId` → registered, pinned, changed at), the tabs it was
+last open with (layout: URLs, active, what was in front), its look (an icon
+from the set in `pdf-hub.html`, an emoji, or none = its first letter, on one
+of ten colors) and its place in the list (folder + order key). Folders are
+`rpdfProjectFolders`: a name and a place, nothing else.
 
 - **Default project** (`default`, "기본"): implicit membership — every library
   document no other project has. A PDF opened for the first time is there
   with no write; it cannot be deleted. Its rows carry only pins. Before a
   device's first write the record reads as the default project seeded with
   the pins the library had before projects existed.
+- **List and folders**: the default project on top, then folders (one level,
+  projects only) and projects in the user's order. Order keys
+  (`shared/orderKey.ts`) are base-62 fractions: moving an item gives it a key
+  between its new neighbours and changes nothing else, so two devices
+  reordering never overwrite each other (a level with unkeyed items, from
+  before keys existed, is keyed whole on its first move). Rows drag to
+  reorder, onto a folder to go in; Alt+↑/↓ moves the focused row; "⋯" or a
+  right click has look, rename, folder and delete. Deleting a folder lets
+  its projects out where it stood. Collapsed folders are per device
+  (localStorage).
+- **Looks**: the project's badge is shown in the strip, the lists and its
+  home, and drawn (canvas → PNG data URL) as the hub tab's favicon, so hubs
+  of different projects tell apart in Chrome's tab strip. The default
+  project, unstyled, keeps the app icon.
 - **Switcher** (left of the home button): choosing a project switches this
   tab to it — the viewers store everything, this project's layout is saved,
   and the page loads the other project's hub URL with its saved layout
@@ -126,6 +143,11 @@ last open with (layout: URLs, active, what was in front).
   default project's hub (or becomes it) and its documents fall back to the
   default project.
 - Documents a project refers to are never pruned from the library.
+- **Document kinds**: the library row keeps what the paper strip classified
+  the document as (`paperKind`: journal, conference, preprint, survey,
+  technical) and the user's override (`userKind`, also "일반 PDF"; latest
+  choice wins a merge). Tabs and home rows draw it as the document's icon;
+  the tab menu and a right click on a home row change it.
 
 ## Paper strip
 

@@ -6,6 +6,7 @@ import {
   PDF_LIBRARY_MAX_URLS,
   applyPdfLibraryUpdate,
   boundPdfLibrary,
+  libraryEntryKind,
   libraryEntryName,
   mergePdfLibraryEntries,
   parsePdfLibrary,
@@ -23,7 +24,7 @@ const NOW = Date.UTC(2026, 8, 30, 12);
 function entry(docId: string, overrides: Partial<PdfLibraryEntry> = {}): PdfLibraryEntry {
   return {
     docId, urls: [], fileName: null, docTitle: null, title: null, venue: null, year: null,
-    numPages: 12, openedAt: NOW - 1_000, pinned: false, pinChangedAt: 0, ...overrides,
+    numPages: 12, openedAt: NOW - 1_000, pinned: false, pinChangedAt: 0, paperKind: null, userKind: null, userKindAt: 0, ...overrides,
   };
 }
 
@@ -80,7 +81,7 @@ describe('library updates', () => {
     expect(parsePdfLibraryUpdate({ kind: 'opened', docId: 'd', url: 'javascript:alert(1)', fileName: 'x', numPages: 1 })).toBeNull();
     expect(parsePdfLibraryUpdate({ kind: 'opened', docId: 'd', url: null, fileName: 'x', numPages: 0 })).toBeNull();
     expect(parsePdfLibraryUpdate({ kind: 'pin', docId: 'd', pinned: 'yes' })).toBeNull();
-    expect(parsePdfLibraryUpdate({ kind: 'meta', docId: 'd', title: ' T ', venue: null, year: 20170 })).toEqual({ kind: 'meta', docId: 'd', docTitle: null, title: 'T', venue: null, year: null });
+    expect(parsePdfLibraryUpdate({ kind: 'meta', docId: 'd', title: ' T ', venue: null, year: 20170 })).toEqual({ kind: 'meta', docId: 'd', docTitle: null, title: 'T', venue: null, year: null, paperKind: null });
     expect(parsePdfLibraryUpdateRequest({ type: 'VOCAB_T_PDF_LIBRARY_UPDATE', update: { kind: 'pin', docId: 'd', pinned: true } }))
       .toEqual({ type: 'VOCAB_T_PDF_LIBRARY_UPDATE', update: { kind: 'pin', docId: 'd', pinned: true } });
     expect(parsePdfLibraryUpdateRequest({ type: 'VOCAB_T_PDF_LIBRARY_UPDATE', update: { kind: 'pin', docId: 'd', pinned: true }, extra: 1 })).toBeNull();
@@ -140,5 +141,24 @@ describe('library display', () => {
     expect(relativeTimeKo(NOW - 3 * 3_600_000, NOW)).toBe('3시간 전');
     expect(relativeTimeKo(NOW - 2 * 86_400_000, NOW)).toBe('2일 전');
     expect(relativeTimeKo(NOW - 30 * 86_400_000, NOW)).toMatch(/^\d+월 \d+일$/u);
+  });
+});
+
+describe('document kinds', () => {
+  it('keeps the detected kind, lets the user override it, and the latest choice wins a merge', () => {
+    let lib: PdfLibrary = { d1: entry('d1') };
+    expect(libraryEntryKind(lib.d1)).toBe('document');
+    lib = applyPdfLibraryUpdate(lib, { kind: 'meta', docId: 'd1', docTitle: null, title: 'T', venue: 'NeurIPS', year: 2017, paperKind: 'conference' }, NOW);
+    expect(libraryEntryKind(lib.d1)).toBe('conference');
+    // A later lookup without a kind keeps it.
+    lib = applyPdfLibraryUpdate(lib, { kind: 'meta', docId: 'd1', docTitle: 'x', title: null, venue: null, year: null }, NOW);
+    expect(lib.d1.paperKind).toBe('conference');
+    lib = applyPdfLibraryUpdate(lib, { kind: 'user-kind', docId: 'd1', userKind: 'document' }, NOW + 1);
+    expect(libraryEntryKind(lib.d1)).toBe('document');
+    const elsewhere = { ...lib.d1, userKind: 'journal' as const, userKindAt: NOW + 10, openedAt: NOW - 5_000 };
+    expect(mergePdfLibraryEntries(lib.d1, elsewhere)).toMatchObject({ userKind: 'journal', paperKind: 'conference' });
+    expect(mergePdfLibraryEntries(elsewhere, lib.d1)).toEqual(mergePdfLibraryEntries(lib.d1, elsewhere));
+    expect(parsePdfLibraryUpdate({ kind: 'user-kind', docId: 'd1', userKind: 'novel' })).toBeNull();
+    expect(parsePdfLibraryUpdate({ kind: 'user-kind', docId: 'd1', userKind: null })).toEqual({ kind: 'user-kind', docId: 'd1', userKind: null });
   });
 });

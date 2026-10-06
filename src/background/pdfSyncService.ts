@@ -31,7 +31,7 @@ import {
 } from '../shared/pdfSync';
 import { stableJson } from '../shared/threeWayMerge';
 import { mergeIntoPdfLibrary, readPdfLibrary } from './pdfLibraryStore';
-import { mergeIntoPdfProjects, readPdfProjects } from './pdfProjectStore';
+import { mergeIntoPdfProjects, readPdfProjectFolders, readPdfProjects } from './pdfProjectStore';
 
 export const PDF_SYNC_CONFIG_SETTING_KEY = 'researchPdfSyncConfig';
 export const PDF_SYNC_STATE_SETTING_KEY = 'researchPdfSyncState';
@@ -181,7 +181,9 @@ async function readDocRecords(): Promise<PdfDocRecords> {
 }
 
 export async function exportPdfSyncSnapshot(): Promise<PdfSyncSnapshot> {
-  const [records, rows, library, projects] = await Promise.all([readDocRecords(), dbGetAll<unknown>(STORE_PDF_ANNOTATIONS), readPdfLibrary(), readPdfProjects()]);
+  const [records, rows, library, projects, folders] = await Promise.all([
+    readDocRecords(), dbGetAll<unknown>(STORE_PDF_ANNOTATIONS), readPdfLibrary(), readPdfProjects(), readPdfProjectFolders(),
+  ]);
   const annotations = rows
     .map(parsePdfAnnotationCache)
     .filter((cache): cache is PdfAnnotationCache => cache !== null && !isEmptyAnnotationCache(cache));
@@ -192,6 +194,7 @@ export async function exportPdfSyncSnapshot(): Promise<PdfSyncSnapshot> {
     annotations,
     library: Object.values(library),
     projects: Object.values(projects),
+    folders: Object.values(folders),
   });
 }
 
@@ -242,7 +245,7 @@ async function applyPdfSyncSnapshot(
   // meanwhile loses nothing, and a row that differs from the base afterwards
   // is simply pushed by the next sync.
   // Projects first: the library keeps every document they refer to.
-  await mergeIntoPdfProjects(merged.projects);
+  await mergeIntoPdfProjects(merged.projects, merged.folders);
   await mergeIntoPdfLibrary(merged.library);
 
   const db = await openDB();
