@@ -57,14 +57,29 @@ export async function saveLanguagePref(pref: LanguagePref): Promise<void> {
   try { await chrome.storage.local.set({ [LANGUAGE_STORAGE_KEY]: pref }); } catch { /* not in an extension */ }
 }
 
-/** The service worker: follow the stored choice (and its changes). */
-export function followStoredLanguage(): void {
+let ready: Promise<void> = Promise.resolve();
+
+/**
+ * Resolves once the language is the user's choice. Pages have it at once
+ * (localStorage); the service worker starts in the browser's language until
+ * `followStoredLanguage` has read storage, so code there that builds text a
+ * user will see awaits this first.
+ */
+export function languageReady(): Promise<void> {
+  return ready;
+}
+
+/** The service worker: follow the stored choice (and its changes). Resolves as `languageReady`. */
+export function followStoredLanguage(): Promise<void> {
   try {
-    void chrome.storage.local.get(LANGUAGE_STORAGE_KEY).then((r) => setLanguage(resolveLanguage(parseLanguagePref(r[LANGUAGE_STORAGE_KEY]))));
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area === 'local' && changes[LANGUAGE_STORAGE_KEY]) setLanguage(resolveLanguage(parseLanguagePref(changes[LANGUAGE_STORAGE_KEY].newValue)));
     });
+    ready = chrome.storage.local.get(LANGUAGE_STORAGE_KEY)
+      .then((r) => setLanguage(resolveLanguage(parseLanguagePref(r[LANGUAGE_STORAGE_KEY]))))
+      .catch(() => undefined);
   } catch { /* not in an extension */ }
+  return ready;
 }
 
 /** A module's strings in both languages; reads pick the current one. */
