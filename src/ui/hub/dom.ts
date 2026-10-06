@@ -1,0 +1,56 @@
+// ─── The hub page's fixed elements (pdf-hub.html) ───
+
+import { PDF_HUB_PAGE, PDF_VIEWER_PAGE } from '../../shared/localPdf';
+import { byId } from '../pdfViewer/dom';
+
+export const strip = byId<HTMLElement>('rpdf-strip');
+export const homeBtn = byId<HTMLButtonElement>('rpdf-home-btn');
+export const settingsBtn = byId<HTMLButtonElement>('rpdf-settings-btn');
+export const settingsView = byId<HTMLElement>('rpdf-settings');
+export const tabList = byId<HTMLDivElement>('rpdf-tabs');
+export const frames = byId<HTMLElement>('rpdf-frames');
+export const addBtn = byId<HTMLButtonElement>('rpdf-add');
+export const listBtn = byId<HTMLButtonElement>('rpdf-list-btn');
+export const listCount = byId<HTMLSpanElement>('rpdf-list-count');
+export const listPanel = byId<HTMLDivElement>('rpdf-list');
+export const listSearch = byId<HTMLInputElement>('rpdf-list-search');
+export const listItems = byId<HTMLDivElement>('rpdf-list-items');
+export const menu = byId<HTMLDivElement>('rpdf-menu');
+export const fileInput = byId<HTMLInputElement>('rpdf-file-input');
+export const home = byId<HTMLElement>('rpdf-home');
+export const homeSearch = byId<HTMLInputElement>('rpdf-home-search');
+export const homeOpen = byId<HTMLButtonElement>('rpdf-home-open');
+export const homeSections = byId<HTMLDivElement>('rpdf-home-sections');
+export const empty = byId<HTMLDivElement>('rpdf-empty');
+export const emptyText = byId<HTMLParagraphElement>('rpdf-empty-text');
+export const toast = byId<HTMLDivElement>('rpdf-toast');
+export const toastText = byId<HTMLSpanElement>('rpdf-toast-text');
+export const toastAction = byId<HTMLButtonElement>('rpdf-toast-action');
+export const projectBtn = byId<HTMLButtonElement>('rpdf-project-btn');
+export const projectNameEl = byId<HTMLSpanElement>('rpdf-project-name');
+export const projectBadgeEl = byId<HTMLSpanElement>('rpdf-project-badge');
+export const folderNewBtn = byId<HTMLButtonElement>('rpdf-folder-new');
+export const stylePanel = byId<HTMLDivElement>('rpdf-style');
+export const styleBack = byId<HTMLButtonElement>('rpdf-style-back');
+export const stylePreview = byId<HTMLSpanElement>('rpdf-style-preview');
+export const styleTitle = byId<HTMLParagraphElement>('rpdf-style-title');
+export const styleIcons = byId<HTMLDivElement>('rpdf-style-icons');
+export const styleEmojis = byId<HTMLDivElement>('rpdf-style-emojis');
+export const styleEmojiInput = byId<HTMLInputElement>('rpdf-style-emoji-input');
+export const styleColors = byId<HTMLDivElement>('rpdf-style-colors');
+export const styleReset = byId<HTMLButtonElement>('rpdf-style-reset');
+export const styleDone = byId<HTMLButtonElement>('rpdf-style-done');
+export const projectsPanel = byId<HTMLDivElement>('rpdf-projects');
+export const projectsItems = byId<HTMLDivElement>('rpdf-projects-items');
+export const projectNewForm = byId<HTMLFormElement>('rpdf-project-new');
+export const projectNewName = byId<HTMLInputElement>('rpdf-project-new-name');
+export const moveBtn = byId<HTMLButtonElement>('rpdf-move-btn');
+export const movePanel = byId<HTMLDivElement>('rpdf-move');
+export const moveTitle = byId<HTMLParagraphElement>('rpdf-move-title');
+export const moveItems = byId<HTMLDivElement>('rpdf-move-items');
+export const moveNewForm = byId<HTMLFormElement>('rpdf-move-new');
+export const moveNewName = byId<HTMLInputElement>('rpdf-move-new-name');
+export const homeTitle = byId<HTMLHeadingElement>('rpdf-home-title');
+
+export const viewerBase = chrome.runtime.getURL(PDF_VIEWER_PAGE);
+export const hubBase = chrome.runtime.getURL(PDF_HUB_PAGE);
