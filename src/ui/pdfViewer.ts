@@ -39,6 +39,7 @@ import { requestPdfSync } from './pdfViewer/syncHint';
 import { readCachedPdf } from '../db/pdfFileCache';
 import { cachePdfBytes, paperAliasesOf, pdfFileCacheEnabled, resolvePdfUrl, revalidateCachedPdf, type ResolvedPdfUrl } from './pdfFileFetch';
 import { showAnnotationConflictDialog } from './pdfViewer/annotationConflict';
+import { classifyViewerHash, type ViewerHashPlan } from './pdfViewer/openParams';
 import type { PdfDocIdentity, PdfDocRecord } from '../shared/pdfIdentity';
 import type { PdfLibraryUpdate } from '../shared/pdfLibrary';
 import { fitTextLayerFonts, useEmbeddedFontsForText } from './pdfViewer/textLayerFonts';
@@ -92,6 +93,9 @@ const menuLast = byId<HTMLButtonElement>('vt-menu-last');
 const menuPresent = byId<HTMLButtonElement>('vt-menu-present');
 const menuProperties = byId<HTMLButtonElement>('vt-menu-properties');
 const menuOpenFile = byId<HTMLButtonElement>('vt-menu-open-file');
+const menuFitLabel = byId<HTMLSpanElement>('vt-menu-fit-label');
+// Copies of toolbar buttons, shown in the menu when the viewer is narrow.
+const menuStandIns = Array.from(document.querySelectorAll<HTMLButtonElement>('#vt-menu [data-menu-for]'));
 const openNativeBtn = byId<HTMLButtonElement>('vt-open-native');
 const captureBtn = byId<HTMLButtonElement>('vt-capture');
 const openFileInput = byId<HTMLInputElement>('vt-open-file-input');
@@ -159,8 +163,10 @@ const sidebar = new Sidebar({
 const annotate = new AnnotationToolbar(pdfViewer, eventBus);
 const presentation = new PresentationMode(container, pdfViewer, eventBus);
 // The paper title the strip resolves is shown under the document's own name
-// and names the document in the library.
+// and names the document in the library — unless only its title matched
+// (a talk called "Deep Learning" is not LeCun's review).
 const paperStrip = new PaperStrip(() => eventBus.dispatch('resize', { source: paperStrip }), (meta) => {
+  if (meta.matchedBy === 'title') return;
   setTitles({ paper: meta.title.trim() });
   if (currentIdentity) {
     recordInLibrary({ kind: 'meta', docId: currentIdentity.docId, docTitle: null, title: meta.title, venue: meta.venue, year: meta.year, paperKind: classifyPaperKind(meta) });
@@ -183,8 +189,25 @@ captureBtn.title = S.captureTitle(/Mac/u.test(navigator.platform) ? '⌘⇧X' : 
 captureBtn.addEventListener('click', () => figureCapture.cycleMode());
 // Drawings persist per document identity and come back on reopen; when the
 // file itself also carries annotations the user resolves it in a dialog.
-const annotationCache = new AnnotationCache(eventBus, pdfViewer, (conflict) =>
-  showAnnotationConflictDialog(conflict, { preview: (pageIndex, rect) => annotationCache.flash(pageIndex, rect) }));
+// Its previews scroll the document; that is not the reader moving, so no
+// position is saved meanwhile and the page comes back when it closes.
+const annotationCache = new AnnotationCache(eventBus, pdfViewer, async (conflict) => {
+  let pageBefore: number | null = null;
+  const touched = userTouched;
+  holdPosition = true;
+  try {
+    return await showAnnotationConflictDialog(conflict, {
+      preview: (pageIndex, rect) => {
+        pageBefore ??= pdfViewer.currentPageNumber;
+        annotationCache.flash(pageIndex, rect);
+      },
+    });
+  } finally {
+    if (pageBefore !== null && pdfViewer.currentPageNumber !== pageBefore) pdfViewer.currentPageNumber = pageBefore;
+    holdPosition = false;
+    userTouched = touched;
+  }
+});
 
 let currentDoc: PDFDocumentProxy | null = null;
 let currentFileUrl: string | null = null;
@@ -251,7 +274,7 @@ window.addEventListener('message', (event) => {
   if (!message) return;
   if (message.kind === 'open-file') void loadFromFile(message.file);
   else if (message.kind === 'sleep') void prepareForSleep(message.id);
-  else if (currentDoc) linkService.setHash(message.hash.slice(1));
+  else if (currentDoc) applyViewParams(classifyViewerHash(message.hash));
 });
 
 // The hub unloads frames it has not shown for a while. Everything durable is
@@ -261,8 +284,7 @@ async function prepareForSleep(id: number): Promise<void> {
   const busy = presentation.active || isPrinting() || passwordDialog.open;
   let hash = '';
   if (!busy) {
-    flushDocState();
-    await annotationCache.flushNow().catch(() => undefined);
+    await Promise.all([flushDocState(), annotationCache.flushNow().catch(() => undefined)]);
     const page = pdfViewer.currentPageNumber;
     if (!userTouched && currentDoc && page > 1) hash = `#page=${page}`;
   }
@@ -316,6 +338,7 @@ function syncZoomSelect() {
   const fitPage = value === 'page-fit';
   fitToggleBtn.querySelector('use')?.setAttribute('href', fitPage ? '#i-fit-width' : '#i-fit-page');
   fitToggleBtn.title = fitPage ? S.fitToWidth : S.fitToPage;
+  menuFitLabel.textContent = fitToggleBtn.title;
 }
 
 function zoomBy(factor: number) {
@@ -436,10 +459,19 @@ async function downloadCurrent() {
 downloadBtn.addEventListener('click', () => { void downloadCurrent(); });
 printBtn.addEventListener('click', () => { const doc = ensureDoc(); if (doc) void printDocument(doc); });
 
+/** Menu items on screen (the narrow-viewer stand-ins are hidden by CSS otherwise). */
+function shownMenuItems(): HTMLButtonElement[] {
+  return Array.from(menu.querySelectorAll<HTMLButtonElement>('.vt-menu-item:not([hidden])')).filter((item) => item.getClientRects().length > 0);
+}
+
 function openMenu(open: boolean) {
+  if (open) for (const item of menuStandIns) item.disabled = byId<HTMLButtonElement>(item.dataset.menuFor!).disabled;
   menu.hidden = !open;
   moreBtn.setAttribute('aria-expanded', String(open));
-  if (open) menu.querySelector<HTMLButtonElement>('.vt-menu-item')?.focus();
+  if (open) shownMenuItems().find((item) => !item.disabled)?.focus();
+}
+for (const item of menuStandIns) {
+  item.addEventListener('click', () => byId<HTMLButtonElement>(item.dataset.menuFor!).click());
 }
 moreBtn.addEventListener('click', (e) => { e.stopPropagation(); openMenu(menu.hidden); });
 document.addEventListener('click', (e) => {
@@ -447,11 +479,17 @@ document.addEventListener('click', (e) => {
 });
 menu.addEventListener('click', () => openMenu(false));
 menu.addEventListener('keydown', (e) => {
-  const items = Array.from(menu.querySelectorAll<HTMLButtonElement>('.vt-menu-item:not([hidden])'));
+  const items = shownMenuItems().filter((item) => !item.disabled);
   const idx = items.indexOf(document.activeElement as HTMLButtonElement);
   if (e.key === 'ArrowDown') { e.preventDefault(); items[(idx + 1) % items.length]?.focus(); }
   else if (e.key === 'ArrowUp') { e.preventDefault(); items[(idx - 1 + items.length) % items.length]?.focus(); }
-  else if (e.key === 'Escape') { openMenu(false); moreBtn.focus(); }
+  else if (e.key === 'Escape') {
+    // Closes the menu only: not capture mode, the find bar or the tools too.
+    e.preventDefault();
+    e.stopPropagation();
+    openMenu(false);
+    moreBtn.focus();
+  }
 });
 
 menuTwoPage.addEventListener('click', () => {
@@ -459,10 +497,18 @@ menuTwoPage.addEventListener('click', () => {
   pdfViewer.spreadMode = on ? SpreadMode.ODD : SpreadMode.NONE;
   menuTwoPage.setAttribute('aria-checked', String(on));
 });
+// Hidden annotations and the drawing tools exclude each other: a pen on an
+// invisible layer would draw nothing the reader can see.
+function showAnnotations(show: boolean) {
+  document.body.classList.toggle('vt-hide-annotations', !show);
+  menuAnnotations.setAttribute('aria-checked', String(show));
+}
 menuAnnotations.addEventListener('click', () => {
-  const hidden = document.body.classList.toggle('vt-hide-annotations');
-  menuAnnotations.setAttribute('aria-checked', String(!hidden));
+  const show = document.body.classList.contains('vt-hide-annotations');
+  showAnnotations(show);
+  if (!show && annotate.isOpen) annotate.toggle(false);
 });
+annotate.onOpenChange = (open) => { if (open) showAnnotations(true); };
 menuRotateCcw.addEventListener('click', () => rotate(-90));
 menuFirst.addEventListener('click', () => { pdfViewer.currentPageNumber = 1; });
 menuLast.addEventListener('click', () => { pdfViewer.currentPageNumber = pdfViewer.pagesCount; });
@@ -495,27 +541,34 @@ openNativeBtn.addEventListener('click', () => {
 
 eventBus.on('pagesinit', () => {
   pdfViewer.currentScaleValue = 'auto';
-  const hash = location.hash.slice(1);
+  const plan = classifyViewerHash(location.hash);
   const restore = pendingRestore;
   pendingRestore = null;
-  const params = new URLSearchParams(hash);
-  const zoomOnly = !!hash && [...params.keys()].every((k) => k === 'zoom') && /^\d+(?:\.\d+)?$/u.test(params.get('zoom') ?? '');
-  if (zoomOnly) {
-    // Only a zoom (a PDF gathered from Chrome's viewer): the remembered page
-    // still applies, at that zoom.
+  if (plan.kind === 'position') {
+    // An explicit `#page=…` or destination (link, tab restore after reload)
+    // wins over the remembered position.
+    linkService.setHash(plan.hash);
+  } else {
+    // Otherwise the remembered position, then how the fragment says to show
+    // it (`#zoom=` from Chrome's viewer, `#view=FitH`); `#toolbar=0` and the
+    // like change nothing.
+    if (restore?.zoom && !(plan.kind === 'view' && plan.setsZoom)) pdfViewer.currentScaleValue = restore.zoom;
     if (restore?.page && restore.page <= pdfViewer.pagesCount) pdfViewer.currentPageNumber = restore.page;
-    pdfViewer.currentScaleValue = String(Number(params.get('zoom')) / 100);
-  } else if (hash) {
-    // An explicit `#page=…` (link, tab restore after reload) wins over the
-    // remembered position.
-    linkService.setHash(hash);
-  } else if (restore) {
-    if (restore.zoom) pdfViewer.currentScaleValue = restore.zoom;
-    if (restore.page && restore.page <= pdfViewer.pagesCount) pdfViewer.currentPageNumber = restore.page;
+    applyViewParams(plan);
   }
   updatePageControls();
   syncZoomSelect();
 });
+
+/** A place goes to PDF.js's link service; view parameters apply where the reader is. */
+function applyViewParams(plan: ViewerHashPlan) {
+  if (plan.kind === 'position') {
+    linkService.setHash(plan.hash);
+  } else if (plan.kind === 'view') {
+    if (plan.scale) pdfViewer.currentScaleValue = plan.scale;
+    if (plan.linkHash) linkService.setHash(plan.linkHash);
+  }
+}
 eventBus.on('pagechanging', updatePageControls);
 eventBus.on('scalechanging', syncZoomSelect);
 
@@ -532,32 +585,42 @@ let userTouched = false;
 for (const type of ['pointerdown', 'keydown', 'wheel'] as const) {
   document.addEventListener(type, () => { if (currentDoc) userTouched = true; }, { capture: true, passive: true });
 }
+// While the annotation conflict dialog previews drawings (see above).
+let holdPosition = false;
 let docStateTimer: ReturnType<typeof setTimeout> | null = null;
-let docStateSave: (() => void) | null = null;
+/** The position waiting for the debounce (null once taken). */
+let docStatePending: (() => PdfDocRecord | null) | null = null;
 function rememberDocState() {
   const identity = currentIdentity;
-  if (!identity || !userTouched) return;
+  if (!identity || !userTouched || holdPosition) return;
   if (docStateTimer) clearTimeout(docStateTimer);
-  docStateSave = () => {
-    docStateTimer = null;
-    docStateSave = null;
-    if (currentIdentity !== identity) return;
-    void savePdfDocRecord({
-      ...identity,
-      sourceUrl: currentFileUrl,
-      fileName: currentFileName,
-      page: pdfViewer.currentPageNumber || null,
-      zoom: pdfViewer.currentScaleValue || null,
-      updatedAt: Date.now(),
-    });
-  };
-  docStateTimer = setTimeout(docStateSave, 400);
+  docStatePending = () => (currentIdentity !== identity ? null : {
+    ...identity,
+    sourceUrl: currentFileUrl,
+    fileName: currentFileName,
+    page: pdfViewer.currentPageNumber || null,
+    zoom: pdfViewer.currentScaleValue || null,
+    updatedAt: Date.now(),
+  });
+  docStateTimer = setTimeout(() => { void flushDocState(); }, 400);
+}
+function takePendingDocState(): PdfDocRecord | null {
+  if (docStateTimer) clearTimeout(docStateTimer);
+  docStateTimer = null;
+  const record = docStatePending?.() ?? null;
+  docStatePending = null;
+  return record;
 }
 /** Stores a pending position now instead of after the debounce. */
-function flushDocState() {
-  if (docStateTimer) clearTimeout(docStateTimer);
-  docStateSave?.();
+function flushDocState(): Promise<void> {
+  const record = takePendingDocState();
+  return record ? savePdfDocRecord(record).catch(() => undefined) : Promise.resolve();
 }
+
+// The frame is going away (its hub tab closed): a position still waiting
+// for the debounce goes now. (savePdfDocRecord hands it to the background's
+// serialized writer in this very task, so a removed frame still stores it.)
+window.addEventListener('pagehide', () => { void flushDocState(); });
 eventBus.on('pagechanging', rememberDocState);
 // Selectable text: the PDF's fonts first, then every character on its glyph.
 eventBus.on('textlayerrendered', (evt: { source?: { textLayer?: { div?: HTMLElement }; pdfPage?: object } }) => {
@@ -638,8 +701,9 @@ document.addEventListener('keydown', (e) => {
       case '0': e.preventDefault(); pdfViewer.currentScaleValue = 'auto'; return;
       case '[': e.preventDefault(); rotate(-90); return;
       case ']': e.preventDefault(); rotate(90); return;
-      case 'z': if (!typing && !e.shiftKey) { e.preventDefault(); annotate.undo(); } return;
-      case 'y': if (!typing) { e.preventDefault(); annotate.redo(); } return;
+      // With a tool active PDF.js handles these itself (see annotate.editing).
+      case 'z': if (!typing && !annotate.editing) { e.preventDefault(); if (e.shiftKey) annotate.redo(); else annotate.undo(); } return;
+      case 'y': if (!typing && !annotate.editing) { e.preventDefault(); annotate.redo(); } return;
       default: return;
     }
   }
@@ -648,6 +712,8 @@ document.addEventListener('keydown', (e) => {
     case 'Home': e.preventDefault(); pdfViewer.currentPageNumber = 1; break;
     case 'End': e.preventDefault(); pdfViewer.currentPageNumber = pdfViewer.pagesCount; break;
     case 'Escape':
+      // A selected drawing: PDF.js deselects it, and that is all Esc does.
+      if (annotate.hasSelectedEditor) break;
       if (figureCapture.handleEscape()) break;
       if (!findBar.hidden) closeFindBar();
       else if (annotate.isOpen) annotate.toggle(false);
@@ -703,6 +769,11 @@ function askPassword(reason: number): Promise<string | null> {
   });
 }
 
+/** The reader cancelled the password prompt: nothing more to try or report. */
+class PasswordCancelled extends Error {
+  constructor() { super('password cancelled'); }
+}
+
 function setProgress(ratio: number | null) {
   progress.hidden = ratio === null;
   progressBar.classList.toggle('is-indeterminate', ratio !== null && !Number.isFinite(ratio));
@@ -726,9 +797,12 @@ async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesIn
   task.onProgress = ({ loaded, total }: { loaded: number; total: number }) => {
     if (total > 0) { currentByteLength = total; setProgress(loaded / total); }
   };
+  let cancelled = false;
   task.onPassword = (updatePassword: (password: string) => void, reason: number) => {
     void askPassword(reason).then((password) => {
       if (password === null) {
+        cancelled = true;
+        setProgress(null);
         showMessage(S.passwordCancelled);
         void task.destroy();
       } else {
@@ -736,7 +810,12 @@ async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesIn
       }
     });
   };
-  const doc = await task.promise;
+  let doc: PDFDocumentProxy;
+  try {
+    doc = await task.promise;
+  } catch (error) {
+    throw cancelled ? new PasswordCancelled() : error;
+  }
   setProgress(null);
   hideMessage();
   currentDoc = doc;
@@ -807,6 +886,7 @@ async function reopenInPlace(doc: PDFDocumentProxy): Promise<void> {
     const bytesInfo = currentFileUrl ? null : await inspectPdfBytes(data);
     await openDocument(pdfjsLib.getDocument({ data, ...documentOptions() }), currentLabel, bytesInfo);
   } catch (error) {
+    if (error instanceof PasswordCancelled) return;
     showMessage(S.reloadFailed(error instanceof Error ? error.message : String(error)));
   }
 }
@@ -834,6 +914,7 @@ async function loadFromFile(file: File) {
     await openDocument(pdfjsLib.getDocument({ data, ...documentOptions() }), file.name, bytesInfo);
   } catch (error) {
     setProgress(null);
+    if (error instanceof PasswordCancelled) return;
     showMessage(S.openFailed(error instanceof Error ? error.message : String(error)));
   }
 }
@@ -875,6 +956,8 @@ async function loadFromUrl(fileUrl: string) {
       });
       return;
     } catch (error) {
+      // The same file from the network would ask for the same password.
+      if (error instanceof PasswordCancelled) return;
       debugLog('cache', 'local copy unusable, loading from the network', () => ({ error: error instanceof Error ? error.message : String(error) }));
     }
   }
@@ -886,6 +969,7 @@ async function loadFromUrl(fileUrl: string) {
     void keepLocalCopy(fileUrl, doc, resolved);
   } catch (error) {
     setProgress(null);
+    if (error instanceof PasswordCancelled) return;
     const message = error instanceof Error ? error.message : String(error);
     if (isWeb) {
       // Cross-origin fetch from an extension page needs host access; that is

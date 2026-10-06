@@ -40,10 +40,21 @@ function load(): Promise<Loaded | null> {
   return loading;
 }
 
-/** The model's detections on a page, in PDF points (rotation-0, y down); null if the model cannot run. */
-export function detectLayout(page: PDFPageProxy): Promise<LayoutDetection[] | null> {
+/** Thrown for a queued run that was no longer wanted when its turn came. */
+export class LayoutSkipped extends Error {
+  constructor() { super('layout run skipped'); }
+}
+
+/**
+ * The model's detections on a page, in PDF points (rotation-0, y down); null
+ * if the model cannot run. `wanted` is asked when the run's turn comes (runs
+ * wait for each other): false rejects with LayoutSkipped instead of running.
+ */
+export function detectLayout(page: PDFPageProxy, wanted: () => boolean = () => true): Promise<LayoutDetection[] | null> {
   const run = queue.then(async () => {
+    if (!wanted()) throw new LayoutSkipped();
     const loaded = await load();
+    if (!wanted()) throw new LayoutSkipped();
     if (!loaded) return null;
     const base = page.getViewport({ scale: 1 });
     const scale = RENDER_HEIGHT / base.height;
@@ -75,5 +86,5 @@ export function detectLayout(page: PDFPageProxy): Promise<LayoutDetection[] | nu
     return layoutDetections(rows, count, canvas.height / base.height);
   });
   queue = run.catch(() => undefined);
-  return run.catch(() => null);
+  return run.catch((error: unknown) => { if (error instanceof LayoutSkipped) throw error; return null; });
 }

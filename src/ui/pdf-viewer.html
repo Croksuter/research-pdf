@@ -9,10 +9,6 @@
   <link rel="stylesheet" href="pdfViewer.css">
 </head>
 <body>
-  <!-- Every piece of viewer chrome lives under an element whose id starts with
-       `vocab-t-`: the highlighter and page translator skip such subtrees, so
-       toolbar labels, thumbnails, dialogs and print sheets are never treated as
-       page content. Only #viewerContainer (the PDF.js pages) is scanned. -->
   <svg hidden aria-hidden="true">
     <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
     <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
@@ -78,14 +74,14 @@
         <option value="custom" hidden data-i18n="zoomCustom">사용자 지정</option>
       </select>
       <button id="vt-zoom-in" class="vt-btn vt-icon-btn" type="button" title="확대 (Ctrl++)" aria-label="확대" data-i18n-title="zoomInTitle" data-i18n-aria-label="zoomIn"><svg><use href="#i-plus"/></svg></button>
-      <span class="vt-sep"></span>
+      <span class="vt-sep vt-sep-compact"></span>
       <button id="vt-fit-toggle" class="vt-btn vt-icon-btn" type="button" title="페이지 맞춤 / 너비 맞춤 전환" aria-label="페이지 맞춤 / 너비 맞춤 전환" data-i18n-title="fitToggle" data-i18n-aria-label="fitToggle"><svg><use href="#i-fit-page"/></svg></button>
       <button id="vt-rotate" class="vt-btn vt-icon-btn" type="button" title="시계 방향 회전 (Ctrl+])" aria-label="시계 방향 회전" data-i18n-title="rotateTitle" data-i18n-aria-label="rotate"><svg><use href="#i-rotate"/></svg></button>
       <span class="vt-sep"></span>
       <button id="vt-annotate-toggle" class="vt-btn vt-icon-btn" type="button" title="주석 달기" aria-label="주석 도구 열기/닫기" data-i18n-title="annotateTitle" data-i18n-aria-label="annotateAria" aria-pressed="false" disabled><svg><use href="#i-pen"/></svg></button>
       <button id="vt-undo" class="vt-btn vt-icon-btn" type="button" title="실행취소 (Ctrl+Z)" aria-label="실행취소" data-i18n-title="undoTitle" data-i18n-aria-label="undo" disabled><svg><use href="#i-undo"/></svg></button>
       <button id="vt-redo" class="vt-btn vt-icon-btn" type="button" title="다시실행 (Ctrl+Y)" aria-label="다시실행" data-i18n-title="redoTitle" data-i18n-aria-label="redo" disabled><svg><use href="#i-redo"/></svg></button>
-      <span class="vt-sep"></span>
+      <span class="vt-sep vt-sep-compact"></span>
       <button id="vt-capture" class="vt-btn vt-icon-btn" type="button" title="그림 복사 (⌘⇧X · S · Alt+드래그)" aria-label="그림·표 영역 복사" data-i18n-aria-label="captureAria" aria-pressed="false"><svg><use href="#i-capture"/></svg></button>
     </div>
 
@@ -96,6 +92,14 @@
       <div class="vt-menu-wrap">
         <button id="vt-more" class="vt-btn vt-icon-btn" type="button" title="더보기" aria-label="더보기 메뉴" data-i18n-title="more" data-i18n-aria-label="moreAria" aria-haspopup="menu" aria-expanded="false"><svg><use href="#i-more"/></svg></button>
         <div id="vt-menu" class="vt-menu" role="menu" hidden>
+          <button type="button" role="menuitem" class="vt-menu-item vt-menu-narrow" data-menu-for="vt-download"><span data-i18n="download">다운로드</span> <kbd>Ctrl+S</kbd></button>
+          <button type="button" role="menuitem" class="vt-menu-item vt-menu-narrow" data-menu-for="vt-print"><span data-i18n="print">인쇄</span> <kbd>Ctrl+P</kbd></button>
+          <button type="button" role="menuitem" class="vt-menu-item vt-menu-compact" data-menu-for="vt-undo"><span data-i18n="undo">실행취소</span> <kbd>Ctrl+Z</kbd></button>
+          <button type="button" role="menuitem" class="vt-menu-item vt-menu-compact" data-menu-for="vt-redo"><span data-i18n="redo">다시실행</span> <kbd>Ctrl+Y</kbd></button>
+          <button type="button" role="menuitem" class="vt-menu-item vt-menu-compact" data-menu-for="vt-capture"><span data-i18n="captureMenu">그림 복사</span> <kbd>S</kbd></button>
+          <button type="button" role="menuitem" class="vt-menu-item vt-menu-compact" data-menu-for="vt-fit-toggle"><span id="vt-menu-fit-label" data-i18n="fitToPage">페이지에 맞춤</span></button>
+          <button type="button" role="menuitem" class="vt-menu-item vt-menu-compact" data-menu-for="vt-rotate"><span data-i18n="rotate">시계 방향 회전</span> <kbd>Ctrl+]</kbd></button>
+          <hr class="vt-menu-sep vt-menu-compact">
           <button type="button" role="menuitemcheckbox" class="vt-menu-item" id="vt-menu-two-page" aria-checked="false"><span data-i18n="twoPage">두 페이지 보기</span></button>
           <button type="button" role="menuitemcheckbox" class="vt-menu-item" id="vt-menu-annotations" aria-checked="true"><span data-i18n="showAnnotations">주석 표시</span></button>
           <button type="button" role="menuitem" class="vt-menu-item" id="vt-menu-rotate-ccw"><span data-i18n="rotateCcw">시계 반대 방향 회전</span> <kbd>Ctrl+[</kbd></button>
@@ -138,7 +142,7 @@
     <label class="vt-range"><span data-i18n="opacity">투명도</span><input id="vt-annotate-opacity" type="range" min="10" max="100" value="100" aria-label="투명도" data-i18n-aria-label="opacity"></label>
     <span class="vt-sep"></span>
     <button id="vt-annotate-delete" class="vt-btn vt-icon-btn" type="button" title="선택한 주석 삭제 (Delete)" aria-label="선택한 주석 삭제" data-i18n-title="deleteSelectedTitle" data-i18n-aria-label="deleteSelected" disabled><svg><use href="#i-trash"/></svg></button>
-    <span class="vt-annotate-hint" data-i18n="annotateHint">주석은 다운로드한 PDF에 함께 저장됩니다.</span>
+    <span class="vt-annotate-hint" data-i18n="annotateHint">필기는 자동으로 보관·동기화되며, 다운로드하면 PDF 파일에도 함께 들어갑니다.</span>
   </div>
 
   <aside id="vocab-t-pdf-sidebar" class="vt-sidebar" hidden>
@@ -222,10 +226,6 @@
   <div id="vocab-t-pdf-print" class="vt-print-sheets" aria-hidden="true"></div>
   <input id="vt-open-file-input" type="file" accept="application/pdf,.pdf" hidden>
 
-  <!-- The viewer bundle first (builds the PDF.js text layer), then the very same
-       content-script bundle that runs on ordinary web pages. Content scripts
-       cannot be declared for chrome-extension:// pages, so it is loaded here as
-       a plain page script; its runtime messaging works identically. -->
   <script src="pdfViewer.js"></script>
 </body>
 </html>

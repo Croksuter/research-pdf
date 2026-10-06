@@ -41,7 +41,7 @@ import {
 import type { PaperMeta } from '../../shared/paperIdentifiers';
 import { detectFigures, graphicBoxes, type DetectedFigure, type OpsLike } from '../../shared/figureDetect';
 import { combineLayout } from '../../shared/layoutDetect';
-import { detectLayout } from './layoutModel';
+import { LayoutSkipped, detectLayout } from './layoutModel';
 import { debugLog } from '../../shared/debugLog';
 import { el } from './dom';
 import { S } from './viewerParts.strings';
@@ -87,7 +87,9 @@ export class FigureCapture {
   private options: FigureCopyOptions = DEFAULT_FIGURE_COPY_OPTIONS;
   private mode: CaptureMode = 'off';
   /** Detected figures per page of `linesDoc`, in PDF points. */
-  private detected = new Map<number, Promise<Array<DetectedFigure & { pdf: [number, number, number, number] }>>>();
+  private detected = new Map<number, Promise<Array<DetectedFigure & { pdf: [number, number, number, number] }> | null>>();
+  /** Pages outlined (or being outlined) in this auto-detect session. */
+  private readonly outlined = new Set<number>();
   private region: Region | null = null;
   private label: FigureLabel | null = null;
   private sourceEdited = false;
@@ -126,27 +128,19 @@ export class FigureCapture {
     }, { capture: true });
     for (const name of ['scalechanging', 'rotationchanging', 'pagesdestroy']) deps.eventBus.on(name, () => this.close());
     // Auto-detect outlines follow the pages as they render (scroll, zoom).
+    // Only pages on screen: the model takes a while per page, and a page
+    // rendered ahead is outlined when it scrolls into view.
     deps.eventBus.on('pagerendered', (evt: { pageNumber: number }) => {
-      if (this.mode === 'auto') void this.outlinePage(evt.pageNumber).catch((error: unknown) => debugLog('viewer', 'outline failed', () => ({ error: String(error) })));
+      const doc = deps.getDoc();
+      if (doc && this.wantsOutline(doc, evt.pageNumber)) this.outlineSoon(evt.pageNumber);
     });
+    deps.eventBus.on('updateviewarea', () => this.outlineRenderedPages());
     deps.eventBus.on('pagesdestroy', () => { this.setMode('off'); this.detected.clear(); });
-  }
-
-  get isModeOn(): boolean {
-    return this.mode !== 'off';
-  }
-
-  get currentMode(): CaptureMode {
-    return this.mode;
   }
 
   /** The capture key: free → auto-detect → off. */
   cycleMode(): void {
     this.setMode(this.mode === 'off' ? 'free' : this.mode === 'free' ? 'auto' : 'off');
-  }
-
-  toggleMode(on = this.mode === 'off'): void {
-    this.setMode(on ? 'free' : 'off');
   }
 
   setMode(mode: CaptureMode): void {
@@ -171,24 +165,32 @@ export class FigureCapture {
 
   // ─── Auto-detect ───
 
+  /** Outlines the rendered pages on screen that have none yet. */
   private outlineRenderedPages(): void {
-    const count = this.deps.getDoc()?.numPages ?? 0;
-    for (let i = 0; i < count; i += 1) {
-      const view = this.deps.pdfViewer.getPageView(i) as unknown as (PageViewLike & { canvas?: HTMLCanvasElement | null }) | undefined;
-      if (view?.div.querySelector('canvas')) void this.outlinePage(i + 1).catch((error: unknown) => debugLog('viewer', 'outline failed', () => ({ error: String(error) })));
+    const doc = this.deps.getDoc();
+    if (this.mode !== 'auto' || !doc) return;
+    for (let i = 0; i < doc.numPages; i += 1) {
+      if (this.outlined.has(i + 1) || !this.wantsOutline(doc, i + 1)) continue;
+      const view = this.deps.pdfViewer.getPageView(i) as unknown as PageViewLike | undefined;
+      if (view?.div.querySelector('canvas')) this.outlineSoon(i + 1);
     }
   }
 
+  private outlineSoon(pageNumber: number): void {
+    void this.outlinePage(pageNumber).catch((error: unknown) => debugLog('viewer', 'outline failed', () => ({ error: String(error) })));
+  }
+
   private clearOutlines(): void {
+    this.outlined.clear();
     this.deps.container.querySelectorAll('.vt-figure-box').forEach((node) => node.remove());
   }
 
-  /** The figures and tables of a page (cached per document). */
-  private detect(pageNumber: number): Promise<Array<DetectedFigure & { pdf: [number, number, number, number] }>> {
+  /** The figures and tables of a page (cached per document); null when the run was skipped. */
+  private detect(pageNumber: number): Promise<Array<DetectedFigure & { pdf: [number, number, number, number] }> | null> {
     const doc = this.deps.getDoc();
     if (!doc) return Promise.resolve([]);
     if (this.linesDoc !== doc) { this.linesDoc = doc; this.lines.clear(); this.detected.clear(); }
-    let found = this.detected.get(pageNumber);
+    let found: Promise<Array<DetectedFigure & { pdf: [number, number, number, number] }> | null> | undefined = this.detected.get(pageNumber);
     if (!found) {
       found = (async () => {
         const page = await doc.getPage(pageNumber);
@@ -200,7 +202,9 @@ export class FigureCapture {
         // The layout model finds them in any layout; the PDF's own text and
         // graphics name them and make the edges exact. Without the model
         // (failed to load), the rules alone.
-        const dets = await detectLayout(page);
+        // Queued model runs are skipped once nobody wants them (auto-detect
+        // turned off, another document, the page scrolled away).
+        const dets = await detectLayout(page, () => this.wantsOutline(doc, pageNumber));
         const figures = dets ? combineLayout({ dets, lines, graphics: boxes, page: size, ruleBased }) : ruleBased;
         debugLog('viewer', 'figures detected', () => ({ page: pageNumber, graphics: boxes.length, model: dets !== null, figures }));
         return figures.map((f) => {
@@ -209,6 +213,8 @@ export class FigureCapture {
           return { ...f, pdf: [Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by)] as [number, number, number, number] };
         });
       })().catch((error: unknown) => {
+        // Skipped: not cached, so the page is detected again when it is wanted.
+        if (error instanceof LayoutSkipped) { if (this.detected.get(pageNumber) === found) this.detected.delete(pageNumber); return null; }
         debugLog('viewer', 'figure detection failed', () => ({ page: pageNumber, error: error instanceof Error ? error.message : String(error) }));
         return [];
       });
@@ -217,9 +223,18 @@ export class FigureCapture {
     return found;
   }
 
+  /** Auto-detect is on for this document and the page is on screen. */
+  private wantsOutline(doc: PDFDocumentProxy, pageNumber: number): boolean {
+    if (this.mode !== 'auto' || this.deps.getDoc() !== doc) return false;
+    const visible = (this.deps.pdfViewer as unknown as { _getVisiblePages?: () => { ids?: Set<number> } })._getVisiblePages?.().ids;
+    return !visible || visible.has(pageNumber);
+  }
+
   private async outlinePage(pageNumber: number): Promise<void> {
+    this.outlined.add(pageNumber);
     const figures = await this.detect(pageNumber);
-    debugLog('viewer', 'outline page', () => ({ pageNumber, figures: figures.length, mode: this.mode }));
+    debugLog('viewer', 'outline page', () => ({ pageNumber, figures: figures?.length ?? 'skipped', mode: this.mode }));
+    if (!figures) { this.outlined.delete(pageNumber); return; }
     if (this.mode !== 'auto') return;
     const view = this.deps.pdfViewer.getPageView(pageNumber - 1) as unknown as PageViewLike | undefined;
     if (!view) return;
@@ -585,9 +600,10 @@ async function pageLines(page: PDFPageProxy): Promise<TextLine[]> {
   const placed: PlacedText[] = [];
   for (const item of content.items) {
     if (!('str' in item) || !item.str) continue;
-    const [a, b] = item.transform;
-    if (Math.abs(b) > Math.abs(a)) continue; // vertical text is never a caption
+    // Judged as shown, not as stored: on a /Rotate 90 page upright text is
+    // stored vertical.
     const tx = Util.transform(vp.transform, item.transform);
+    if (Math.abs(tx[1]) > Math.abs(tx[0])) continue; // vertical text is never a caption
     placed.push({ str: item.str, x: tx[4], baseline: tx[5], width: item.width, height: Math.hypot(tx[2], tx[3]) });
   }
   return groupLines(placed);

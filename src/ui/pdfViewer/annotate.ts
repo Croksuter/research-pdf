@@ -32,7 +32,10 @@ export class AnnotationToolbar {
   private readonly opacity = byId<HTMLInputElement>('vt-annotate-opacity');
   private uiManager: AnnotationEditorUIManager | null = null;
   private mode: number = AnnotationEditorType.NONE;
+  private selected = false;
   private inkColor = INK_COLORS[0];
+  /** Told when the bar opens or closes. */
+  onOpenChange: ((open: boolean) => void) | null = null;
   private highlightColor = HIGHLIGHT_SWATCHES[0];
 
   constructor(private readonly pdfViewer: PDFViewer, eventBus: EventBus) {
@@ -40,7 +43,8 @@ export class AnnotationToolbar {
       this.uiManager = evt.uiManager;
       this.toggleBtn.disabled = false;
     });
-    eventBus.on('annotationeditorstateschanged', (evt: { details: EditorStates }) => this.applyStates(evt.details));
+    // (PDF.js 6's name; it was `annotationeditorstateschanged` before.)
+    eventBus.on('editingstateschanged', (evt: { details: EditorStates }) => this.applyStates(evt.details));
     eventBus.on('annotationeditormodechanged', (evt: { mode: number }) => this.reflectMode(evt.mode));
 
     this.toggleBtn.addEventListener('click', () => this.toggle());
@@ -63,6 +67,19 @@ export class AnnotationToolbar {
     return !this.bar.hidden;
   }
 
+  /**
+   * A tool is active. PDF.js then handles Ctrl/⌘+Z / Y and Escape itself (on
+   * window, whatever else did with the event), so the viewer must not too.
+   */
+  get editing(): boolean {
+    return this.mode !== AnnotationEditorType.NONE;
+  }
+
+  /** An annotation is selected (Escape deselects it). */
+  get hasSelectedEditor(): boolean {
+    return this.editing && this.selected;
+  }
+
   undo(): void { this.uiManager?.undo(); }
   redo(): void { this.uiManager?.redo(); }
 
@@ -73,6 +90,7 @@ export class AnnotationToolbar {
     document.body.classList.toggle('vt-annotating', open);
     if (!open) this.setMode(AnnotationEditorType.NONE);
     else if (this.mode === AnnotationEditorType.NONE) this.setMode(AnnotationEditorType.HIGHLIGHT);
+    this.onOpenChange?.(open);
   }
 
   setMode(mode: number): void {
@@ -146,5 +164,6 @@ export class AnnotationToolbar {
     this.undoBtn.disabled = !states.hasSomethingToUndo;
     this.redoBtn.disabled = !states.hasSomethingToRedo;
     this.deleteBtn.disabled = !states.hasSelectedEditor;
+    this.selected = !!states.hasSelectedEditor;
   }
 }

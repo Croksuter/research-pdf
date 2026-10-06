@@ -37,6 +37,7 @@ export interface PdfReference {
 
 const HEADING = /^(?:[0-9]{1,2}\.?|[IVX]{1,4}\.)?\s*(?:references?(?:\s+(?:and|&)\s+notes)?|bibliography|literature\s+cited|works\s+cited|cited\s+literature|reference\s+list|참\s*고\s*문\s*헌|参\s*考\s*文\s*献|literaturverzeichnis|literatur|références|bibliographie)\s*:?$/iu;
 const BRACKET = /^\[(\d{1,4})\]\s*/u;
+const APPENDIX = /^(?:appendix|appendices|supplementary\s+material|부\s*록)(?=\s|$|[.:])/iu;
 const DOTTED = /^(\d{1,4})\.\s+(?=\S)/u;
 const MAX_REFERENCES = 500;
 
@@ -224,8 +225,10 @@ export function extractPdfReferences(input: readonly TextLine[]): PdfReference[]
   for (let i = 0; i < body.length; i += 1) {
     const l = body[i];
     const text = l.text.trim();
-    if (l.h > bodyH * 1.18 && text.length < 80 && /^\p{Lu}|^[A-Z0-9]/u.test(text) && !BRACKET.test(text)) { end = i; break; }
-    if (/^(?:appendix|appendices|supplementary\s+material|부\s*록)\b/iu.test(text) && text.length < 60) { end = i; break; }
+    // (\p{Lo}: headings in scripts without case — 부록, 附录.)
+    if (l.h > bodyH * 1.18 && text.length < 80 && /^[\p{Lu}\p{Lo}0-9]/u.test(text) && !BRACKET.test(text)) { end = i; break; }
+    // A lookahead, not \b: \b never matches after Hangul in a /u regex.
+    if (APPENDIX.test(text) && text.length < 60) { end = i; break; }
   }
   const section = body.slice(0, end);
   if (section.length === 0) return [];

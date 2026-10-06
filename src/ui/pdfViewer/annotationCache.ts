@@ -18,6 +18,8 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { EventBus, PDFViewer } from 'pdfjs-dist/web/pdf_viewer.mjs';
 import { getPdfAnnotationCache, putPdfAnnotationCache } from '../../db/pdfAnnotationRepository';
+import { openDB } from '../../db/database';
+import { STORE_PDF_ANNOTATIONS } from '../../shared/constants';
 import { mergeAnnotationCaches } from '../../shared/pdfSync';
 import { requestPdfSync } from './syncHint';
 import {
@@ -25,6 +27,7 @@ import {
   editorEntryItemKey,
   PDF_ANNOTATION_CACHE_VERSION,
   isEmptyAnnotationCache,
+  parsePdfAnnotationCache,
   parseRect,
   reconcileAnnotations,
   resolveAnnotationConflict,
@@ -75,6 +78,13 @@ interface PageViewLike {
   annotationLayer?: { div?: HTMLDivElement | null } | null;
 }
 
+interface Composed {
+  next: PdfAnnotationCache;
+  previous: PdfAnnotationCache;
+  items: CachedAnnotationItem[];
+  deleted: CachedAnnotationDelete[];
+}
+
 export type ConflictPrompt = (conflict: Extract<AnnotationReconciliation, { kind: 'conflict' }>) => Promise<AnnotationConflictChoice>;
 
 export class AnnotationCache {
@@ -102,6 +112,8 @@ export class AnnotationCache {
   };
   private readonly channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel(ANNOTATION_CHANNEL) : null;
   private outsideTimer: ReturnType<typeof setTimeout> | null = null;
+  /** A snapshot composed but not stored yet (its awaited read is in flight). */
+  private unsaved: Composed | null = null;
 
   constructor(
     eventBus: EventBus,
@@ -114,14 +126,14 @@ export class AnnotationCache {
     });
     eventBus.on('annotationeditorlayerrendered', (evt: { pageNumber: number }) => { void this.restorePage(evt.pageNumber - 1); });
     eventBus.on('annotationlayerrendered', (evt: { pageNumber: number }) => this.hideDeletedOnPage(evt.pageNumber - 1));
-    eventBus.on('annotationeditorstateschanged', () => this.scheduleSnapshot());
+    eventBus.on('editingstateschanged', () => this.scheduleSnapshot());
     eventBus.on('annotationeditormodechanged', () => this.scheduleSnapshot());
     // Moves/resizes/typing change editors without any bus event; the snapshot
     // is debounced and hash-compared, so these are cheap when nothing changed.
     document.addEventListener('pointerup', () => this.scheduleSnapshot());
     document.addEventListener('keyup', () => this.scheduleSnapshot());
     document.addEventListener('visibilitychange', () => { if (document.hidden) void this.flush(); });
-    window.addEventListener('pagehide', () => { void this.flush(); });
+    window.addEventListener('pagehide', () => this.flushOnExit());
     this.channel?.addEventListener('message', (event: MessageEvent<{ docId?: unknown; from?: unknown }>) => {
       if (event.data?.from === VIEWER_INSTANCE || !this.identity || event.data?.docId !== this.identity.docId) return;
       if (this.outsideTimer) clearTimeout(this.outsideTimer);
@@ -147,6 +159,7 @@ export class AnnotationCache {
     this.restoring = new Set();
     this.ready = false;
     this.lastSnapshot = '';
+    this.unsaved = null;
     this.foreign = { items: new Map(), deleted: new Map() };
     if (!identity) return;
     try {
@@ -337,6 +350,81 @@ export class AnnotationCache {
     return entries;
   }
 
+  /**
+   * pagehide (the frame is going away): the store write starts in this very
+   * task, as one IndexedDB transaction that reads and merges inside itself —
+   * an awaited read first might never come back. Deletes of file annotations
+   * not enumerated yet go without their subtype/rect.
+   */
+  private flushOnExit(): void {
+    if (this.snapshotTimer) {
+      clearTimeout(this.snapshotTimer);
+      this.snapshotTimer = null;
+    }
+    const { doc, identity } = this;
+    if (!doc || !identity || !this.ready) return;
+    try {
+      const composed = this.compose(identity, this.serializedEntries()) ?? this.unsaved;
+      if (!composed) return;
+      this.unsaved = null;
+      const { next, previous, items, deleted } = composed;
+      this.cache = next;
+      void openDB().then((db) => {
+        const store = db.transaction(STORE_PDF_ANNOTATIONS, 'readwrite').objectStore(STORE_PDF_ANNOTATIONS);
+        const read = store.get(identity.docId);
+        read.onsuccess = () => {
+          const stored = parsePdfAnnotationCache(read.result);
+          const value = stored && stored.updatedAt !== previous.updatedAt ? this.mergeOutside(next, stored, previous, items, deleted) : next;
+          if (isEmptyAnnotationCache(value)) store.delete(identity.docId);
+          else store.put(value);
+        };
+      });
+      this.channel?.postMessage({ docId: identity.docId, from: VIEWER_INSTANCE });
+      requestPdfSync('edit');
+    } catch (error) {
+      debugError('pdf:annot', 'annotation flush on exit failed', () => ({ error: error instanceof Error ? error.message : String(error) }));
+    }
+  }
+
+  /** The cache to store for these editor entries; null when nothing changed since the last store. */
+  private compose(identity: PdfDocIdentity, entries: Array<[string, unknown]>): Composed | null {
+    const { items, deleted } = snapshotAnnotations({
+      entries,
+      pending: Array.from(this.pending.values()),
+      previous: this.cache,
+      fileMarks: this.fileMarks,
+      now: Date.now(),
+    });
+    const digest = JSON.stringify([items, deleted]);
+    if (digest === this.lastSnapshot) return null;
+    this.lastSnapshot = digest;
+    const previous = this.cache ?? this.emptyCache(identity);
+    const next: PdfAnnotationCache = {
+      ...previous,
+      baseFingerprintModified: identity.fingerprintModified,
+      items: withForeign(items, this.foreign.items, (item) => item.key),
+      deleted: withForeign(deleted, this.foreign.deleted, (entry) => entry.id),
+      updatedAt: Date.now(),
+    };
+    return { next, previous, items, deleted };
+  }
+
+  /**
+   * Another writer (cloud sync) changed the stored cache since this page last
+   * read or wrote it: merge against what this page last saw, and keep the
+   * outside drawings so they survive every later snapshot too.
+   */
+  private mergeOutside(next: PdfAnnotationCache, stored: PdfAnnotationCache, previous: PdfAnnotationCache, items: CachedAnnotationItem[], deleted: CachedAnnotationDelete[]): PdfAnnotationCache {
+    const merged = mergeAnnotationCaches(next, stored, previous.updatedAt === 0 ? null : previous);
+    const own = new Set(items.map((item) => item.key));
+    const ownDeletes = new Set(deleted.map((entry) => entry.id));
+    merged.items.forEach((item) => { if (!own.has(item.key)) this.foreign.items.set(item.key, item); });
+    merged.deleted.forEach((entry) => { if (!ownDeletes.has(entry.id)) this.foreign.deleted.set(entry.id, entry); });
+    merged.updatedAt = Date.now();
+    debugLog('pdf:annot', 'merged an outside write into the snapshot', () => ({ foreign: this.foreign.items.size }));
+    return merged;
+  }
+
   private async snapshot(): Promise<void> {
     const { doc, identity } = this;
     if (!doc || !identity || !this.ready) return;
@@ -357,39 +445,17 @@ export class AnnotationCache {
         if (session !== this.session) return;
         this.fileMarks = [...(this.fileMarks ?? []), ...extra.filter((m) => !known.has(m.id))];
       }
-      const { items, deleted } = snapshotAnnotations({
-        entries,
-        pending: Array.from(this.pending.values()),
-        previous: this.cache,
-        fileMarks: this.fileMarks,
-        now: Date.now(),
-      });
-      const digest = JSON.stringify([items, deleted]);
-      if (digest === this.lastSnapshot) return;
-      this.lastSnapshot = digest;
-      const previous = this.cache ?? this.emptyCache(identity);
-      let next: PdfAnnotationCache = {
-        ...previous,
-        baseFingerprintModified: identity.fingerprintModified,
-        items: withForeign(items, this.foreign.items, (item) => item.key),
-        deleted: withForeign(deleted, this.foreign.deleted, (entry) => entry.id),
-        updatedAt: Date.now(),
-      };
-      // Another writer (cloud sync) may have changed the stored cache since
-      // this page last read or wrote it. Never overwrite that blindly: merge
-      // against what this page last saw, and keep the outside drawings so they
-      // survive every later snapshot too.
+      const composed = this.compose(identity, entries);
+      if (!composed) return;
+      const { previous, items, deleted } = composed;
+      let { next } = composed;
+      this.unsaved = composed;
+      // Never overwrite another writer's change blindly (see mergeOutside).
       const stored = await getPdfAnnotationCache(identity.docId);
+      if (this.unsaved !== composed) return; // stored on exit meanwhile
+      this.unsaved = null;
       if (session !== this.session) return;
-      if (stored && stored.updatedAt !== previous.updatedAt) {
-        next = mergeAnnotationCaches(next, stored, previous.updatedAt === 0 ? null : previous);
-        const own = new Set(items.map((item) => item.key));
-        const ownDeletes = new Set(deleted.map((entry) => entry.id));
-        next.items.forEach((item) => { if (!own.has(item.key)) this.foreign.items.set(item.key, item); });
-        next.deleted.forEach((entry) => { if (!ownDeletes.has(entry.id)) this.foreign.deleted.set(entry.id, entry); });
-        next.updatedAt = Date.now();
-        debugLog('pdf:annot', 'merged an outside write into the snapshot', () => ({ foreign: this.foreign.items.size }));
-      }
+      if (stored && stored.updatedAt !== previous.updatedAt) next = this.mergeOutside(next, stored, previous, items, deleted);
       this.cache = next;
       await putPdfAnnotationCache(next);
       this.channel?.postMessage({ docId: identity.docId, from: VIEWER_INSTANCE });
