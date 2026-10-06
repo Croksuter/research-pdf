@@ -6,44 +6,19 @@
 
 import { DEFAULT_WEB_PDF_VIEWER_ENABLED, WEB_PDF_VIEWER_ENABLED_SETTING_KEY } from '../shared/constants';
 import { getSetting } from '../db/settingsRepository';
-import { PDF_HUB_PAGE, WEB_PDF_HOST_ORIGINS } from '../shared/localPdf';
+import { PDF_HUB_PAGE } from '../shared/localPdf';
 import { currentLanguage, localizeDocument } from '../shared/i18n';
+import type { PdfSyncPublicStatus } from '../background/pdfSyncService';
+import { byId, hasWebAccess, send } from './pageKit';
 import { S } from './popup.strings';
 
 localizeDocument(S);
-
-const byId = <T extends HTMLElement>(id: string): T => {
-  const element = document.getElementById(id);
-  if (!element) throw new Error(`missing element #${id}`);
-  return element as T;
-};
 
 const syncSummary = byId<HTMLParagraphElement>('sync-summary');
 const syncAction = byId<HTMLButtonElement>('sync-action');
 const webHint = byId<HTMLParagraphElement>('web-hint');
 
-type SyncStatus = {
-  googleConfigured: boolean;
-  googleConnected: boolean;
-  googleAccountEmail: string;
-  enabled: boolean;
-  lastSyncAt: string | null;
-  error: string | null;
-  syncing: boolean;
-};
-
-function send<T>(message: Record<string, unknown>): Promise<T | null> {
-  return new Promise((resolve) => {
-    try {
-      chrome.runtime.sendMessage(message, (response) => {
-        if (chrome.runtime.lastError) { resolve(null); return; }
-        resolve(response as T);
-      });
-    } catch {
-      resolve(null);
-    }
-  });
-}
+type SyncStatus = PdfSyncPublicStatus;
 
 /** The settings page lives in the PDF tab: the background brings one forward with it. */
 function openSettings(): void {
@@ -88,7 +63,7 @@ byId('web-hint-open').addEventListener('click', openSettings);
 
 async function loadWebHint(): Promise<void> {
   const enabled = await getSetting(WEB_PDF_VIEWER_ENABLED_SETTING_KEY, DEFAULT_WEB_PDF_VIEWER_ENABLED);
-  const granted = await chrome.permissions.contains({ origins: [...WEB_PDF_HOST_ORIGINS] }).catch(() => false);
+  const granted = await hasWebAccess();
   webHint.hidden = enabled && granted;
 }
 

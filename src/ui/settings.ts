@@ -23,8 +23,8 @@ import {
 import { getSetting, setSetting } from '../db/settingsRepository';
 import { dbGetAll } from '../db/database';
 import { clearPdfFileCache, pdfFileCacheUsage } from '../db/pdfFileCache';
-import { PDF_HUB_PAGE, WEB_PDF_HOST_ORIGINS, buildPdfHubEntryUrl } from '../shared/localPdf';
-import { GATHER_MESSAGE, closeTabs, findOpenPdfTabs, zoomHash } from './openPdfTabs';
+import { WEB_PDF_HOST_ORIGINS } from '../shared/localPdf';
+import { GATHER_MESSAGE, GATHER_RESULT_MESSAGE, SETTINGS_SHOWN_MESSAGE, findOpenPdfTabs } from './openPdfTabs';
 import { PDF_CACHE_MAX_BYTES } from '../shared/pdfCachePolicy';
 import { PDF_LIBRARY_STORAGE_KEY, parsePdfLibrary } from '../shared/pdfLibrary';
 import { PDF_PROJECTS_STORAGE_KEY, parsePdfProjects } from '../shared/pdfProjects';
@@ -32,37 +32,21 @@ import { isEmptyAnnotationCache, parsePdfAnnotationCache } from '../shared/pdfAn
 import { openAlexCheck, semanticScholarCheck, type ApiCheck } from '../shared/apiStatus';
 import { DISPLAY_PREFS_STORAGE_KEY, parseDisplayPrefs, type DisplayPrefs } from '../shared/displayPrefs';
 import { LANGUAGE_STORAGE_KEY, currentLanguage, localizeDocument, parseLanguagePref, saveLanguagePref } from '../shared/i18n';
+import { SHORTCUTS, SHORTCUT_GROUPS, shortcutLabel } from '../shared/shortcuts';
+import type { PdfSyncPublicStatus } from '../background/pdfSyncService';
+import {
+  byId, closeWhenGathered, hasFileAccess, hasWebAccess, isHubMessage, openExtensionDetails, openInHub, parseGatherResult, send, shortcutKeys,
+} from './pageKit';
 import { S } from './settings.strings';
 
 localizeDocument(S);
 document.title = S.pageTitle;
-
-const byId = <T extends HTMLElement>(id: string): T => {
-  const element = document.getElementById(id);
-  if (!element) throw new Error(`missing element #${id}`);
-  return element as T;
-};
-
-function send<T>(message: Record<string, unknown>): Promise<T | null> {
-  return new Promise((resolve) => {
-    try {
-      chrome.runtime.sendMessage(message, (response) => {
-        if (chrome.runtime.lastError) { resolve(null); return; }
-        resolve(response as T);
-      });
-    } catch {
-      resolve(null);
-    }
-  });
-}
 
 function badge(element: HTMLElement, text: string, tone: 'ok' | 'warn' | 'muted'): void {
   element.textContent = text;
   element.dataset.tone = tone;
   element.hidden = !text;
 }
-
-const MAC = /Mac|iPhone|iPad/u.test(navigator.platform);
 
 // The settings live in the PDF tab (the hub frames this page, which then
 // takes the hub's colors). Opened on its own — Chrome's extension options —
@@ -116,16 +100,7 @@ for (const card of cards) observer.observe(card);
 
 // ─── Sync ───
 
-type SyncStatus = {
-  googleConfigured: boolean;
-  googleConnected: boolean;
-  googleAccountEmail: string;
-  enabled: boolean;
-  lastSyncAt: string | null;
-  error: string | null;
-  pendingLocalChanges: boolean;
-  syncing: boolean;
-};
+type SyncStatus = PdfSyncPublicStatus;
 
 const syncAvatar = byId<HTMLDivElement>('sync-avatar');
 const syncAccount = byId<HTMLParagraphElement>('sync-account');
@@ -135,6 +110,9 @@ const syncConnectButton = byId<HTMLButtonElement>('sync-connect');
 const syncNowButton = byId<HTMLButtonElement>('sync-now');
 const syncDisconnectButton = byId<HTMLButtonElement>('sync-disconnect');
 const syncSetup = byId<HTMLParagraphElement>('sync-setup');
+const syncSetupDev = byId<HTMLParagraphElement>('sync-setup-dev');
+let lastSync: SyncStatus | null = null;
+let syncPoll: ReturnType<typeof setTimeout> | undefined;
 
 function redirectUri(): string {
   try { return chrome.identity.getRedirectURL(); } catch { return ''; }
@@ -153,7 +131,11 @@ function renderSync(status: SyncStatus): void {
   syncNowButton.hidden = !status.googleConnected;
   syncNowButton.disabled = !status.enabled || status.syncing;
   syncDisconnectButton.hidden = !status.googleConnected;
-  syncSetup.textContent = status.googleConfigured
+  // Usable again after a reconnect or a disconnect that failed.
+  syncDisconnectButton.disabled = false;
+  // What a user can do; the OAuth details are for whoever builds the extension.
+  syncSetup.textContent = status.googleConfigured ? S.signInHelp : S.signInUnavailable;
+  syncSetupDev.textContent = status.googleConfigured
     ? S.setupConfigured(redirectUri())
     : S.setupMissing(redirectUri());
   if (status.syncing) syncStatus.textContent = S.syncing;
@@ -162,6 +144,10 @@ function renderSync(status: SyncStatus): void {
     syncStatus.textContent = S.lastSync(new Date(status.lastSyncAt).toLocaleString(currentLanguage()), status.pendingLocalChanges);
   } else if (status.googleConnected) syncStatus.textContent = status.enabled ? S.waitingFirst : S.syncOff;
   else syncStatus.textContent = S.syncHint;
+  lastSync = status;
+  // A sync in progress finishes in the background: look again until it has.
+  clearTimeout(syncPoll);
+  if (status.syncing) syncPoll = setTimeout(() => { if (document.visibilityState === 'visible') void loadSync(); }, 1_500);
 }
 
 async function loadSync(): Promise<void> {
@@ -183,6 +169,7 @@ syncConnectButton.addEventListener('click', () => {
 });
 
 syncDisconnectButton.addEventListener('click', () => {
+  if (!confirm(S.confirmDisconnect(lastSync?.googleAccountEmail || S.googleAccount))) return;
   syncDisconnectButton.disabled = true;
   void send<{ success: boolean; error?: string }>({ type: 'VOCAB_T_DISCONNECT_GOOGLE_SYNC' }).then(async (response) => {
     await loadSync();
@@ -192,9 +179,15 @@ syncDisconnectButton.addEventListener('click', () => {
   });
 });
 
+// The switch shows what the background did, not what was asked: a refusal
+// or no answer puts it back.
 syncEnabledInput.addEventListener('change', () => {
   void send<{ success: boolean; status?: SyncStatus }>({ type: 'VOCAB_T_SET_PDF_SYNC_ENABLED', enabled: syncEnabledInput.checked })
-    .then((response) => { if (response?.status) renderSync(response.status); });
+    .then(async (response) => {
+      if (response?.success && response.status) { renderSync(response.status); return; }
+      await loadSync();
+      syncStatus.textContent = S.syncSwitchFailed;
+    });
 });
 
 syncNowButton.addEventListener('click', () => {
@@ -216,26 +209,10 @@ const fileAccessOpen = byId<HTMLButtonElement>('file-access-open');
 const restoreTabsButton = byId<HTMLButtonElement>('restore-viewer-tabs');
 const openStatus = byId<HTMLParagraphElement>('open-status');
 
-async function hasWebPdfHostAccess(): Promise<boolean> {
-  try {
-    return await chrome.permissions.contains({ origins: [...WEB_PDF_HOST_ORIGINS] });
-  } catch {
-    return false;
-  }
-}
-
-async function hasFileAccess(): Promise<boolean> {
-  try {
-    return await chrome.extension.isAllowedFileSchemeAccess();
-  } catch {
-    return false;
-  }
-}
-
 /** What Chrome actually allows, next to the switches that need it. */
 async function renderAccess(): Promise<void> {
   const [web, file, webOn, localOn] = await Promise.all([
-    hasWebPdfHostAccess(),
+    hasWebAccess(),
     hasFileAccess(),
     getSetting(WEB_PDF_VIEWER_ENABLED_SETTING_KEY, DEFAULT_WEB_PDF_VIEWER_ENABLED),
     getSetting(LOCAL_PDF_VIEWER_ENABLED_SETTING_KEY, DEFAULT_LOCAL_PDF_VIEWER_ENABLED),
@@ -255,7 +232,7 @@ webPdfInput.addEventListener('change', () => {
   void (async () => {
     const enable = webPdfInput.checked;
     if (enable) {
-      let granted = await hasWebPdfHostAccess();
+      let granted = await hasWebAccess();
       if (!granted) {
         try {
           granted = await chrome.permissions.request({ origins: [...WEB_PDF_HOST_ORIGINS] });
@@ -289,12 +266,9 @@ localPdfInput.addEventListener('change', () => {
   });
 });
 
-fileAccessOpen.addEventListener('click', () => {
-  void chrome.tabs.create({ url: `chrome://extensions/?id=${chrome.runtime.id}` });
-});
+fileAccessOpen.addEventListener('click', openExtensionDetails);
 
-// Coming back from Chrome's extension page, or a grant made elsewhere.
-window.addEventListener('focus', () => { void renderAccess(); });
+// A grant made elsewhere (coming back from Chrome's extension page: refresh() below).
 chrome.permissions.onAdded.addListener(() => { void renderAccess(); });
 chrome.permissions.onRemoved.addListener(() => { void renderAccess(); });
 
@@ -312,18 +286,38 @@ restoreTabsButton.addEventListener('click', () => {
 });
 
 // Gather the PDFs open in Chrome's own viewer: into the hub this page is
-// framed in, or (on its own) the way a PDF from the web opens.
-byId<HTMLButtonElement>('gather-open-pdfs').addEventListener('click', () => {
+// framed in (which answers with what it gathered and what it left open), or
+// (on its own) the way a PDF from the web opens, each original tab closing
+// once its document is in a PDF tab (ui/pageKit.ts).
+const gatherButton = byId<HTMLButtonElement>('gather-open-pdfs');
+let gatherWait: ReturnType<typeof setTimeout> | undefined;
+
+function gatherFinished(gathered: number, kept: number): void {
+  clearTimeout(gatherWait);
+  gatherWait = undefined;
+  gatherButton.disabled = false;
+  openStatus.textContent = kept ? `${S.gatherDone(gathered)} ${S.gatherKept(kept)}` : S.gatherDone(gathered);
+}
+
+gatherButton.addEventListener('click', () => {
   void (async () => {
     const { tabs, hidden } = await findOpenPdfTabs();
     if (tabs.length === 0) { openStatus.textContent = hidden ? S.gatherNeedsAccess : S.gatherNone; return; }
+    gatherButton.disabled = true;
+    openStatus.textContent = S.gatherWorking;
     if (embedded) {
       window.parent.postMessage({ tag: GATHER_MESSAGE, tabs }, location.origin);
-    } else {
-      for (const tab of tabs) await chrome.tabs.create({ url: buildPdfHubEntryUrl(tab.url + zoomHash(tab), chrome.runtime.getURL(PDF_HUB_PAGE)), active: false });
-      await closeTabs(tabs);
+      gatherWait = setTimeout(() => {
+        gatherWait = undefined;
+        gatherButton.disabled = false;
+        openStatus.textContent = S.gatherNoAnswer;
+      }, 60_000);
+      return;
     }
-    openStatus.textContent = S.gatherDone(tabs.length);
+    const since = Date.now();
+    await openInHub(tabs);
+    const { kept } = await closeWhenGathered(tabs, since);
+    gatherFinished(tabs.length, kept.length);
   })();
 });
 
@@ -373,6 +367,7 @@ interface KeyField {
   setting: string;
   input: HTMLInputElement;
   save: HTMLButtonElement;
+  remove: HTMLButtonElement;
   check: HTMLButtonElement;
   state: HTMLSpanElement;
   result: HTMLParagraphElement;
@@ -398,6 +393,7 @@ const keyFields: KeyField[] = [
     setting: OPENALEX_API_KEY_SETTING_KEY,
     input: byId('openalex-api-key-input'),
     save: byId('openalex-api-key-save'),
+    remove: byId('openalex-api-key-remove'),
     check: byId('openalex-check'),
     state: byId('openalex-key-state'),
     result: byId('openalex-check-result'),
@@ -414,6 +410,7 @@ const keyFields: KeyField[] = [
     setting: SEMANTIC_SCHOLAR_API_KEY_SETTING_KEY,
     input: byId('s2-api-key-input'),
     save: byId('s2-api-key-save'),
+    remove: byId('s2-api-key-remove'),
     check: byId('s2-check'),
     state: byId('s2-key-state'),
     result: byId('s2-check-result'),
@@ -429,17 +426,28 @@ async function renderKey(field: KeyField): Promise<string> {
   const key = (await getSetting<string>(field.setting, '')).trim();
   badge(field.state, key ? S.keySaved : S.keyNone, key ? 'ok' : 'muted');
   field.input.placeholder = key ? S.keyPlaceholderSaved : S.keyPlaceholderEmpty;
+  field.remove.hidden = !key;
   return key;
 }
 
 for (const field of keyFields) {
+  // Saving needs a key: an empty field never removes the saved one ("Remove" does).
   field.save.addEventListener('click', () => {
     const key = field.input.value.trim();
+    field.result.dataset.state = '';
+    if (!key) { field.result.textContent = S.keyEmpty; return; }
     void setSetting(field.setting, key).then(async () => {
       field.input.value = '';
       await renderKey(field);
+      field.result.textContent = S.keySavedNote;
+    });
+  });
+  field.remove.addEventListener('click', () => {
+    void setSetting(field.setting, '').then(async () => {
+      field.input.value = '';
+      await renderKey(field);
       field.result.dataset.state = '';
-      field.result.textContent = key ? S.keySavedNote : S.keyRemoved;
+      field.result.textContent = S.keyRemoved;
     });
   });
   field.input.addEventListener('keydown', (e) => { if (e.key === 'Enter') field.save.click(); });
@@ -499,81 +507,36 @@ fileCacheInput.addEventListener('change', () => {
   });
 });
 
+// Up to the whole cache in one click: say how much, and what cannot come back.
 cacheClearButton.addEventListener('click', () => {
-  void clearPdfFileCache().then(() => {
+  void (async () => {
+    const { files, bytes } = await pdfFileCacheUsage().catch(() => ({ files: 0, bytes: 0 }));
+    if (files === 0 || !confirm(S.confirmClearCache(files, megabytes(bytes)))) return;
+    await clearPdfFileCache();
     storageStatus.textContent = S.cacheCleared;
-    return renderStorage();
-  });
+    await renderStorage();
+  })();
 });
 
 // ─── Shortcuts ───
 
-/** Keys as written on this platform: ⌥ ⇧ ⌘ on a Mac, Alt Shift Ctrl elsewhere. */
-function keyCaps(combo: string): HTMLElement {
-  const wrap = document.createElement('span');
-  wrap.className = 'st-combo';
-  combo.split(' / ').forEach((alternative, i) => {
-    if (i > 0) wrap.append(document.createTextNode(' / '));
-    // "Ctrl++" is Ctrl and the plus key.
-    for (const part of alternative.replace(/\+\+$/u, '+PLUS').split('+').map((p) => (p === 'PLUS' ? '+' : p))) {
-      const name = MAC ? ({ Alt: '⌥', Shift: '⇧', Ctrl: '⌘' } as Record<string, string>)[part] ?? part : part;
-      const kbd = document.createElement('kbd');
-      kbd.textContent = name;
-      wrap.append(kbd);
-    }
-  });
-  return wrap;
-}
-
-function shortcuts(): Array<{ group: string; keys: Array<[string, string]> }> {
-  return [
-    {
-      group: S.groupTabs,
-      keys: [
-        ['Alt+Shift+← / Alt+Shift+→', S.scPrevNextTab],
-        ['Alt+W', S.scCloseTab],
-        ['Alt+Shift+T', S.scReopenTab],
-        ['Alt+↑ / Alt+↓', S.scMoveInProject],
-      ],
-    },
-    {
-      group: S.groupView,
-      keys: [
-        ['Ctrl+F', S.scFind],
-        ['Ctrl+G / Ctrl+Shift+G', S.scFindNext],
-        ['Ctrl++ / Ctrl+-', S.scZoom],
-        ['Ctrl+0', S.scFit],
-        ['Ctrl+[ / Ctrl+]', S.scRotate],
-        ['Home / End', S.scFirstLast],
-        ['Ctrl+P', S.scPrint],
-        ['Ctrl+S', S.scDownload],
-      ],
-    },
-    {
-      group: S.groupAnnotate,
-      keys: [
-        ['Ctrl+Z / Ctrl+Y', S.scUndoRedo],
-        ['S / Ctrl+Shift+X', S.scCapture],
-        ['Esc', S.scEsc],
-      ],
-    },
-  ];
-}
-
+/** The one shortcut table (shared/shortcuts.ts), by group. */
 function renderShortcuts(): void {
   const host = byId<HTMLDivElement>('shortcuts');
-  for (const { group, keys } of shortcuts()) {
+  for (const { group, label } of SHORTCUT_GROUPS) {
     const section = document.createElement('div');
     section.className = 'st-keys-group';
     const title = document.createElement('h3');
-    title.textContent = group;
+    title.textContent = shortcutLabel(label);
     const list = document.createElement('dl');
-    for (const [combo, what] of keys) {
+    for (const shortcut of SHORTCUTS.filter((s) => s.group === group)) {
       const row = document.createElement('div');
       const dt = document.createElement('dt');
-      dt.append(keyCaps(combo));
+      const combo = document.createElement('span');
+      combo.className = 'st-combo';
+      dt.append(shortcutKeys(shortcut, combo));
       const dd = document.createElement('dd');
-      dd.textContent = what;
+      dd.textContent = shortcutLabel(shortcut.label);
       row.append(dt, dd);
       list.append(row);
     }
@@ -594,5 +557,31 @@ async function loadSettings(): Promise<void> {
   await Promise.all([renderAccess(), renderDisplay(), ...keyFields.map(renderKey), renderStorage()]);
 }
 
+// The hub keeps this frame once made, so what it shows can go stale: look
+// again when the hub shows it, when the tab comes back, and when a sync or
+// another page changed the library or the projects. (The sync state itself
+// lives in IndexedDB, which announces nothing; a running sync is polled.)
+let refreshing: Promise<void> | null = null;
+let refreshAgain = false;
+function refresh(): void {
+  if (refreshing) { refreshAgain = true; return; }
+  refreshing = Promise.all([loadSettings(), loadSync()]).then(() => undefined, () => undefined).finally(() => {
+    refreshing = null;
+    if (refreshAgain) { refreshAgain = false; refresh(); }
+  });
+}
+
+window.addEventListener('message', (event) => {
+  if (!embedded || event.origin !== location.origin || event.source !== window.parent) return;
+  if (isHubMessage(event.data, SETTINGS_SHOWN_MESSAGE)) { refresh(); return; }
+  const result = parseGatherResult(event.data, GATHER_RESULT_MESSAGE);
+  if (result && gatherWait !== undefined) gatherFinished(result.gathered, result.kept);
+});
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refresh(); });
+window.addEventListener('focus', refresh);
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && (changes[PDF_LIBRARY_STORAGE_KEY] || changes[PDF_PROJECTS_STORAGE_KEY] || changes[DISPLAY_PREFS_STORAGE_KEY])) refresh();
+});
+
 renderShortcuts();
-void Promise.all([loadSettings(), loadSync()]);
+refresh();

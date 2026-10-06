@@ -213,7 +213,10 @@ a { color: var(--accent); }
 .st-account-text .st-row-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; display: block; }
 .st-details { padding: 0 0 12px; color: var(--text-muted); font-size: 12.5px; }
 .st-details summary { cursor: pointer; }
-.st-details p { word-break: break-all; }
+.st-details p { overflow-wrap: anywhere; }
+/* The redirect URI and OAuth notes, folded inside "when sign-in fails". */
+.st-dev { padding: 0 0 0 12px; }
+.st-dev p { word-break: break-all; }
 
 /* ── Keys ── */
 .st-field .st-row-title { display: flex; }

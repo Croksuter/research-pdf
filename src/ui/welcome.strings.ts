@@ -5,6 +5,7 @@ export const S = messages({
   ko: {
     pageTitle: 'ResearchPDF 시작하기',
     language: '언어',
+    languageAuto: '자동 (브라우저 언어)',
     next: '다음',
     back: '이전',
     skip: '건너뛰기',
@@ -29,7 +30,7 @@ export const S = messages({
     webDenied: '권한이 허용되지 않았습니다. 나중에 설정에서 다시 켤 수 있습니다.',
     fileTitle: '컴퓨터의 PDF',
     fileSubOn: 'file:// 로 연 PDF도 ResearchPDF로 열립니다.',
-    fileSubOff: 'Chrome의 확장 프로그램 세부정보에서 "파일 URL에 대한 액세스 허용"을 켜야 열립니다.',
+    fileSubOff: 'Chrome의 확장 프로그램 세부정보에서 "파일 URL에 대한 액세스 허용"을 켜야 열립니다. 켜면 Chrome이 확장 프로그램을 다시 불러오면서 이 안내가 잠깐 닫히고, 이 단계로 다시 열립니다.',
     fileOn: '켜짐',
     fileOpenChrome: 'Chrome에서 켜기',
 
@@ -40,6 +41,9 @@ export const S = messages({
     gatherCloseOriginals: '모은 뒤 원래 탭 닫기',
     gatherButton: (n: number) => `PDF ${n}개 모으기`,
     gatherDone: (n: number) => `PDF ${n}개를 PDF 탭으로 모았습니다.`,
+    gatherOpened: (n: number) => `PDF ${n}개를 PDF 탭으로 보냈습니다.`,
+    gatherClosing: (closed: number, total: number) => `PDF 탭에 들어간 것부터 원래 탭을 닫는 중… (${closed}/${total})`,
+    gatherKept: (n: number) => `${n}개는 아직 PDF 탭에 열리지 않아 원래 탭을 그대로 두었습니다. PDF 탭에 들어간 것을 확인한 뒤 직접 닫으세요.`,
 
     syncTitle: '모든 기기에서 이어 볼까요?',
     syncLead: 'Google 계정을 연결하면 필기, 읽던 페이지, 프로젝트가 내 Google Drive의 앱 전용 숨김 폴더를 통해 모든 Chrome 프로필과 기기를 따라옵니다. 이 폴더 밖의 Drive 파일은 볼 수 없고, PDF 파일은 올리지 않습니다.',
@@ -61,10 +65,6 @@ export const S = messages({
     tourFiguresTitle: '그림·표 캡처',
     tourFigures: 'S: 영역 캡처 → 한 번 더: 그림·표 자동 인식. 누르면 출처와 함께 복사.',
     tourKeysTitle: '자주 쓰는 단축키',
-    keyNext: '다음·이전 탭',
-    keyClose: '탭 닫기',
-    keyReopen: '닫은 탭 다시 열기',
-    keyCapture: '그림 캡처',
 
     doneTitle: '준비 끝!',
     doneLead: '웹에서 PDF를 열거나, 파일을 PDF 탭에 끌어다 놓으면 시작됩니다. 설정은 PDF 탭 오른쪽 위 ⚙에 있습니다.',
@@ -74,6 +74,7 @@ export const S = messages({
   en: {
     pageTitle: 'Get started with ResearchPDF',
     language: 'Language',
+    languageAuto: 'Automatic (browser language)',
     next: 'Next',
     back: 'Back',
     skip: 'Skip',
@@ -98,7 +99,7 @@ export const S = messages({
     webDenied: 'Access wasn’t granted. You can turn this on later in settings.',
     fileTitle: 'PDFs on your computer',
     fileSubOn: 'PDFs opened from file:// open in ResearchPDF too.',
-    fileSubOff: 'Turn on “Allow access to file URLs” in the extension’s details in Chrome.',
+    fileSubOff: 'Turn on “Allow access to file URLs” in the extension’s details in Chrome. Chrome then reloads the extension, which closes this guide for a moment; it comes back at this step.',
     fileOn: 'On',
     fileOpenChrome: 'Turn on in Chrome',
 
@@ -109,6 +110,11 @@ export const S = messages({
     gatherCloseOriginals: 'Close the original tabs afterwards',
     gatherButton: (n: number) => `Gather ${n} PDF${n === 1 ? '' : 's'}`,
     gatherDone: (n: number) => `Gathered ${n} PDF${n === 1 ? '' : 's'} into the PDF tab.`,
+    gatherOpened: (n: number) => `Sent ${n} PDF${n === 1 ? '' : 's'} to the PDF tab.`,
+    gatherClosing: (closed: number, total: number) => `Closing each original tab once its PDF is in the PDF tab… (${closed} of ${total})`,
+    gatherKept: (n: number) => n === 1
+      ? 'One hadn’t opened in the PDF tab yet, so its original tab was left open. Close it yourself once you see it there.'
+      : `${n} hadn’t opened in the PDF tab yet, so their original tabs were left open. Close them yourself once you see them there.`,
 
     syncTitle: 'Pick up on every device?',
     syncLead: 'Connect a Google account and your annotations, reading positions and projects follow you to every Chrome profile and device through a hidden app-only folder in your Google Drive. It can’t see any other Drive files, and PDF files are never uploaded.',
@@ -130,10 +136,6 @@ export const S = messages({
     tourFiguresTitle: 'Figure capture',
     tourFigures: 'S: capture a region → again: find figures and tables. Click to copy with the source.',
     tourKeysTitle: 'Handy shortcuts',
-    keyNext: 'Next / previous tab',
-    keyClose: 'Close tab',
-    keyReopen: 'Reopen closed tab',
-    keyCapture: 'Figure capture',
 
     doneTitle: 'All set!',
     doneLead: 'Open a PDF on the web, or drop a file onto the PDF tab, to begin. Settings are under ⚙ at the top right of the PDF tab.',

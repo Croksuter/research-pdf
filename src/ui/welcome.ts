@@ -8,33 +8,18 @@
 
 import { DEFAULT_LOCAL_PDF_VIEWER_ENABLED, LOCAL_PDF_VIEWER_ENABLED_SETTING_KEY, WEB_PDF_VIEWER_ENABLED_SETTING_KEY } from '../shared/constants';
 import { getSetting, setSetting } from '../db/settingsRepository';
-import { PDF_HUB_PAGE, WEB_PDF_HOST_ORIGINS, buildPdfHubEntryUrl, buildPdfHubUrl } from '../shared/localPdf';
-import { closeTabs, findOpenPdfTabs, tabPlace, zoomHash, type OpenPdfTab } from './openPdfTabs';
-import { currentLanguage, localizeDocument, saveLanguagePref } from '../shared/i18n';
+import { PDF_HUB_PAGE, WEB_PDF_HOST_ORIGINS, buildPdfHubUrl } from '../shared/localPdf';
+import { findOpenPdfTabs, tabPlace, type OpenPdfTab } from './openPdfTabs';
+import { LANGUAGE_STORAGE_KEY, currentLanguage, localizeDocument, parseLanguagePref, saveLanguagePref } from '../shared/i18n';
+import { SHORTCUTS, shortcutLabel } from '../shared/shortcuts';
+import { WELCOME_RESUME_STORAGE_KEY, type WelcomeResume } from '../shared/welcomeResume';
+import type { PdfSyncPublicStatus } from '../background/pdfSyncService';
+import { byId, closeWhenGathered, hasFileAccess, hasWebAccess, openExtensionDetails, openInHub, send, shortcutKeys } from './pageKit';
 import { S } from './welcome.strings';
 
 const DEMO_BASE = 'https://research-pdf.croksuter.com/demo';
 const STEPS = ['hello', 'open', 'gather', 'sync', 'tour', 'done'] as const;
 type Step = typeof STEPS[number];
-
-const byId = <T extends HTMLElement>(id: string): T => {
-  const element = document.getElementById(id);
-  if (!element) throw new Error(`missing element #${id}`);
-  return element as T;
-};
-
-function send<T>(message: Record<string, unknown>): Promise<T | null> {
-  return new Promise((resolve) => {
-    try {
-      chrome.runtime.sendMessage(message, (response) => {
-        if (chrome.runtime.lastError) { resolve(null); return; }
-        resolve(response as T);
-      });
-    } catch {
-      resolve(null);
-    }
-  });
-}
 
 localizeDocument(S);
 document.title = S.pageTitle;
@@ -42,10 +27,11 @@ const hubBase = chrome.runtime.getURL(PDF_HUB_PAGE);
 
 // ─── Language ───
 
+// As on the settings page: auto follows the browser, a choice pins it.
 const languageSelect = byId<HTMLSelectElement>('wl-language');
-languageSelect.value = currentLanguage();
+languageSelect.value = parseLanguagePref(localStorage.getItem(LANGUAGE_STORAGE_KEY));
 languageSelect.addEventListener('change', () => {
-  void saveLanguagePref(languageSelect.value === 'en' ? 'en' : 'ko').then(() => {
+  void saveLanguagePref(parseLanguagePref(languageSelect.value)).then(() => {
     location.hash = current;
     location.reload();
   });
@@ -72,6 +58,8 @@ function show(step: Step): void {
   stepCount.textContent = S.stepOf(index + 1, STEPS.length);
   skip.hidden = step === 'done';
   history.replaceState(null, '', `#${step}`);
+  // Finished or skipped: nothing to resume after a reload any more.
+  if (step === 'done') void chrome.storage.local.remove(WELCOME_RESUME_STORAGE_KEY).catch(() => undefined);
   if (step === 'open') void renderOpen();
   if (step === 'gather') void renderGather();
   if (step === 'sync') void renderSync();
@@ -93,14 +81,6 @@ const webButton = byId<HTMLButtonElement>('wl-web');
 const webNote = byId<HTMLSpanElement>('wl-web-note');
 const fileButton = byId<HTMLButtonElement>('wl-file');
 const fileSub = byId<HTMLSpanElement>('wl-file-sub');
-
-async function hasWebAccess(): Promise<boolean> {
-  try { return await chrome.permissions.contains({ origins: [...WEB_PDF_HOST_ORIGINS] }); } catch { return false; }
-}
-
-async function hasFileAccess(): Promise<boolean> {
-  try { return await chrome.extension.isAllowedFileSchemeAccess(); } catch { return false; }
-}
 
 async function renderOpen(): Promise<void> {
   const webOn = await hasWebAccess() && await getSetting(WEB_PDF_VIEWER_ENABLED_SETTING_KEY, false);
@@ -130,10 +110,15 @@ webButton.addEventListener('click', () => {
   })();
 });
 
+// Turning file-URL access on there reloads the extension, which closes this
+// page; the marker has the background bring it back at this step
+// (background/onboarding.ts).
 fileButton.addEventListener('click', () => {
   void (async () => {
     if (!(await getSetting(LOCAL_PDF_VIEWER_ENABLED_SETTING_KEY, DEFAULT_LOCAL_PDF_VIEWER_ENABLED))) await setSetting(LOCAL_PDF_VIEWER_ENABLED_SETTING_KEY, true);
-    void chrome.tabs.create({ url: `chrome://extensions/?id=${chrome.runtime.id}` });
+    const marker: WelcomeResume = { step: current, at: Date.now() };
+    await chrome.storage.local.set({ [WELCOME_RESUME_STORAGE_KEY]: marker }).catch(() => undefined);
+    openExtensionDetails();
   })();
 });
 // Back from Chrome's extension page.
@@ -189,17 +174,24 @@ function updateGatherButton(): void {
 }
 gatherList.addEventListener('change', updateGatherButton);
 
+// Each opens like a PDF from the web (with its zoom); an original tab closes
+// only once its document is in the PDF tab (ui/pageKit.ts), the rest stay.
 gatherButton.addEventListener('click', () => {
   void (async () => {
     const tabs = chosenTabs();
-    const urls = tabs.map((t) => t.url);
-    if (!urls.length) return;
-    // Each opens like a PDF from the web (with its zoom): the first becomes
-    // the PDF tab, or hands itself to the one already open, and so do the rest.
-    for (const tab of tabs) await chrome.tabs.create({ url: buildPdfHubEntryUrl(tab.url + zoomHash(tab), hubBase), active: false });
-    if (gatherClose.checked) await closeTabs(tabs);
+    if (!tabs.length) return;
+    gatherButton.disabled = true;
+    const since = Date.now();
+    await openInHub(tabs);
     gatherDone.hidden = false;
-    gatherDone.textContent = S.gatherDone(urls.length);
+    gatherDone.textContent = S.gatherOpened(tabs.length);
+    if (gatherClose.checked) {
+      gatherDone.textContent = S.gatherClosing(0, tabs.length);
+      const { kept } = await closeWhenGathered(tabs, since, (closed) => { gatherDone.textContent = S.gatherClosing(closed, tabs.length); });
+      gatherDone.textContent = kept.length ? `${S.gatherDone(tabs.length)} ${S.gatherKept(kept.length)}` : S.gatherDone(tabs.length);
+    } else {
+      gatherDone.textContent = S.gatherDone(tabs.length);
+    }
     await renderGather();
     gatherEmpty.hidden = true;
   })();
@@ -211,13 +203,11 @@ const syncButton = byId<HTMLButtonElement>('wl-sync');
 const syncStatus = byId<HTMLParagraphElement>('wl-sync-status');
 const syncNext = byId<HTMLButtonElement>('wl-sync-next');
 
-type SyncStatus = { googleConfigured: boolean; googleConnected: boolean; googleAccountEmail: string };
-
 async function renderSync(): Promise<void> {
-  const status = await send<SyncStatus | { success: false }>({ type: 'VOCAB_T_GET_CLOUD_SYNC_STATUS' });
+  const status = await send<PdfSyncPublicStatus | { success: false }>({ type: 'VOCAB_T_GET_CLOUD_SYNC_STATUS' });
   const connected = !!status && !('success' in status) && status.googleConnected;
   if (connected) {
-    syncStatus.textContent = S.syncConnected((status as SyncStatus).googleAccountEmail || 'Google');
+    syncStatus.textContent = S.syncConnected((status as PdfSyncPublicStatus).googleAccountEmail || 'Google');
     syncButton.hidden = true;
     syncNext.textContent = S.next;
     syncNext.classList.add('wl-primary');
@@ -242,24 +232,12 @@ byId<HTMLButtonElement>('wl-demo').addEventListener('click', () => {
   void chrome.tabs.create({ url: buildPdfHubUrl([demo], 0, hubBase) });
 });
 
-const MAC = /Mac|iPhone|iPad/u.test(navigator.platform);
-const keyName = (k: string) => (MAC ? ({ Alt: '⌥', Shift: '⇧' } as Record<string, string>)[k] ?? k : k);
-const keys: Array<[string[], string]> = [
-  [['Alt', 'Shift', '← →'], S.keyNext],
-  [['Alt', 'W'], S.keyClose],
-  [['Alt', 'Shift', 'T'], S.keyReopen],
-  [['S'], S.keyCapture],
-];
-byId<HTMLDListElement>('wl-keys').replaceChildren(...keys.map(([combo, what]) => {
+// The tour's few from the one shortcut table (shared/shortcuts.ts).
+byId<HTMLDListElement>('wl-keys').replaceChildren(...SHORTCUTS.filter((s) => s.tour).map((shortcut) => {
   const row = document.createElement('div');
-  const dt = document.createElement('dt');
-  for (const k of combo) {
-    const kbd = document.createElement('kbd');
-    kbd.textContent = keyName(k);
-    dt.append(kbd);
-  }
+  const dt = shortcutKeys(shortcut, document.createElement('dt'));
   const dd = document.createElement('dd');
-  dd.textContent = what;
+  dd.textContent = shortcutLabel(shortcut.label);
   row.append(dt, dd);
   return row;
 }));
