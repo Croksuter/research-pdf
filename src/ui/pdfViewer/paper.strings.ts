@@ -27,7 +27,7 @@ export const S = messages({
     lookupFailedNotFound: (what: string) => `${what}: 어느 데이터베이스(OpenAlex·Crossref·Semantic Scholar)에도 없습니다.`,
     lookupFailedLimited: (what: string, sources: string) => `${what}: ${sources}의 요청 제한(429)으로 확인하지 못했습니다. 잠시 뒤 다시 파싱해 보세요.`,
     matchedByTitle: '제목으로 찾음',
-    matchedByTitleDetail: '이 PDF에 DOI·arXiv ID가 없어 제목과 첫 저자 이름으로 찾은 논문입니다. 다른 논문일 수 있어 문서 이름과 라이브러리에는 쓰지 않습니다.',
+    matchedByTitleDetail: '이 PDF에 DOI·arXiv ID가 없어 제목과 첫 저자 이름으로 찾은 논문입니다. 드물게 다른 논문일 수 있습니다.',
     notRecognizedSearched: (what: string) => `${what}(으)로 OpenAlex·Crossref·Semantic Scholar를 찾아봤지만 일치하는 논문이 없습니다.`,
     processingError: (message: string) => `논문 정보를 처리하는 중 오류: ${message}`,
     // Strip
@@ -94,7 +94,7 @@ export const S = messages({
     lookupFailedNotFound: (what: string) => `${what}: not in any database (OpenAlex, Crossref, Semantic Scholar).`,
     lookupFailedLimited: (what: string, sources: string) => `${what}: ${sources} rate-limited the lookup (429). Try reparsing in a moment.`,
     matchedByTitle: 'matched by title',
-    matchedByTitleDetail: 'This PDF names no DOI or arXiv ID, so the paper was found by its title and first author. It may be a different paper, so it does not rename the document or its library entry.',
+    matchedByTitleDetail: 'This PDF names no DOI or arXiv ID, so the paper was found by its title and first author. Rarely, it may be a different paper.',
     notRecognizedSearched: (what: string) => `Searched OpenAlex, Crossref and Semantic Scholar for ${what}, but found no matching paper.`,
     processingError: (message: string) => `Error while processing paper info: ${message}`,
     paperInfo: 'Paper info',

@@ -267,8 +267,9 @@ of ten colors) and its place in the list (folder + order key). Folders are
   words are on the first page — and not a whole volume (a proceedings DOI);
   OpenAlex's arXiv records are dated by the arXiv id and their non-arXiv DOI
   is only a candidate. A record found by title alone needs its first author's
-  surname on the first page; the strip marks it "matched by title", and it
-  neither names the document nor fills its library row.
+  surname on the first page; the strip marks it "matched by title". A cached
+  one is trusted again (strip, library row) only against a first page that
+  names that author.
 - **Published version**: DOI candidates (from that record, Semantic Scholar,
   a Crossref title search) are adopted only when the record is an article
   with the same title and first author, dated from a year before to five

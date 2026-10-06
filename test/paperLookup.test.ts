@@ -56,16 +56,19 @@ describe('paper lookup', () => {
     expect(result).toEqual({ meta: null, limited: false });
   });
 
-  it('the review itself is found by title, but only as a title match', async () => {
+  it('the review itself is found by title, its first author on the page', async () => {
     mockFetch((url) => searchesOnly(url) ?? (url.includes('filter=doi') ? { body: { results: [LECUN_WORK] } } : null));
     const paper = evidence('Deep learning', 'REVIEW Deep learning Yann LeCun, Yoshua Bengio & Geoffrey Hinton Deep learning allows computational models');
     const result = await lookupPaperQuietly(paper);
     // Found and cached for the strip, as a title match…
     const cached = await readPaperCache<{ meta: PaperMeta }>(`meta:v2:${paper.key}`);
     expect(cached?.meta).toMatchObject({ title: 'Deep learning', matchedBy: 'title' });
-    // …but never handed to the library.
-    expect(result.meta).toBeNull();
+    // …and handed to the library, since LeCun is on page 1; the cached
+    // record is trusted again only with a page that names him.
+    expect(result.meta).toMatchObject({ title: 'Deep learning', matchedBy: 'title' });
+    expect(await cachedPaperMeta(paper.key!, paper.evidence.pageText)).toMatchObject({ title: 'Deep learning' });
     expect(await cachedPaperMeta(paper.key!)).toBeNull();
+    expect(await cachedPaperMeta(paper.key!, 'Deep Learning — a lecture by someone else')).toBeNull();
   });
 
   it('attributes a 429 to the source that sent it', async () => {

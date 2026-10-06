@@ -292,16 +292,16 @@ export async function loadPaperSettings(): Promise<boolean> {
 
 /**
  * A cached paper good enough to describe a library row: found by an
- * identifier, not by its title alone (that one only shows in the strip).
+ * identifier, or by its title when its first author is on this document's
+ * first page (`pageText`; without it a title match is not trusted).
  */
-export function cachedPaperMeta(key: string): Promise<PaperMeta | null> {
-  return readCachedMeta(key).then((meta) => (meta && meta.matchedBy !== 'title' ? tidyPaperMeta(meta) : null));
+export function cachedPaperMeta(key: string, pageText = ''): Promise<PaperMeta | null> {
+  return readCachedMeta(key).then((meta) => (meta && (meta.matchedBy !== 'title' || titleMatchConfirmed(meta, pageText)) ? tidyPaperMeta(meta) : null));
 }
 
 /**
  * Resolves and enriches like the strip, shows nothing, and caches the result
- * as the strip would. `meta` only for a paper found by an identifier (as
- * cachedPaperMeta). `limited`: no answer because of a rate limit, a spent
+ * as the strip would (a title match only with its first author on the page). `limited`: no answer because of a rate limit, a spent
  * budget or a network failure — worth trying again later, not now.
  */
 export async function lookupPaperQuietly(found: PaperEvidence): Promise<{ meta: PaperMeta | null; limited: boolean }> {
@@ -311,5 +311,5 @@ export async function lookupPaperQuietly(found: PaperEvidence): Promise<{ meta: 
   const raw = await enrich(ctx, primary);
   const meta = tidyPaperMeta(raw);
   if (found.key && !s2Unavailable.has(raw) && !openAlexBudgetSpent()) await writeCachedMeta(found.key, meta);
-  return { meta: meta.matchedBy === 'title' ? null : meta, limited: false };
+  return { meta, limited: false };
 }

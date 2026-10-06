@@ -163,10 +163,10 @@ const sidebar = new Sidebar({
 const annotate = new AnnotationToolbar(pdfViewer, eventBus);
 const presentation = new PresentationMode(container, pdfViewer, eventBus);
 // The paper title the strip resolves is shown under the document's own name
-// and names the document in the library — unless only its title matched
-// (a talk called "Deep Learning" is not LeCun's review).
+// and names the document in the library. A paper found by its title alone
+// only gets here with its first author on page 1 (a talk called "Deep
+// Learning" is not LeCun's review).
 const paperStrip = new PaperStrip(() => eventBus.dispatch('resize', { source: paperStrip }), (meta) => {
-  if (meta.matchedBy === 'title') return;
   setTitles({ paper: meta.title.trim() });
   if (currentIdentity) {
     recordInLibrary({ kind: 'meta', docId: currentIdentity.docId, docTitle: null, title: meta.title, venue: meta.venue, year: meta.year, paperKind: classifyPaperKind(meta) });

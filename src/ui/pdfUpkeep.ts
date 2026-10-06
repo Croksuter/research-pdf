@@ -106,7 +106,7 @@ async function upkeepRow(entry: PdfLibraryEntry, network: boolean): Promise<{ ou
   }
   // Nothing to look a paper up by: a plain PDF, as far as anyone can tell.
   if (!found.ids.doi && !found.ids.arxivId && found.titles.length === 0) return { outcome: 'done', usedNetwork: false };
-  const cached = found.key ? await cachedPaperMeta(found.key) : null;
+  const cached = found.key ? await cachedPaperMeta(found.key, found.evidence.pageText) : null;
   if (cached) { await record(entry, cached); return { outcome: 'done', usedNetwork: false }; }
   if (!network) return { outcome: 'later', usedNetwork: false };
   const { meta, limited } = await lookupPaperQuietly(found);
