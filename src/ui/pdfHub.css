@@ -111,26 +111,37 @@ body {
 .rpdf-list-btn svg { width: 14px; height: 14px; stroke-width: 2; }
 .rpdf-list-count { font-variant-numeric: tabular-nums; }
 
-/* ── Tab ── */
+/* ── Tab: the tab button and, beside it, its close (or unpin) button ── */
 .rpdf-tab {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
   /* A width, not just a basis: the strip sizes the tab row by its content. */
   flex: 0 1 auto;
   width: 240px;
   min-width: 112px;
   height: calc(var(--hub-strip-height) - 6px);
-  padding: 0 6px 0 12px;
-  border: 0;
+  padding: 0 6px 0 0;
   border-radius: var(--hub-tab-radius) var(--hub-tab-radius) 0 0;
-  background: transparent;
   color: var(--hub-fg-inactive);
+  user-select: none;
+}
+.rpdf-tab-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0 0 0 12px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
   font: inherit;
   text-align: left;
   cursor: default;
-  user-select: none;
 }
 
 /* Hairline between two inactive tabs. */
@@ -143,26 +154,26 @@ body {
   width: 1px;
   background: var(--hub-border);
 }
-.rpdf-tab[aria-selected="true"]::before,
-.rpdf-tab[aria-selected="true"] + .rpdf-tab::before,
+.rpdf-tab.is-active::before,
+.rpdf-tab.is-active + .rpdf-tab::before,
 .rpdf-tab:hover::before,
 .rpdf-tab:hover + .rpdf-tab::before { opacity: 0; }
 
-.rpdf-tab:hover:not([aria-selected="true"]) {
+.rpdf-tab:hover:not(.is-active) {
   background: var(--hub-tab-hover);
   border-radius: 8px;
   height: calc(var(--hub-strip-height) - 10px);
   margin-bottom: 4px;
 }
 
-.rpdf-tab[aria-selected="true"] {
+.rpdf-tab.is-active {
   background: var(--hub-tab-active);
   color: var(--hub-fg);
   z-index: 1;
 }
 
 /* Chrome-style flared corners where the active tab meets the toolbar. */
-.rpdf-tab[aria-selected="true"]::after {
+.rpdf-tab.is-active::after {
   content: '';
   position: absolute;
   bottom: 0;
@@ -175,9 +186,10 @@ body {
     radial-gradient(circle at 100% 0, transparent calc(var(--hub-tab-radius) - 0.5px), var(--hub-tab-active) var(--hub-tab-radius)) right bottom / var(--hub-tab-radius) var(--hub-tab-radius) no-repeat;
 }
 
-.rpdf-tab:focus-visible { outline: 2px solid var(--hub-accent); outline-offset: -2px; }
+.rpdf-tab-main:focus-visible { outline: 2px solid var(--hub-accent); outline-offset: -2px; }
 .rpdf-tab.is-dragging { opacity: 0.5; }
 .rpdf-tab.is-drop-before { box-shadow: inset 2px 0 0 var(--hub-accent); }
+.rpdf-tab.is-drop-after { box-shadow: inset -2px 0 0 var(--hub-accent); }
 
 .rpdf-tab-icon {
   display: inline-grid;
@@ -185,7 +197,7 @@ body {
   flex: none;
   color: var(--hub-muted);
 }
-.rpdf-tab[aria-selected="true"] .rpdf-tab-icon { color: var(--hub-accent); }
+.rpdf-tab.is-active .rpdf-tab-icon { color: var(--hub-accent); }
 
 .rpdf-tab-text {
   display: flex;
@@ -212,13 +224,16 @@ body {
 /* Squeezed tabs (measured by the hub) drop the paper line. */
 .rpdf-tabs.is-narrow .rpdf-tab-paper { display: none; }
 
-/* Pinned: narrow, one line, no close button. */
+/* Pinned: narrow, one line; the unpin button shows on hover or focus. */
 .rpdf-tab.is-pinned {
   flex: none;
   width: 150px;
   min-width: 0;
 }
 .rpdf-tab.is-pinned .rpdf-tab-icon { color: var(--hub-accent); }
+.rpdf-tab.is-pinned .rpdf-tab-close { opacity: 0; }
+.rpdf-tab.is-pinned:hover .rpdf-tab-close,
+.rpdf-tab.is-pinned:focus-within .rpdf-tab-close { opacity: 1; }
 .rpdf-tab.is-pinned + .rpdf-tab:not(.is-pinned) { margin-left: 8px; }
 .rpdf-tab.is-pinned + .rpdf-tab:not(.is-pinned)::before { left: -5px; opacity: 1; }
 
@@ -360,10 +375,10 @@ body.is-dropping .rpdf-frames { box-shadow: inset 0 0 0 3px var(--hub-accent); }
   overflow-y: auto;
   background: var(--hub-tab-active);
 }
-.rpdf-home[hidden] { display: none; }
 /* Fills the page, so the selection bar after it sits at the bottom edge. */
-.rpdf-home-inner { flex: 1 0 auto; width: 100%; }
 .rpdf-home-inner {
+  flex: 1 0 auto;
+  width: 100%;
   max-width: 860px;
   margin: 0 auto;
   padding: 28px 24px 48px;
@@ -421,8 +436,7 @@ body.is-dropping .rpdf-frames { box-shadow: inset 0 0 0 3px var(--hub-accent); }
 .rpdf-item-main > svg,
 .rpdf-li-main > svg,
 .rpdf-badge svg,
-.rpdf-item-pin svg,
-.rpdf-li-action svg {
+.rpdf-item-pin svg {
   flex: none;
   width: 16px;
   height: 16px;
@@ -477,7 +491,7 @@ body.is-dropping .rpdf-frames { box-shadow: inset 0 0 0 3px var(--hub-accent); }
   opacity: 0;
 }
 .rpdf-item:hover .rpdf-item-pin,
-.rpdf-item-pin:focus-visible,
+.rpdf-item:focus-within .rpdf-item-pin,
 .rpdf-item-pin[aria-pressed="true"] { opacity: 1; }
 .rpdf-item-pin:hover { background: rgba(255, 255, 255, 0.1); }
 .rpdf-item-pin[aria-pressed="true"] svg { color: var(--hub-accent); }
@@ -578,7 +592,7 @@ body.is-dropping .rpdf-frames { box-shadow: inset 0 0 0 3px var(--hub-accent); }
   background: transparent;
   cursor: pointer;
 }
-.rpdf-li-action svg { width: 13px; height: 13px; stroke-width: 2; }
+.rpdf-li-action svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .rpdf-li-action:hover { background: rgba(255, 255, 255, 0.12); }
 .rpdf-li-head {
   margin: 10px 8px 4px;
@@ -711,7 +725,6 @@ body.is-dropping .rpdf-frames { box-shadow: inset 0 0 0 3px var(--hub-accent); }
 }
 .rpdf-new { flex: none; height: 32px; }
 .rpdf-li.is-current .rpdf-li-title { color: var(--hub-accent); }
-.rpdf-li-main > svg.is-accent { color: var(--hub-accent); }
 .rpdf-li.is-disabled:hover,
 .rpdf-li.is-disabled:focus-within { background: none; }
 .rpdf-li.is-disabled .rpdf-li-main { cursor: default; opacity: 0.45; }
@@ -730,6 +743,9 @@ body.is-dropping .rpdf-frames { box-shadow: inset 0 0 0 3px var(--hub-accent); }
 .rpdf-li-action:focus-visible { outline: 2px solid var(--hub-accent); outline-offset: -2px; }
 
 .rpdf-home-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin: 0 0 14px;
   padding: 0 2px;
   font-size: 20px;
@@ -754,8 +770,11 @@ body.is-dropping .rpdf-frames { box-shadow: inset 0 0 0 3px var(--hub-accent); }
   cursor: pointer;
   opacity: 0;
 }
+/* ⋯ is always there, quietly; +, − and the pin show with the row. */
+.rpdf-item-more { opacity: 0.5; }
 .rpdf-item:hover .rpdf-item-act,
-.rpdf-item-act:focus-visible { opacity: 1; }
+.rpdf-item:focus-within .rpdf-item-act,
+.rpdf-item.is-selected .rpdf-item-act { opacity: 1; }
 .rpdf-item-act:hover { background: rgba(255, 255, 255, 0.1); color: var(--hub-fg); }
 .rpdf-item-act:focus-visible { outline: 2px solid var(--hub-accent); outline-offset: -2px; }
 .rpdf-item-act svg {
@@ -796,7 +815,6 @@ body.is-dropping .rpdf-frames { box-shadow: inset 0 0 0 3px var(--hub-accent); }
 .rpdf-li-main .rpdf-pbadge { width: 22px; height: 22px; border-radius: 6px; font-size: 12.5px; }
 .rpdf-li-main .rpdf-pbadge svg { width: 14px; height: 14px; }
 .rpdf-li-main .rpdf-pbadge[data-look="emoji"] { font-size: 18px; }
-.rpdf-home-title { display: flex; align-items: center; gap: 10px; }
 .rpdf-home-title .rpdf-pbadge { width: 28px; height: 28px; border-radius: 8px; font-size: 15px; }
 .rpdf-home-title .rpdf-pbadge svg { width: 18px; height: 18px; }
 .rpdf-home-title .rpdf-pbadge[data-look="emoji"] { font-size: 24px; }
@@ -824,7 +842,6 @@ body.is-dropping .rpdf-frames { box-shadow: inset 0 0 0 3px var(--hub-accent); }
   font-weight: 600;
 }
 .rpdf-li-folder-head svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
-.rpdf-li-action svg { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
 .rpdf-new .rpdf-li-action { margin-right: -4px; color: var(--hub-muted); }
 .rpdf-new .rpdf-li-action:hover { color: var(--hub-fg); }
 .rpdf-new .rpdf-li-action svg { width: 16px; height: 16px; stroke-width: 1.8; }
@@ -946,11 +963,11 @@ body.is-dropping .rpdf-frames { box-shadow: inset 0 0 0 3px var(--hub-accent); }
   height: 15px;
   margin: 0 -4px 0 10px;
   accent-color: var(--hub-accent);
-  opacity: 0;
+  opacity: 0.35;
   cursor: pointer;
 }
 .rpdf-item:hover .rpdf-item-check,
-.rpdf-item-check:focus-visible,
+.rpdf-item:focus-within .rpdf-item-check,
 .rpdf-home.has-selection .rpdf-item-check { opacity: 1; }
 .rpdf-item.is-selected { background: rgba(138, 180, 248, 0.1); }
 .rpdf-item-more { margin-right: 4px; }
@@ -1008,3 +1025,22 @@ body.is-dropping .rpdf-frames { box-shadow: inset 0 0 0 3px var(--hub-accent); }
 .rpdf-gather-text span { overflow: hidden; color: var(--hub-muted); font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
 .rpdf-gather .rpdf-primary { height: 32px; }
 .rpdf-gather .rpdf-item-act { opacity: 1; }
+
+/* ── Asking in a row (deleting a project): no browser dialog ── */
+.rpdf-li-confirm { flex: 1 1 auto; min-width: 0; margin: 2px 4px; padding: 8px 10px; border: 1px solid rgba(242, 139, 130, 0.45); border-radius: 8px; background: rgba(242, 139, 130, 0.08); }
+.rpdf-li-confirm p { margin: 0 0 8px; color: var(--hub-fg); font-size: 12.5px; line-height: 1.5; }
+.rpdf-li-confirm-buttons { display: flex; justify-content: flex-end; gap: 6px; }
+.rpdf-danger {
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  background: #f28b82;
+  color: #2b0b09;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.rpdf-danger:hover { background: #f6aea9; }
+.rpdf-danger:focus-visible,
+.rpdf-li-confirm .rpdf-style-text-btn:focus-visible { outline: 2px solid var(--hub-accent); outline-offset: 1px; }

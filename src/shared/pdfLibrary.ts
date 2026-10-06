@@ -321,7 +321,7 @@ function safeDecode(url: string): string {
 }
 
 /** "방금", "5분 전", "3시간 전", "2일 전", then a date (in the current language). */
-export function relativeTimeKo(then: number, now: number = Date.now()): string {
+export function relativeTime(then: number, now: number = Date.now()): string {
   const diff = Math.max(0, now - then);
   const minute = 60_000;
   if (diff < minute) return S.justNow;

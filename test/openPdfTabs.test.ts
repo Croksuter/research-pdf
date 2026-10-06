@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { looksLikePdf, tabPlace, zoomHash } from '../src/ui/openPdfTabs';
+import { GATHER_MESSAGE, GATHER_RESULT_MESSAGE, SETTINGS_SHOWN_MESSAGE, looksLikePdf, tabPlace, zoomHash } from '../src/ui/openPdfTabs';
 
 describe('PDFs open in Chrome’s viewer', () => {
   it('counts a tab whose address looks like a PDF', () => {
@@ -29,5 +29,9 @@ describe('PDFs open in Chrome’s viewer', () => {
     expect(tabPlace('https://www.example.org/a/b.pdf')).toBe('example.org');
     expect(tabPlace('https://arxiv.org/pdf/1706.03762')).toBe('arxiv.org');
     expect(tabPlace('nonsense')).toBe('');
+  });
+
+  it('keeps the hub ↔ settings message names apart', () => {
+    expect(new Set([GATHER_MESSAGE, GATHER_RESULT_MESSAGE, SETTINGS_SHOWN_MESSAGE]).size).toBe(3);
   });
 });

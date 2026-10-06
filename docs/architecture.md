@@ -13,7 +13,7 @@ library and projects. No content script, no server, no account of its own.
 | background | `src/background.ts` + `src/background/*` |
 | popup | `src/ui/popup.*`: open the PDF tab, sync at a glance, a nudge when web PDFs are off |
 | settings page | `src/ui/settings.*`: shown inside the hub like home (⚙ in the strip, `s=settings`; the popup's 설정 and Chrome's extension options bring a hub forward with it, `VOCAB_T_PDF_SHOW_SETTINGS`), framed and styled with the hub's palette; every setting on one page of cards, with Chrome's site / file-URL access shown next to the switches that need it, API key checks (OpenAlex's remaining daily budget from its `X-RateLimit-*` headers, `shared/apiStatus.ts`), storage use and the shortcuts. The hub keeps the frame, so it refreshes when the hub shows it again (`SETTINGS_SHOWN_MESSAGE`), on visibility/focus, on library/project changes, and polls while a sync runs. Disconnect and clearing saved PDFs ask first; a key is removed only with Remove. Helpers shared with the welcome page and popup are in `ui/pageKit.ts`; the shortcut table is `shared/shortcuts.ts` (README carries the same) |
-| hub | `src/ui/pdf-hub.html`, `pdfHub.ts` + `src/background/pdfHub.ts` |
+| hub | `src/ui/pdf-hub.html`, `pdfHub.ts` (entry) + `src/ui/hub/*` (store, tab strip, frames, session, local files, home, panels) + `src/background/pdfHub.ts` |
 | viewer | `src/ui/pdf-viewer.html`, `pdfViewer.ts`, `pdfViewer/*` |
 | sync engine | `src/background/pdfSyncService.ts`, `src/shared/pdfSync.ts` |
 | storage | IndexedDB `ResearchPDF` (settings, pdf_annotations, pdf_files / pdf_file_bytes / pdf_urls) + `chrome.storage.local` (reading positions, library, projects, hub tabs) + `chrome.storage.session` (hub registry) |
@@ -73,10 +73,15 @@ no longer scatter across tabs that look like web pages.
   `history.replaceState`) is its document list, so reload and Chrome session
   restore bring every document back; `VOCAB_T_PDF_HUB_STATE` records the same
   list for recreating hubs after an extension reload, and as the project's
-  saved layout. Local files opened from disk are not restorable. Iframes are
-  created the first time a document is shown.
+  saved layout. Local files opened from disk have no address: their bytes are
+  kept in IndexedDB for the hub tab's session (named per project in
+  sessionStorage, dropped when no tab or recently-closed entry refers to
+  them), so a reload, a new language, an in-place project switch and
+  Chrome's session restore bring them back. Iframes are created the first
+  time a document is shown.
 - Viewer ↔ hub talk over same-origin `postMessage` (`shared/pdfHubProtocol.ts`):
-  document title and identity, Alt+Shift+←/→, Alt+W and Alt+Shift+T, local
+  document title and identity, Alt+Shift+←/→, Alt+W and Alt+Shift+T (not
+  while typing in a text field), local
   files opened inside a viewer (they become new hub tabs), the sleep
   handshake. "Open in Chrome's viewer" from the hub opens a separate tab so
   the hub's other documents stay.
@@ -87,16 +92,17 @@ no longer scatter across tabs that look like web pages.
   with + to add), most recent first, with reading progress, a drawings mark
   and search over the whole library. `s=home` in the hub URL keeps it in
   front across a reload.
-- **Home tools**: filter chips (kinds, with drawings, reading, unread, with counts) and a sort (recent, title, year, progress), remembered per device; rows have a checkbox and "⋯" (open, pin, add to another project, move, remove, kind, copy URL), and a selection gets a bar with the same actions in bulk.
+- **Home tools**: filter chips (kinds, with drawings, reading, unread, with counts; the active one is always shown) and a sort (recent, title, year, progress), remembered per device; rows have a checkbox and "⋯" (open, pin, add to another project, move, remove, kind, copy URL), and a selection — always only rows on screen — gets a bar with the same actions in bulk. Removing from a project is undone with its pin, pin place and open tab.
 - **Pins** belong to a project, so a pinned document is a narrow tab at the
   left of that project's hub on every device (loaded only when shown;
-  `s=<url>` remembers one in front). Pin/unpin from the tab's context menu or
-  home. Their order is a per-member order key (`pinOrder`, sync v5), set by
-  dragging pinned rows on home or pinned tabs in the strip. A pinned tab has no close button; unpinning one this hub never loaded
+  `s=<url>` remembers one in front). Pin/unpin from the tab's context menu,
+  the pinned tab's pin button (on hover or focus) or home. Their order is a per-member order key (`pinOrder`, sync v5), set by
+  dragging pinned rows on home or pinned tabs in the strip. A pinned tab has an unpin button where others have close; unpinning one this hub never loaded
   because another device unpinned it removes the tab.
 - **Recently closed**: a per-hub stack (sessionStorage, 20) with a 5 s undo
-  toast and Alt+Shift+T (Ctrl+Shift+T is Chrome's). Local files reopen while
-  the page lives.
+  toast and Alt+Shift+T (Ctrl+Shift+T is Chrome's); closing several at once
+  ("close other tabs") is one toast whose undo reopens them all. Local files
+  reopen too.
 - **Same document** (`shared/hubTabs.ts`): an incoming URL goes to the tab
   already showing it — same URL, the same arXiv paper when no version is
   asked for (or exactly the version asked), or the document the library last
@@ -106,7 +112,9 @@ no longer scatter across tabs that look like web pages.
 - **Sleep**: at most 6 loaded frames, and none unseen for 30 min. The hub asks
   the frame first (`sleep` → drawings and position stored → `sleep-reply`;
   presenting, printing or a password prompt refuse for 5 min), then removes
-  it; the tab stays and reloads from the local file cache when shown.
+  it; the tab stays and reloads from the local file cache when shown. A
+  closed tab leaves the strip at once, and its frame goes after the same
+  handshake.
 - **Overflow**: tabs shrink to 112 px, then scroll (wheel works, edges fade);
   the ▾ button lists every tab and the recently closed ones, with search.
 - A top-level `pdf-viewer.html` (old tabs, bookmarks) redirects into the hub;
@@ -137,16 +145,22 @@ guide is open, and drops it. Reaching "done" (or skipping) drops it too.
 extension once site access is granted; local files with file-URL access).
 Home shows a banner when there are some ("Gather into this project" /
 "이 프로젝트로 모으기"), the settings page has a button, the welcome page a
-step; gathered documents join this PDF tab. The settings frame asks its hub
-(`GATHER_MESSAGE`) and shows the hub's answer (`GATHER_RESULT_MESSAGE`:
-gathered, kept open). The welcome page (and settings opened on its own)
-open each as a web PDF entering and close an original tab only once its
-document landed (`ui/pageKit.ts`): a viewer in a PDF tab recorded opening it
-(a library row stamped since the gather began), or a PDF tab lists it and
-its bytes are in the local file cache — and only if the tab still shows it.
-What has not landed after 45 s stays open, and the page says so. Chrome's viewer keeps its zoom as the tab's
-zoom, so `chrome.tabs.getZoom` carries it over as `#zoom=N` (the viewer then
-still restores the remembered page). Its scroll position and page are inside
+step; gathered documents join this PDF tab. From home and from settings
+inside a PDF tab, the hub gathers: each original tab closes once its document
+has loaded here (in the background) and only if it still shows it. One that
+does not load (an expired link, a sign-in page) or does not fit (50 open per
+project) stays open where it was; the toast says how many, and the settings
+frame, which asked with `GATHER_MESSAGE`, shows the hub's answer
+(`GATHER_RESULT_MESSAGE`: gathered, kept open). The welcome page (and
+settings opened on its own) open each as a web PDF entering and close an
+original tab only once its document landed (`ui/pageKit.ts`): a viewer in a
+PDF tab recorded opening it (a library row stamped since the gather began),
+or a PDF tab lists it and its bytes are in the local file cache — and only if
+the tab still shows it. What has not landed after 45 s stays open, and the
+page says so. Chrome's viewer keeps its zoom as the tab's zoom, so
+`chrome.tabs.getZoom` carries it over as `#zoom=N` (the viewer then still
+restores the remembered page; a gathered tab put to sleep before anyone
+looked keeps it). Its scroll position and page are inside
 Chrome's own viewer frame, which no extension can read.
 
 ## Languages
@@ -197,8 +211,10 @@ of ten colors) and its place in the list (folder + order key). Folders are
   and the page loads the other project's hub URL with its saved layout
   (`VOCAB_T_PDF_PROJECT_OPEN` with `inPlace`). A project already open in
   another tab is brought forward instead. The row's ↗ opens it in a new tab
-  next to this one. Also create (switches to it), rename, delete. Recently
-  closed tabs are kept per project.
+  next to this one. Also create (switches to it), rename, delete — all in the
+  list itself (deleting a project asks there, naming the pins and saved tabs
+  it loses; deleting a folder has an undo). Recently closed tabs are kept per
+  project.
 - **Move** ("프로젝트로 이동", right side, and the tab menu): moves the
   document out of its project and into another (`VOCAB_T_PDF_PROJECT_MOVE`);
   its tab goes to that project's hub when open (queued like a claim's when

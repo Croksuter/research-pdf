@@ -15,6 +15,7 @@ import {
   HUB_MESSAGE_TAG,
   hubDocumentTitle,
   hubKeyAction,
+  isEditableTarget,
   parseHubToViewerMessage,
   parseViewerToHubMessage,
   sameTitle,
@@ -133,6 +134,16 @@ describe('hub messages', () => {
     expect(key('KeyT', { ctrlKey: true, shiftKey: true })).toBeNull(); // Chrome's own reopen
     expect(key('ArrowLeft', { altKey: true })).toBeNull(); // Alt+← is the browser's Back
     expect(key('KeyW', { ctrlKey: true })).toBeNull();
+    // Typing: macOS Option+Shift+← selects a word, Option+W types a character.
+    const inField = (code: string, target: unknown, shiftKey = true) => hubKeyAction({ altKey: true, shiftKey, ctrlKey: false, metaKey: false, code, target });
+    expect(inField('ArrowLeft', { tagName: 'INPUT', type: 'search' })).toBeNull();
+    expect(inField('ArrowRight', { tagName: 'TEXTAREA' })).toBeNull();
+    expect(inField('KeyW', { tagName: 'DIV', isContentEditable: true }, false)).toBeNull();
+    expect(inField('ArrowRight', { tagName: 'SELECT' })).toBeNull();
+    expect(inField('ArrowRight', { tagName: 'INPUT', type: 'checkbox' })).toBe('next');
+    expect(inField('ArrowRight', { tagName: 'BUTTON', isContentEditable: false })).toBe('next');
+    expect(isEditableTarget({ tagName: 'input' })).toBe(true);
+    expect(isEditableTarget(null)).toBe(false);
     expect(sameTitle('Attention Is All You Need', 'attention is all you need.')).toBe(true);
     expect(sameTitle('1706.03762', 'Attention Is All You Need')).toBe(false);
     expect(hubDocumentTitle('Attention', 3, 'ResearchPDF')).toBe('(3) Attention · ResearchPDF');
