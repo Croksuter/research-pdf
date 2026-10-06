@@ -37,6 +37,10 @@ describe('captionLabel', () => {
     expect(captionLabel('Figure 2: The overall pipeline')).toEqual({ kind: 'figure', number: '2', punctuated: true });
     expect(captionLabel('Fig. 12. Results on COCO')).toEqual({ kind: 'figure', number: '12', punctuated: true });
     expect(captionLabel('FIGURE 3 | Overview')).toEqual({ kind: 'figure', number: '3', punctuated: true });
+    expect(captionLabel('그림 1: 필기와 읽던 위치')).toEqual({ kind: 'figure', number: '1', punctuated: true });
+    expect(captionLabel('표 2. 데이터 출처')).toEqual({ kind: 'table', number: '2', punctuated: true });
+    expect(captionLabel('図 3：概要')).toEqual({ kind: 'figure', number: '3', punctuated: true });
+    expect(captionLabel('그림 1에서 보듯이')).toBeNull();
     expect(captionLabel('Table 1: Main results')).toEqual({ kind: 'table', number: '1', punctuated: true });
     expect(captionLabel('TABLE IV')).toEqual({ kind: 'table', number: 'IV', punctuated: false });
     expect(captionLabel('Figure S3: Extra')).toMatchObject({ number: 'S3' });

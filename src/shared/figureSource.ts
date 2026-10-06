@@ -36,9 +36,11 @@ export interface PlacedText {
   height: number;
 }
 
-// "Figure 2:", "Fig. 2.", "FIGURE 3", "Table 1:", "TABLE IV", "Tab. 2", "Figure S3", "Figure 2a", "Figure 1.3:".
-// "Figure 1.3" (theses, books) keeps its section number.
-const CAPTION = /^(figure|fig\.?|table|tab\.)\s*([A-Z]?\d+(?:\.\d+)*[a-z]?|[IVXLC]+)(?=$|[\s:.|—–-])\s*([:.|—–-])?/iu;
+// "Figure 2:", "Fig. 2.", "FIGURE 3", "Table 1:", "TABLE IV", "Tab. 2", "Figure S3", "Figure 2a", "Figure 1.3:",
+// and in Korean, Japanese and Chinese papers "그림 2:", "표 1.", "図 3", "图 4", "表 5".
+// "Figure 1.3" (theses, books) keeps its section number. "그림 1에서" is prose, not a caption.
+const CAPTION = /^(figure|fig\.?|table|tab\.|그림|표|図|图|表)\s*([A-Z]?\d+(?:\.\d+)*[a-z]?|[IVXLC]+)(?=$|[\s:.|：．—–-])\s*([:.|：．—–-])?/iu;
+const TABLE_WORDS = new Set(['table', 'tab.', '표', '表']);
 
 /** Groups text items into lines: same baseline, no column-sized gap between them. */
 export function groupLines(items: PlacedText[]): TextLine[] {
@@ -77,7 +79,7 @@ export function captionLabel(text: string): (FigureLabel & { punctuated: boolean
   const number = match[2];
   // Roman numerals only in the IEEE style: "TABLE IV".
   if (/^[IVXLC]+$/u.test(number) && !(word === 'table' && match[1] === 'TABLE')) return null;
-  return { kind: word.startsWith('t') ? 'table' : 'figure', number, punctuated: !!match[3] };
+  return { kind: TABLE_WORDS.has(word) ? 'table' : 'figure', number, punctuated: !!match[3] };
 }
 
 /**
