@@ -22,11 +22,21 @@ library and projects. No content script, no server, no account of its own.
 
 - `src/background/pdfRouting.ts`: file:// and opt-in web-PDF routing (top-level
   PDFs to the hub, embedded ones to the viewer inline), hub-tab records and
-  restore after an extension reload, and their message handlers.
+  restore after an extension update, and their message handlers. Web PDFs
+  are routed by the declarativeNetRequest rules (content type, not POST, not
+  attachments); a `.pdf` URL is also routed by URL, but only in the first
+  minute after the browser starts or the rules are turned on, while Chrome
+  does not yet honor the rules' response-header conditions. "Open in
+  Chrome's viewer" exempts just that tab with a session `allow` rule
+  (`tabIds`, above the redirect rules' priority) until it commits, instead of
+  removing the redirect rules.
 - `src/background/pdfHub.ts`: which tab is each project's hub, opening a
-  project, moving a document (see below).
-- `src/background/pdfProjectStore.ts`, `pdfLibraryStore.ts`: the only writers
-  of the projects and the library.
+  project, moving a document (see below). The claim policy, including what a
+  closed, discarded or frozen hub means, is the pure `decideHubClaim`.
+- `src/background/pdfProjectStore.ts`, `pdfLibraryStore.ts`,
+  `pdfDocStateStore.ts`: the only writers of the projects, the library and
+  the reading positions, each one read-modify-write at a time
+  (`serialQueue.ts`).
 - `src/background/messageDispatcher.ts`: the `onMessage` dispatcher and the
   extension-page sender check.
 - `googleAuth.ts`, `googleDriveStore.ts`, `googleDriveAccount.ts`: sign-in,
@@ -47,8 +57,10 @@ no longer scatter across tabs that look like web pages.
   hub; no hub but the tab came from a web page → a clean hub tab is created
   next to it; a hub exists (in any window) → the documents are handed to it
   (`VOCAB_T_PDF_HUB_OPEN` broadcast, or queued while a new hub is still
-  loading). A tab that handed its documents over goes back to its page, or
-  closes if it has none. The hub (and its window) is brought forward only
+  loading, discarded by Chrome, or frozen in the background and not answering
+  yet — a frozen hub gets the message when it wakes, and the queue covers
+  Chrome discarding it first). A tab that handed its documents over goes
+  back to its page, or closes if it has none. The hub (and its window) is brought forward only
   when the PDF opened in the foreground. The registry is project → tab, so a
   hub dragged to another window stays that project's hub.
 - An embedded PDF gets the viewer inline, unless its frame fills the tab
@@ -173,10 +185,22 @@ of ten colors) and its place in the list (folder + order key). Folders are
   closed tabs are kept per project.
 - **Move** ("프로젝트로 이동", right side, and the tab menu): moves the
   document out of its project and into another (`VOCAB_T_PDF_PROJECT_MOVE`);
-  its tab goes to that project's hub when open, otherwise into the layout it
-  opens with. "+" registers it there too and leaves it here. A document a
+  its tab goes to that project's hub when open (queued like a claim's when
+  the hub is loading, discarded or frozen), otherwise into the layout it
+  opens with; a hub that turns out to be gone is forgotten and the layout
+  gets it, so a moved document never vanishes. "+" registers it there too and leaves it here. A document a
   project hub shows is registered to that project; the default hub shows a
   document of a closed project as a guest without registering it.
+- **Caps**: 200 projects, 100 folders. Creating one at the cap is refused
+  (`VOCAB_T_PDF_PROJECT_UPDATE` answers `{success:false, code:'project-limit'
+  | 'folder-limit', limit, error}`). Live projects, folders and registered
+  documents are never dropped to meet a cap — two devices merging may go over
+  it and keep everything; only deleted projects/folders (a year) and removed
+  members are capped.
+- **Order keys** are at most 80 characters. A move whose key would be longer
+  (hundreds of moves to one spot), or a folder deleted between two close
+  keys, re-keys that whole level evenly in the same update; a stored key that
+  is bad anyway is read as no key, never as a reason to drop the project.
 - **Deleting** a project is a tombstone. Its open hub hands its tabs to the
   default project's hub (or becomes it) and its documents fall back to the
   default project.
@@ -278,8 +302,9 @@ next one:
    use) — so a paper opened from disk opens instantly from its arXiv URL.
    Local files are otherwise not cached: a local open always reads the file.
    Never synced.
-2. **Local state**: reading position (`chrome.storage.local`) and drawings
-   (`pdf_annotations`), applied at first render.
+2. **Local state**: reading position (`chrome.storage.local`, written only by
+   the background: the viewer sends `VOCAB_T_PDF_DOC_STATE_SAVE`) and
+   drawings (`pdf_annotations`), applied at first render.
 3. **Drive sync**: the open pull runs alongside rendering and answers with
    the document ids it changed (`changedPdfDocIds`). Only if the open
    document is among them does the viewer reopen it in place from the bytes
@@ -293,12 +318,15 @@ next one:
 `shared/pdfLibrary.ts`, `chrome.storage.local` key `rpdfLibrary`: one row per
 document identity opened in a hub (embedded PDFs are not recorded) — up to 5
 source URLs, file name, the PDF's Title, the detected paper title/venue/year,
-page count, last opened, pinned. Positions and drawings are joined in by
+page count, last opened, kind. Positions and drawings are joined in by
 `docId` on the home page, not copied. Viewer frames and the hub send
-`VOCAB_T_PDF_LIBRARY_UPDATE` (`opened` / `meta` / `pin`); the background is
-the only writer (`background/pdfLibraryStore.ts`, one serialized
-read-modify-write), and the sync applies its merge through the same queue.
-Bounded to 1,000 rows (pins kept first, up to 100; others 365 days).
+`VOCAB_T_PDF_LIBRARY_UPDATE` (`opened` / `meta` / `user-kind`); the
+background is the only writer (`background/pdfLibraryStore.ts`, one
+serialized read-modify-write), and the sync applies its merge through the
+same queue. A row's `pinned` is what builds before projects stored (pins live
+in projects now); it is kept and merged to seed the first project record.
+Bounded to 1,000 rows (rows a project refers to and old pins kept first;
+others 365 days).
 
 ## Sync document
 
@@ -324,9 +352,14 @@ refuse a newer version instead of writing it back without it):
   time without losing a concurrent write. A library change never reloads an
   open document (`changedPdfDocIds` looks at positions and drawings only).
 - The merged set is bounded exactly like local storage (300 documents /
-  180 days for positions, 200 documents for drawings), so every device
-  converges on the same set. Known edge: beyond those bounds a device's
-  pruning is indistinguishable from a deletion.
+  180 days for positions; drawings never — a document with drawings is kept
+  however many there are), so every device converges on the same set. A
+  position outside the bounds is pruned locally by the sync too. Known edge:
+  beyond those bounds a device's pruning is indistinguishable from a
+  deletion.
+- **Errors** are stored in the sync state as a code (+ detail, e.g. an HTTP
+  status), `shared/syncErrors.ts`, and worded by the page that shows them,
+  in its language. A state an older build stored keeps its sentence.
 
 The PDF files themselves are never uploaded. Paper-strip lookups and settings
 stay on the device.
@@ -340,9 +373,25 @@ stay on the device.
   either side this is one metadata request, and none within 60 s of a sync.
 - **After a stored edit:** `{reason:'edit'}` schedules one coalesced push 30 s
   later (`researchpdf-sync-soon`).
+- A sync asked for while one runs gets one more run right after it (shared
+  by every ask made meanwhile); an open's pull just joins the running one.
+- **Writes only what is new to Drive:** when the merge equals what the file
+  already holds, nothing is uploaded and the remote revision becomes the
+  base. Two devices that agree therefore stop at one metadata request each,
+  instead of rewriting the file for each other on every alarm.
+- **Another account**: connecting a Google account other than the one this
+  device last synced with (kept after a disconnect), while the device has
+  data, does not connect yet: the background answers `needsConfirm:
+  'account-change'`, the settings / welcome page asks, and only a second
+  `VOCAB_T_CONNECT_GOOGLE_SYNC` with `confirmAccountChange: true` (reusing
+  the sign-in, kept for the browser session) connects and merges this
+  device's data into that account.
 
 ## Concurrency
 
+- Reading positions: every viewer frame's save and the sync's apply go
+  through one queue in the background (`pdfDocStateStore.ts`), so none
+  overwrites another's row in the shared map.
 - The background applies the merged snapshot per record and only where the
   local record is still the one it exported; a record the viewer changed
   meanwhile is skipped and reported as pending, with the stored base for that
