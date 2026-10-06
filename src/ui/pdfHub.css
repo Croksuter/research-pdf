@@ -707,6 +707,9 @@ body.is-dropping .rpdf-frames { box-shadow: inset 0 0 0 3px var(--hub-accent); }
 .rpdf-new { flex: none; height: 32px; }
 .rpdf-li.is-current .rpdf-li-title { color: var(--hub-accent); }
 .rpdf-li-main > svg.is-accent { color: var(--hub-accent); }
+.rpdf-li.is-disabled:hover,
+.rpdf-li.is-disabled:focus-within { background: none; }
+.rpdf-li.is-disabled .rpdf-li-main { cursor: default; opacity: 0.45; }
 .rpdf-li-rename {
   flex: 1 1 auto;
   min-width: 0;

@@ -1538,28 +1538,36 @@ function moveSource(docId: string | null): string {
 function renderMove(tab: HubTab): void {
   const docId = tab.docId ?? tab.libraryId ?? (tab.url ? libraryIdForUrl(tab.url) : null);
   const from = moveSource(docId);
-  const index = membershipIndex();
   moveTitle.textContent = `‘${tabName(tab)}’ 옮기기`;
-  const targets = livePdfProjects(projects)
-    .filter((p) => p.id !== from)
-    .sort((a, b) => Number(openProjectIds.has(b.id)) - Number(openProjectIds.has(a.id)));
+  // Every project is listed; the ones already holding the document are shown
+  // disabled rather than left out, so none seems to have vanished.
+  const holds = (id: string) => id === from || (!!docId && isDocInProject(projects, id, docId));
+  const rank = (id: string) => (holds(id) ? 2 : 0) + (openProjectIds.has(id) ? 0 : 1);
+  const targets = livePdfProjects(projects).sort((a, b) => rank(a.id) - rank(b.id));
   const rows = targets.map((project) => {
-    const row = el('div', { className: 'rpdf-li' });
+    const inside = holds(project.id);
+    const row = el('div', { className: inside ? 'rpdf-li is-disabled' : 'rpdf-li' });
     const main = el('button', { type: 'button', className: 'rpdf-li-main' });
-    const already = !!docId && project.id !== DEFAULT_PROJECT_ID && (index.get(docId) ?? []).includes(project.id);
     const open = openProjectIds.has(project.id);
+    const where = project.id === projectId ? '지금 이 프로젝트' : '이미 들어 있음';
     const text = el('span', { className: 'rpdf-li-text' });
     text.append(
       el('span', { className: 'rpdf-li-title', textContent: project.name }),
-      el('span', { className: 'rpdf-li-sub', textContent: [open ? '열림' : '닫힘', already ? '이미 들어 있음' : null].filter(Boolean).join(' · ') }),
+      el('span', { className: 'rpdf-li-sub', textContent: [open ? '열림' : '닫힘', inside ? where : null].filter(Boolean).join(' · ') }),
     );
     const mark = icon('i-folder');
-    if (open) mark.classList.add('is-accent');
+    if (open && !inside) mark.classList.add('is-accent');
     main.append(mark, text);
+    if (inside) {
+      main.disabled = true;
+      main.title = '이 문서가 이미 들어 있는 프로젝트입니다';
+      row.append(main);
+      return row;
+    }
     main.title = '이 프로젝트로 옮기기';
     main.addEventListener('click', () => { hideMove(); void moveTab(tab, project.id, false); });
     row.append(main);
-    if (project.id !== DEFAULT_PROJECT_ID && !already) {
+    if (project.id !== DEFAULT_PROJECT_ID) {
       const add = el('button', { type: 'button', className: 'rpdf-li-action', title: '여기에도 추가 (지금 프로젝트에도 남김)' });
       add.setAttribute('aria-label', `${project.name}에도 추가`);
       add.append(icon('i-plus'));
@@ -1568,7 +1576,8 @@ function renderMove(tab: HubTab): void {
     }
     return row;
   });
-  moveItems.replaceChildren(...(rows.length ? rows : [el('p', { className: 'rpdf-li-empty', textContent: '옮길 다른 프로젝트가 없습니다. 아래에서 새로 만드세요.' })]));
+  if (!targets.some((p) => !holds(p.id))) rows.push(el('p', { className: 'rpdf-li-empty', textContent: '옮길 다른 프로젝트가 없습니다. 아래에서 새로 만드세요.' }));
+  moveItems.replaceChildren(...rows);
 }
 
 function showMove(tab: HubTab | null = activeTab()): void {
@@ -1580,7 +1589,7 @@ function showMove(tab: HubTab | null = activeTab()): void {
   moveNewName.value = '';
   renderMove(tab);
   void loadOpenProjects().then(() => { if (!movePanel.hidden && moveTarget) renderMove(moveTarget); });
-  moveItems.querySelector<HTMLButtonElement>('.rpdf-li-main')?.focus();
+  moveItems.querySelector<HTMLButtonElement>('.rpdf-li-main:not(:disabled)')?.focus();
 }
 
 function hideMove(): void {
