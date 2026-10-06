@@ -8,6 +8,7 @@ import { DEFAULT_WEB_PDF_VIEWER_ENABLED, WEB_PDF_VIEWER_ENABLED_SETTING_KEY } fr
 import { getSetting } from '../db/settingsRepository';
 import { PDF_HUB_PAGE, WEB_PDF_HOST_ORIGINS } from '../shared/localPdf';
 import { currentLanguage, localizeDocument } from '../shared/i18n';
+import { syncStatusErrorText } from '../shared/syncErrors';
 import { S } from './popup.strings';
 
 localizeDocument(S);
@@ -28,6 +29,8 @@ type SyncStatus = {
   googleAccountEmail: string;
   enabled: boolean;
   lastSyncAt: string | null;
+  errorCode?: string | null;
+  errorDetail?: string | null;
   error: string | null;
   syncing: boolean;
 };
@@ -60,10 +63,11 @@ async function loadSync(): Promise<void> {
   syncAction.disabled = status.syncing;
   syncAction.textContent = syncNow ? S.syncNow : status.googleConnected ? S.turnOn : S.connect;
   const account = status.googleAccountEmail || S.googleAccount;
+  const errorText = syncStatusErrorText(status);
   if (!status.googleConnected) syncSummary.textContent = S.notConnected;
   else if (!status.enabled) syncSummary.textContent = S.off(account);
   else if (status.syncing) syncSummary.textContent = S.syncing;
-  else if (status.error) syncSummary.textContent = S.error(status.error);
+  else if (errorText) syncSummary.textContent = S.error(errorText);
   else syncSummary.textContent = status.lastSyncAt
     ? S.lastSync(account, new Date(status.lastSyncAt).toLocaleString(currentLanguage(), { dateStyle: 'short', timeStyle: 'short' }))
     : S.waitingFirst(account);
@@ -73,9 +77,9 @@ syncAction.addEventListener('click', () => {
   if (!syncNow) { openSettings(); return; }
   syncAction.disabled = true;
   syncSummary.textContent = S.syncing;
-  void send<{ success: boolean; error?: string }>({ type: 'VOCAB_T_SYNC_CLOUD_NOW' }).then(async (response) => {
+  void send<{ success: boolean; error?: string; errorCode?: string }>({ type: 'VOCAB_T_SYNC_CLOUD_NOW' }).then(async (response) => {
     await loadSync();
-    if (!response?.success) syncSummary.textContent = response?.error ?? S.syncFailed;
+    if (!response?.success) syncSummary.textContent = syncStatusErrorText(response) ?? S.syncFailed;
   });
 });
 

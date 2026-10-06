@@ -12,6 +12,8 @@ import {
   PDF_PROJECT_FOLDERS_STORAGE_KEY,
   applyPdfFolderUpdate,
   applyPdfProjectUpdate,
+  pdfFolderLimitReached,
+  pdfProjectLimitReached,
   mergePdfProjectFolderLists,
   mergePdfProjectLists,
   parsePdfProjectFolders,
@@ -27,13 +29,9 @@ import {
   type PdfProjectUpdate,
 } from '../shared/pdfProjects';
 import { readPdfLibrary } from './pdfLibraryStore';
+import { createSerialQueue } from './serialQueue';
 
-let queue: Promise<unknown> = Promise.resolve();
-function serialized<T>(task: () => Promise<T>): Promise<T> {
-  const run = queue.then(task, task);
-  queue = run.catch(() => undefined);
-  return run;
-}
+const serialized = createSerialQueue();
 
 export async function readPdfProjects(): Promise<PdfProjects> {
   try {
@@ -73,14 +71,27 @@ export function updatePdfProjects(update: PdfProjectUpdate): Promise<boolean> {
   return mutatePdfProjects((projects) => applyPdfProjectUpdate(projects, update));
 }
 
-/** Folders and the order: both maps in one write. */
-export function updatePdfProjectFolders(update: PdfFolderUpdate): Promise<boolean> {
+export type PdfProjectLimit = 'project-limit' | 'folder-limit';
+
+/**
+ * A hub's change (projects, folders, order) applied atomically; creating a
+ * project or folder at the cap is refused and says which cap.
+ */
+export function applyPdfProjectRequest(update: PdfProjectUpdate | PdfFolderUpdate): Promise<{ changed: boolean; refused: PdfProjectLimit | null }> {
   return serialized(async () => {
     const before = { projects: await readPdfProjects(), folders: await readPdfProjectFolders() };
-    const after = applyPdfFolderUpdate(before, update);
-    if (after === before) return false;
-    await chrome.storage.local.set({ [PDF_PROJECTS_STORAGE_KEY]: after.projects, [PDF_PROJECT_FOLDERS_STORAGE_KEY]: after.folders });
-    return true;
+    if (update.kind === 'create' && !before.projects[update.id] && pdfProjectLimitReached(before.projects)) return { changed: false, refused: 'project-limit' };
+    if (update.kind === 'folder-create' && !before.folders[update.id] && pdfFolderLimitReached(before.folders)) return { changed: false, refused: 'folder-limit' };
+    if (update.kind === 'folder-create' || update.kind === 'folder-rename' || update.kind === 'folder-delete' || update.kind === 'arrange') {
+      const after = applyPdfFolderUpdate(before, update);
+      if (after === before) return { changed: false, refused: null };
+      await chrome.storage.local.set({ [PDF_PROJECTS_STORAGE_KEY]: after.projects, [PDF_PROJECT_FOLDERS_STORAGE_KEY]: after.folders });
+      return { changed: true, refused: null };
+    }
+    const after = applyPdfProjectUpdate(before.projects, update);
+    if (after === before.projects) return { changed: false, refused: null };
+    await write(after);
+    return { changed: true, refused: null };
   });
 }
 

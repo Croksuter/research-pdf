@@ -1,8 +1,7 @@
-// Runtime-toggleable verbose logger shared by every bundle (background,
-// content, popup, debug). The flag lives in chrome.storage.local rather than
-// the IndexedDB settings store: content scripts cannot reach that store, and
-// chrome.storage.onChanged is the only channel that pushes toggle changes live
-// into every context (service worker, content scripts, extension pages).
+// Runtime-toggleable verbose logger shared by every bundle (service worker,
+// hub, viewer, popup, settings). The flag lives in chrome.storage.local
+// rather than the IndexedDB settings store: chrome.storage.onChanged pushes a
+// toggle live into every context at once, which IndexedDB cannot.
 //
 // Three levels: debugLog (info), debugWarn, debugError. Every call — while the
 // flag is on — also records a timestamped event into a bounded flow buffer
@@ -177,11 +176,11 @@ export function redactForDebugLog(value: unknown): unknown {
 
 /** Turns an unknown thrown value into a plain, log-safe object. Never throws.
  *  Non-Error inputs collapse to `{ message: String(error) }`. Error inputs keep
- *  name/message/stack plus SDK-style `status`/`code` when present. Because the
- *  @google/genai SDK double-encodes its ApiError — Error.message is a JSON
- *  string whose { error: { message } } inner message is ALSO a JSON string —
- *  `message` is unwrapped at most twice so `details` bottoms out at the real API
- *  error object, with the raw `message` string kept alongside it. */
+ *  name/message/stack plus SDK-style `status`/`code` when present. Some HTTP
+ *  APIs answer with an error whose message is JSON wrapping another JSON
+ *  string (`{ error: { message: "<json>" } }`), so `message` is unwrapped at
+ *  most twice and `details` bottoms out at the real API error object, with the
+ *  raw `message` string kept alongside it. */
 export function serializeErrorForDebugLog(error: unknown): Record<string, unknown> {
   if (!(error instanceof Error)) {
     return { message: String(error) };

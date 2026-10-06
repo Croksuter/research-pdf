@@ -21,12 +21,13 @@
 //   • projects and folders: a join too — latest rename, final deletions,
 //     latest change per member, latest saved tabs, latest look and placement
 //     (shared/pdfProjects.ts);
-//   • the merged set is bounded exactly like local storage (document count and
-//     age), so every device converges on the same set instead of one device's
-//     pruning being read as the user deleting things.
+//   • the merged set is bounded exactly like local storage (reading positions
+//     by count and age; drawings never, a document with drawings is always
+//     kept), so every device converges on the same set instead of one
+//     device's pruning being read as the user deleting things.
 
-import { PdfAnnotationCache, PDF_ANNOTATION_CACHE_MAX_DOCS, PDF_ANNOTATION_CACHE_VERSION, isEmptyAnnotationCache, parsePdfAnnotationCache } from './pdfAnnotations';
-import { PDF_DOC_RECORD_MAX, PDF_DOC_RECORD_MAX_AGE_MS, PdfDocRecord, parsePdfDocRecord } from './pdfIdentity';
+import { PdfAnnotationCache, PDF_ANNOTATION_CACHE_VERSION, isEmptyAnnotationCache, parsePdfAnnotationCache } from './pdfAnnotations';
+import { PdfDocRecord, boundPdfDocRecords, parsePdfDocRecord } from './pdfIdentity';
 import { PDF_LIBRARY_MAX, PdfLibraryEntry, boundPdfLibrary, mergePdfLibraries, parsePdfLibraryList } from './pdfLibrary';
 import {
   PdfProject,
@@ -40,6 +41,7 @@ import {
   projectDocIds,
 } from './pdfProjects';
 import { byId, chooseThreeWay, mergeRows, stableJson } from './threeWayMerge';
+import { isRecord } from './guards';
 
 // Version 2 added `library`, version 3 `projects`, version 4 `folders` (and
 // new fields in projects and library rows), version 5 the pin order in
@@ -59,9 +61,6 @@ export interface PdfSyncSnapshot {
   folders: PdfProjectFolder[];
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /** Strict: a document another build cannot read back is refused, never repaired. */
 export function parsePdfSyncSnapshot(value: unknown): PdfSyncSnapshot | null {
@@ -171,15 +170,10 @@ function mergeAnnotationSets(
 
 /** The same bounds local storage applies, so every device converges on one set. */
 export function boundPdfSyncSnapshot(snapshot: PdfSyncSnapshot, now: number = Date.now()): PdfSyncSnapshot {
-  const docs = snapshot.docs
-    .filter((doc) => now - doc.updatedAt <= PDF_DOC_RECORD_MAX_AGE_MS)
-    .sort((a, b) => b.updatedAt - a.updatedAt || a.docId.localeCompare(b.docId))
-    .slice(0, PDF_DOC_RECORD_MAX)
-    .sort((a, b) => a.docId.localeCompare(b.docId));
+  const docs = boundPdfDocRecords(snapshot.docs, now);
+  // Drawings are the user's work: every document that has any is kept.
   const annotations = snapshot.annotations
     .filter((cache) => !isEmptyAnnotationCache(cache))
-    .sort((a, b) => b.updatedAt - a.updatedAt || a.docId.localeCompare(b.docId))
-    .slice(0, PDF_ANNOTATION_CACHE_MAX_DOCS)
     .sort((a, b) => a.docId.localeCompare(b.docId));
   const projects = boundPdfProjects(snapshot.projects, now);
   return {

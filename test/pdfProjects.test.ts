@@ -1,9 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { PdfLibraryEntry } from '../src/shared/pdfLibrary';
 import {
   DEFAULT_PROJECT_ID,
+  PDF_PROJECTS_MAX,
+  PDF_PROJECT_FOLDERS_MAX,
+  PDF_PROJECT_MAX_MEMBERS,
   PDF_PROJECT_TOMBSTONE_MAX_AGE_MS,
+  boundPdfProjectFolders,
   appendToPdfProjectLayout,
   applyPdfProjectUpdate,
   boundPdfProjects,
@@ -34,6 +38,7 @@ import {
   type PdfProjects,
 } from '../src/shared/pdfProjects';
 import { parsePdfProjectMoveRequest, parsePdfProjectOpenRequest, parsePdfProjectUpdateRequest } from '../src/shared/messages';
+import { ORDER_KEY_MAX_CHARS, compareOrderKeys, isOrderKey, orderKeyBetween, orderKeysBetween } from '../src/shared/orderKey';
 
 const NOW = Date.UTC(2026, 9, 3);
 const A = 'https://arxiv.org/pdf/2401.00001';
@@ -306,5 +311,139 @@ describe('pin order', () => {
     expect(parsePdfProjectUpdate({ kind: 'pin-order', id: 'pa', order: [{ docId: 'd1', order: 'a0' }] })).toBeNull();
     expect(parsePdfProjectUpdateRequest({ type: 'VOCAB_T_PDF_PROJECT_UPDATE', update: { kind: 'pin-order', id: 'pa', order: [{ docId: 'd1', order: 'a' }] } }))
       .toEqual({ type: 'VOCAB_T_PDF_PROJECT_UPDATE', update: { kind: 'pin-order', id: 'pa', order: [{ docId: 'd1', order: 'a' }] } });
+  });
+});
+
+describe('caps', () => {
+  const folder = (id: string, overrides: Partial<PdfProjectFolder> = {}): PdfProjectFolder => ({
+    id, name: id, createdAt: NOW - 10_000, renamedAt: NOW - 10_000, deletedAt: 0, order: null, placedAt: 0, ...overrides,
+  });
+  const many = (n: number, prefix = 'p') => Array.from({ length: n }, (_, i) => project(`${prefix}${String(i).padStart(4, '0')}x`, { createdAt: NOW - i }));
+
+  it('never drops a live project, folder or registered document to meet a cap; only tombstones and removals are capped', () => {
+    // Two devices that each made projects offline: more than the cap after the merge.
+    const live = many(PDF_PROJECTS_MAX + 50);
+    const tombstones = many(PDF_PROJECTS_MAX + 10, 'd').map((p, i) => ({ ...p, deletedAt: NOW - i - 1 }));
+    const bounded = boundPdfProjects([project(DEFAULT_PROJECT_ID), ...live, ...tombstones], NOW);
+    expect(bounded.filter((p) => p.deletedAt === 0)).toHaveLength(PDF_PROJECTS_MAX + 51);
+    expect(bounded.filter((p) => p.deletedAt > 0)).toHaveLength(PDF_PROJECTS_MAX);
+    // The oldest project is still there, on every device: the merged list parses back whole.
+    expect(parsePdfProjectList(bounded)).toHaveLength(bounded.length);
+
+    const members = Array.from({ length: PDF_PROJECT_MAX_MEMBERS + 100 }, (_, i) => ({ docId: `in${i}`, member: true, pinned: false, pinOrder: null, changedAt: NOW - i }));
+    const removed = Array.from({ length: 50 }, (_, i) => ({ docId: `out${i}`, member: false, pinned: false, pinOrder: null, changedAt: NOW - i }));
+    const [big] = boundPdfProjects([project('pa', { members: [...members, ...removed] })], NOW);
+    expect(big.members).toHaveLength(PDF_PROJECT_MAX_MEMBERS + 100);
+    expect(big.members.every((m) => m.member)).toBe(true);
+    expect(parsePdfProjects({ pa: big }).pa.members).toHaveLength(PDF_PROJECT_MAX_MEMBERS + 100);
+
+    const folders = Array.from({ length: PDF_PROJECT_FOLDERS_MAX + 20 }, (_, i) => folder(`f${i}x`, { createdAt: NOW - i }));
+    expect(boundPdfProjectFolders(folders, NOW)).toHaveLength(PDF_PROJECT_FOLDERS_MAX + 20);
+  });
+
+  it('refuses to create a project or a folder at the cap', () => {
+    let projects: PdfProjects = { default: project(DEFAULT_PROJECT_ID) };
+    for (const p of many(PDF_PROJECTS_MAX - 1)) projects[p.id] = p;
+    projects = { ...projects };
+    expect(applyPdfProjectUpdate(projects, { kind: 'create', id: 'pnew', name: 'New' }, NOW)).toBe(projects);
+    // A deleted one makes room.
+    const deleted = applyPdfProjectUpdate(projects, { kind: 'delete', id: 'p0000x' }, NOW);
+    expect(applyPdfProjectUpdate(deleted, { kind: 'create', id: 'pnew', name: 'New' }, NOW).pnew).toBeDefined();
+
+    const folders = Object.fromEntries(Array.from({ length: PDF_PROJECT_FOLDERS_MAX }, (_, i) => [`f${i}x`, folder(`f${i}x`)]));
+    const state: PdfProjectState = { projects: { default: project(DEFAULT_PROJECT_ID) }, folders };
+    expect(applyPdfFolderUpdate(state, { kind: 'folder-create', id: 'fnew', name: 'New', order: null }, NOW)).toBe(state);
+  });
+});
+
+describe('the background\'s project writer at a cap', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('answers which cap refused a create, and still applies everything else', async () => {
+    const local: Record<string, unknown> = {};
+    vi.stubGlobal('chrome', { storage: { local: {
+      get: async (key: string) => (key in local ? { [key]: structuredClone(local[key]) } : {}),
+      set: async (items: Record<string, unknown>) => { Object.assign(local, structuredClone(items)); },
+    } } });
+    vi.resetModules();
+    const store = await import('../src/background/pdfProjectStore');
+    local.rpdfProjects = Object.fromEntries([project(DEFAULT_PROJECT_ID), ...Array.from({ length: PDF_PROJECTS_MAX - 1 }, (_, i) => project(`p${i}x`))].map((p) => [p.id, p]));
+    expect(await store.applyPdfProjectRequest({ kind: 'create', id: 'pnew', name: 'New' })).toEqual({ changed: false, refused: 'project-limit' });
+    expect(await store.applyPdfProjectRequest({ kind: 'rename', id: 'p0x', name: 'Renamed' })).toEqual({ changed: true, refused: null });
+    local.rpdfProjectFolders = Object.fromEntries(Array.from({ length: PDF_PROJECT_FOLDERS_MAX }, (_, i) => [`f${i}x`, { id: `f${i}x`, name: 'F', createdAt: 1, renamedAt: 1, deletedAt: 0, order: null, placedAt: 0 }]));
+    expect(await store.applyPdfProjectRequest({ kind: 'folder-create', id: 'fnew', name: 'New', order: null })).toEqual({ changed: false, refused: 'folder-limit' });
+  });
+});
+
+describe('order keys in the model', () => {
+  const folder = (id: string, overrides: Partial<PdfProjectFolder> = {}): PdfProjectFolder => ({
+    id, name: id, createdAt: NOW - 10_000, renamedAt: NOW - 10_000, deletedAt: 0, order: null, placedAt: 0, ...overrides,
+  });
+  const topIds = (state: PdfProjectState) => pdfProjectTree(state.projects, state.folders).items.map((item) => (item.kind === 'folder' ? item.folder.id : item.project.id));
+  const allKeysValid = (state: PdfProjectState) => [...Object.values(state.projects), ...Object.values(state.folders)].every((x) => x.order === null || isOrderKey(x.order));
+
+  it('never loses a project, folder or member to a bad order key: the key is dropped', () => {
+    const tooLong = 'V'.repeat(ORDER_KEY_MAX_CHARS + 1);
+    const stored = {
+      default: project(DEFAULT_PROJECT_ID),
+      pa: { ...project('pa'), order: tooLong },
+      pb: { ...project('pb'), order: 'a0', members: [{ docId: 'd1', member: true, pinned: true, pinOrder: tooLong, changedAt: 1 }] },
+    };
+    const parsed = parsePdfProjects(stored);
+    expect(parsed.pa.order).toBeNull();
+    expect(parsed.pb.order).toBeNull();
+    expect(parsed.pb.members).toEqual([{ docId: 'd1', member: true, pinned: true, pinOrder: null, changedAt: 1 }]);
+    expect(parsePdfProjectList(Object.values(stored))?.map((p) => p.id).sort()).toEqual(['default', 'pa', 'pb']);
+  });
+
+  it('moves one project to the same spot a thousand times without a key ever going over the limit', () => {
+    // What the hub does on a drag: a key between the new neighbours, sent as an 'arrange'.
+    let state: PdfProjectState = {
+      projects: { default: project(DEFAULT_PROJECT_ID), pa: project('pa', { order: '1' }), pb: project('pb', { order: '2' }), pc: project('pc', { order: '3' }), pd: project('pd', { order: '4' }) },
+      folders: {},
+    };
+    let longest = 0;
+    for (let i = 0; i < 1_000; i += 1) {
+      // Alternately move pc and pd right after pa: always into the narrowing gap after pa.
+      const moving = i % 2 === 0 ? 'pc' : 'pd';
+      const siblings = topIds(state).filter((id) => id !== moving);
+      const at = siblings.indexOf('pa') + 1;
+      const before = state.projects[siblings[at - 1]].order;
+      const after = state.projects[siblings[at]]?.order ?? null;
+      const key = orderKeyBetween(before, after);
+      const update = parsePdfFolderUpdate({ kind: 'arrange', projects: [{ id: moving, folder: null, order: key }], folders: [] });
+      expect(update, `move ${i}: key of ${key.length}`).not.toBeNull();
+      longest = Math.max(longest, key.length);
+      state = applyPdfFolderUpdate(state, update!, NOW + i);
+      expect(allKeysValid(state)).toBe(true);
+      expect(topIds(state).slice(0, 2)).toEqual(['pa', moving]);
+      expect(topIds(state)).toHaveLength(4);
+    }
+    // The hub's keys did run past the limit; the model re-keyed the level each time.
+    expect(longest).toBeGreaterThan(ORDER_KEY_MAX_CHARS);
+    // Stored and read back, nothing is dropped.
+    expect(Object.keys(parsePdfProjects(state.projects)).sort()).toEqual(['default', 'pa', 'pb', 'pc', 'pd']);
+  });
+
+  it('lets a folder\'s projects out between two close long keys, re-keying the level when the keys would be too long', () => {
+    // A folder and the item after it whose keys differ only in the last place, after many moves.
+    const base = 'V'.repeat(ORDER_KEY_MAX_CHARS - 2);
+    const inside = Array.from({ length: 40 }, (_, i) => project(`pin${String(i).padStart(2, '0')}x`, { folder: 'f1', order: `${String.fromCharCode(65 + Math.floor(i / 10))}${i % 10 + 1}` }));
+    let state: PdfProjectState = {
+      projects: Object.fromEntries([project(DEFAULT_PROJECT_ID), project('pa', { order: '1' }), project('pz', { order: `${base}W2` }), ...inside].map((p) => [p.id, p])),
+      folders: { f1: folder('f1', { order: `${base}W1` }) },
+    };
+    // Keys between those two for 40 projects would run past the limit.
+    expect(orderKeysBetween(state.folders.f1.order, state.projects.pz.order, inside.length).some((key) => !isOrderKey(key))).toBe(true);
+    const before = pdfProjectTree(state.projects, state.folders).items.flatMap((item) => (item.kind === 'folder' ? item.projects.map((p) => p.id) : [item.project.id]));
+    state = applyPdfFolderUpdate(state, { kind: 'folder-delete', id: 'f1' }, NOW);
+    expect(allKeysValid(state)).toBe(true);
+    // Out where the folder stood, in their order, and every project survives storage.
+    expect(topIds(state)).toEqual(before);
+    const parsed = parsePdfProjects(state.projects);
+    expect(Object.keys(parsed)).toHaveLength(43);
+    expect(Object.values(parsed).every((p) => p.id === DEFAULT_PROJECT_ID || p.order !== null)).toBe(true);
+    const keys = topIds(state).map((id) => state.projects[id].order!);
+    expect([...keys].sort(compareOrderKeys)).toEqual(keys);
   });
 });

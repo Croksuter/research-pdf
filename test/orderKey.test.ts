@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compareOrderKeys, isOrderKey, orderKeyAtEnd, orderKeyBetween, orderKeysBetween } from '../src/shared/orderKey';
+import { ORDER_KEY_MAX_CHARS, compareOrderKeys, evenOrderKeys, isOrderKey, isOrderKeyCandidate, orderKeyAtEnd, orderKeyBetween, orderKeysBetween } from '../src/shared/orderKey';
 
 describe('order keys', () => {
   it('puts a key strictly between two others, at either open end too', () => {
@@ -45,5 +45,35 @@ describe('order keys', () => {
     expect(isOrderKey('a0')).toBe(false);
     expect(isOrderKey('')).toBe(false);
     expect(isOrderKey('a-b')).toBe(false);
+  });
+
+  it('runs past the length limit after some hundreds of moves to one spot, which the model then re-keys', () => {
+    let low = '1';
+    let moves = 0;
+    while (isOrderKey(orderKeyBetween(low, '2'))) { low = orderKeyBetween(low, '2'); moves += 1; }
+    // Between 200 and a thousand moves (the model test drives 1,000 through re-keying).
+    expect(moves).toBeGreaterThan(200);
+    expect(moves).toBeLessThan(1_000);
+    const next = orderKeyBetween(low, '2');
+    expect(next.length).toBeGreaterThan(ORDER_KEY_MAX_CHARS);
+    expect(isOrderKeyCandidate(next)).toBe(true);
+    expect(isOrderKeyCandidate('V'.repeat(ORDER_KEY_MAX_CHARS * 2 + 1))).toBe(false);
+  });
+
+  it('spreads a fresh level evenly, as short as the count allows', () => {
+    for (const count of [0, 1, 2, 61, 62, 300, 4_000]) {
+      const keys = evenOrderKeys(count);
+      expect(keys).toHaveLength(count);
+      expect(keys.every(isOrderKey)).toBe(true);
+      expect(new Set(keys).size).toBe(count);
+      expect([...keys].sort(compareOrderKeys)).toEqual(keys);
+    }
+    expect(evenOrderKeys(61).every((k) => k.length === 1)).toBe(true);
+    expect(Math.max(...evenOrderKeys(300).map((k) => k.length))).toBe(2);
+    // Room is left at both ends and between neighbours.
+    const keys = evenOrderKeys(300);
+    expect(isOrderKey(orderKeyBetween(null, keys[0]))).toBe(true);
+    expect(isOrderKey(orderKeyBetween(keys[299], null))).toBe(true);
+    expect(keys.slice(1).every((k, i) => isOrderKey(orderKeyBetween(keys[i], k)))).toBe(true);
   });
 });

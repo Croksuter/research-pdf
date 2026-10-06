@@ -6,7 +6,7 @@ export type MessageHandler = (
   sender: chrome.runtime.MessageSender,
 ) => unknown | Promise<unknown>;
 
-/** True for the extension's own pages (popup, viewer), false for content scripts. */
+/** True for the extension's own pages (popup, hub, viewer, settings), false for anything else. */
 export function isExtensionPageSender(sender: chrome.runtime.MessageSender): boolean {
   return sender.id === chrome.runtime.id
     && typeof sender.url === 'string'
@@ -15,15 +15,15 @@ export function isExtensionPageSender(sender: chrome.runtime.MessageSender): boo
 
 export function registerMessageDispatcher(handlers: Record<string, MessageHandler>): void {
   chrome.runtime.onMessage.addListener((message: BackgroundMessage, sender, sendResponse) => {
-    // Only accept messages from our own extension (content scripts, popup, viewer).
+    // Only accept messages from our own extension (its pages: popup, hub, viewer, settings).
     if (sender.id !== chrome.runtime.id) return false;
 
     const handler = message && handlers[message.type];
     if (!handler) return false;
 
-    // Trace one message end-to-end at the dispatcher, not per handler. The full
-    // message goes through redactForDebugLog because VOCAB_T_SET_CLOUD_SYNC_CONFIG
-    // carries a WebDAV password; the thunk keeps this free when logging is off.
+    // Trace one message end-to-end at the dispatcher, not per handler. Messages
+    // and answers go through redactForDebugLog so nothing secret-looking ever
+    // reaches the log; the thunk keeps this free when logging is off.
     const startedAt = performance.now();
     debugLog('bg:msg', `${message.type} received`, () => ({
       tabId: sender.tab?.id,

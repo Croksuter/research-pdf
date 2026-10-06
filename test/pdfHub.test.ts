@@ -142,7 +142,7 @@ describe('hub messages', () => {
 
 // ─── Claim policy against a fake Chrome ───
 
-interface FakeTab { id: number; windowId: number; index: number; active: boolean; url: string }
+interface FakeTab { id: number; windowId: number; index: number; active: boolean; url: string; discarded?: boolean }
 
 function createFakeChrome() {
   const tabs = new Map<number, FakeTab>();
@@ -152,6 +152,8 @@ function createFakeChrome() {
   let nextId = 100;
   // Hub pages that answer the background's hand-over broadcast.
   const hubInboxes = new Map<number, Array<{ docs: Array<{ url: string; hash: string }>; activate: boolean }>>();
+  // Hub pages Chrome froze: they take a message only when woken.
+  const asleep = new Map<number, Array<() => void>>();
   const listener = () => ({ addListener: vi.fn() });
   const area = (store: Record<string, unknown>) => ({
     get: vi.fn(async (keys: string | string[]) => {
@@ -166,6 +168,8 @@ function createFakeChrome() {
       id: 'abc',
       getURL: (path: string) => `chrome-extension://abc/${path}`,
       sendMessage: vi.fn(async (message: { tabId: number; docs: Array<{ url: string; hash: string }>; activate: boolean }) => {
+        const sleeping = asleep.get(message.tabId);
+        if (sleeping) await new Promise<void>((resolve) => { sleeping.push(resolve); });
         const inbox = hubInboxes.get(message.tabId);
         if (!inbox) throw new Error('Could not establish connection. Receiving end does not exist.');
         inbox.push({ docs: message.docs, activate: message.activate });
@@ -202,6 +206,9 @@ function createFakeChrome() {
     local,
     focusedWindows,
     hubInboxes,
+    asleep,
+    /** The frozen hub wakes and takes what was sent to it meanwhile. */
+    wake(tabId: number) { const waiting = asleep.get(tabId) ?? []; asleep.delete(tabId); waiting.forEach((resolve) => resolve()); },
     addTab(tab: Omit<FakeTab, 'url'>) { tabs.set(tab.id, { ...tab, url: '' }); },
     sender(id: number) {
       const tab = tabs.get(id);
@@ -248,17 +255,35 @@ describe('hub claims', () => {
 
   it('decides purely from the registry entry, the claimer, and its history', () => {
     const pending = [doc(A)];
-    expect(hub.decideHubClaim({ entry: { tabId: 1, ready: false, pending }, claimerTabId: 1, canGoBack: true, hasDocs: true }))
+    const decide = (input: Omit<Parameters<typeof hub.decideHubClaim>[0], 'liveness'> & { liveness?: 'present' | 'discarded' | 'gone' }) =>
+      hub.decideHubClaim({ liveness: 'present', ...input });
+    expect(decide({ entry: { tabId: 1, ready: false, pending }, claimerTabId: 1, canGoBack: true, hasDocs: true }))
       .toEqual({ kind: 'become-hub', pending });
-    expect(hub.decideHubClaim({ entry: { tabId: 1, ready: true, pending: [] }, claimerTabId: 2, canGoBack: false, hasDocs: true }))
+    expect(decide({ entry: { tabId: 1, ready: true, pending: [] }, claimerTabId: 2, canGoBack: false, hasDocs: true }))
       .toEqual({ kind: 'forward-live', hubTabId: 1 });
-    expect(hub.decideHubClaim({ entry: { tabId: 1, ready: false, pending: [] }, claimerTabId: 2, canGoBack: false, hasDocs: true }))
-      .toEqual({ kind: 'forward-pending', hubTabId: 1 });
-    expect(hub.decideHubClaim({ entry: null, claimerTabId: 2, canGoBack: true, hasDocs: true })).toEqual({ kind: 'spawn-hub' });
-    expect(hub.decideHubClaim({ entry: null, claimerTabId: 2, canGoBack: true, hasDocs: false })).toEqual({ kind: 'become-hub', pending: [] });
-    expect(hub.decideHubClaim({ entry: null, claimerTabId: 2, canGoBack: false, hasDocs: true })).toEqual({ kind: 'become-hub', pending: [] });
+    expect(decide({ entry: { tabId: 1, ready: false, pending: [] }, claimerTabId: 2, canGoBack: false, hasDocs: true }))
+      .toEqual({ kind: 'queue', hubTabId: 1, ready: false });
+    expect(decide({ entry: null, claimerTabId: 2, canGoBack: true, hasDocs: true })).toEqual({ kind: 'spawn-hub' });
+    expect(decide({ entry: null, claimerTabId: 2, canGoBack: true, hasDocs: false })).toEqual({ kind: 'become-hub', pending: [] });
+    expect(decide({ entry: null, claimerTabId: 2, canGoBack: false, hasDocs: true })).toEqual({ kind: 'become-hub', pending: [] });
     expect(hub.mergeHubDocs([doc(A), doc(B, '#page=1')], [doc(B, '#page=9'), doc(LOCAL)]))
       .toEqual([doc(A), doc(B, '#page=9'), doc(LOCAL)]);
+  });
+
+  it('decides on the hub\'s liveness and on how a hand-over went, purely', () => {
+    const live = { tabId: 1, ready: true, pending: [] };
+    const base = { claimerTabId: 2, canGoBack: false, hasDocs: true };
+    // Closed: forgotten, and the claim proceeds as if there were none.
+    expect(hub.decideHubClaim({ ...base, entry: live, liveness: 'gone' })).toEqual({ kind: 'become-hub', pending: [], forget: true });
+    expect(hub.decideHubClaim({ ...base, canGoBack: true, entry: live, liveness: 'gone' })).toEqual({ kind: 'spawn-hub', forget: true });
+    // Discarded: it reloads and claims when shown, so the documents wait for that, and it is not ready until then.
+    expect(hub.decideHubClaim({ ...base, entry: live, liveness: 'discarded' })).toEqual({ kind: 'queue', hubTabId: 1, ready: false });
+    // After a hand-over: taken; asleep (also queued, in case Chrome discards it before it wakes); no page answered.
+    expect(hub.decideHubClaim({ ...base, entry: live, liveness: 'present', delivery: 'taken' })).toEqual({ kind: 'handed-over', hubTabId: 1 });
+    expect(hub.decideHubClaim({ ...base, entry: live, liveness: 'present', delivery: 'asleep' })).toEqual({ kind: 'queue', hubTabId: 1, ready: true });
+    expect(hub.decideHubClaim({ ...base, entry: live, liveness: 'present', delivery: 'gone' })).toEqual({ kind: 'become-hub', pending: [], forget: true });
+    // Without an entry, liveness means nothing.
+    expect(hub.decideHubClaim({ ...base, entry: null, liveness: 'gone' })).toEqual({ kind: 'become-hub', pending: [] });
   });
 
   it('makes a fresh PDF tab the default project\'s hub and hands later PDFs to it, closing their tabs', async () => {
@@ -425,6 +450,44 @@ describe('hub claims', () => {
     expect(fake.hubInboxes.get(2)).toHaveLength(1);
     expect(projects.p2y.members.some((m) => m.docId === 'docL' && m.member)).toBe(true);
   });
+
+  it('moves a document into the saved tabs when the target hub page is gone, and forgets that hub', async () => {
+    storeProject('p1x', A, 'docA');
+    fake.addTab({ id: 2, windowId: 7, index: 1, active: true });
+    expect(await claim([], false, 2, 'p1x')).toMatchObject({ project: 'p1x' });
+    // Tab 2 navigated away without Chrome telling us: no hub page answers there.
+    expect(await hub.movePdfToProject({ docId: 'docB', url: B, from: 'default', to: 'p1x', keep: false })).toEqual({ success: true, open: false });
+    const projects = fake.local.rpdfProjects as Record<string, { layout: { urls: string[] } }>;
+    expect(projects.p1x.layout.urls).toEqual([B]);
+    // The stale hub is forgotten: the next tab for p1x becomes its hub.
+    fake.addTab({ id: 3, windowId: 7, index: 2, active: true });
+    expect(await claim([], false, 3, 'p1x')).toMatchObject({ role: 'hub', project: 'p1x' });
+    // A discarded hub gets it when it reloads and claims.
+    fake.tabs.get(3)!.discarded = true;
+    expect(await hub.movePdfToProject({ docId: 'docL', url: LOCAL, from: 'default', to: 'p1x', keep: false })).toEqual({ success: true, open: true });
+    fake.tabs.get(3)!.discarded = false;
+    expect(await claim([], false, 3, 'p1x')).toEqual({ success: true, role: 'hub', project: 'p1x', docs: [doc(LOCAL)] });
+  });
+
+  it('keeps what it hands to an asleep hub queued until the hub takes it', async () => {
+    storeProject('p1x', A, 'docA');
+    fake.addTab({ id: 2, windowId: 7, index: 1, active: false });
+    expect(await claim([], false, 2, 'p1x')).toMatchObject({ project: 'p1x' });
+    fake.hubInboxes.set(2, []);
+    fake.asleep.set(2, []);
+    expect(await hub.movePdfToProject({ docId: 'docB', url: B, from: 'default', to: 'p1x', keep: false })).toEqual({ success: true, open: true });
+    // Chrome discards it before it wakes: the reloaded hub still gets the document.
+    expect(await claim([], false, 2, 'p1x')).toEqual({ success: true, role: 'hub', project: 'p1x', docs: [doc(B)] });
+
+    // A claim handed to an asleep hub is queued too; once the hub wakes and takes it, the queue lets it go.
+    fake.asleep.set(2, []);
+    fake.addTab({ id: 3, windowId: 7, index: 2, active: false });
+    storeProject('p1x', A, 'docA');
+    expect(await claim([doc(LOCAL)], false, 3, 'p1x')).toEqual({ success: true, role: 'forwarded', dispose: 'close' });
+    fake.wake(2);
+    await vi.waitFor(() => expect(fake.hubInboxes.get(2)?.flatMap((m) => m.docs)).toEqual([doc(LOCAL)]));
+    await vi.waitFor(async () => expect(await claim([], false, 2, 'p1x')).toEqual({ success: true, role: 'hub', project: 'p1x', docs: [] }));
+  }, 10_000);
 
   it('takes an embedded PDF for the whole page only when its frame fills the tab', () => {
     expect(hub.fillsTab({ width: 1300, height: 860 }, { width: 1300, height: 900 })).toBe(true); // IEEE stamp.jsp: header + iframe

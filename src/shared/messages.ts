@@ -5,12 +5,11 @@
 // an internal protocol, and renaming would only churn the viewer and tests.
 
 import { PDF_HUB_MAX_DOCS, isPdfViewerSourceUrl, type PdfHubDoc } from './localPdf';
+import { parsePdfDocRecord, type PdfDocRecord } from './pdfIdentity';
 import { parsePdfLibraryUpdate, type PdfLibraryUpdate } from './pdfLibrary';
 import { isPdfProjectId, parsePdfFolderUpdate, parsePdfProjectUpdate, type PdfFolderUpdate, type PdfProjectUpdate } from './pdfProjects';
+import { isRecord } from './guards';
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
 
 function parseEmptyRequest<T extends string>(value: unknown, type: T): { type: T } | null {
   return isRecord(value) && value.type === type && Object.keys(value).length === 1 ? { type } : null;
@@ -212,12 +211,19 @@ export function parseSyncCloudNowRequest(value: unknown): SyncCloudNowRequest | 
   return parseEmptyRequest(value, 'VOCAB_T_SYNC_CLOUD_NOW');
 }
 
+// Signs in and connects. When the account is not the one this device last
+// synced with (and there is local data) the answer is `needsConfirm:
+// 'account-change'`; the page asks the user and sends this again with
+// `confirmAccountChange: true` to go ahead.
 export interface ConnectGoogleSyncRequest {
   type: 'VOCAB_T_CONNECT_GOOGLE_SYNC';
+  confirmAccountChange: boolean;
 }
 
 export function parseConnectGoogleSyncRequest(value: unknown): ConnectGoogleSyncRequest | null {
-  return parseEmptyRequest(value, 'VOCAB_T_CONNECT_GOOGLE_SYNC');
+  if (parseEmptyRequest(value, 'VOCAB_T_CONNECT_GOOGLE_SYNC')) return { type: 'VOCAB_T_CONNECT_GOOGLE_SYNC', confirmAccountChange: false };
+  if (!isRecord(value) || value.type !== 'VOCAB_T_CONNECT_GOOGLE_SYNC' || Object.keys(value).length !== 2) return null;
+  return typeof value.confirmAccountChange === 'boolean' ? { type: 'VOCAB_T_CONNECT_GOOGLE_SYNC', confirmAccountChange: value.confirmAccountChange } : null;
 }
 
 export interface DisconnectGoogleSyncRequest {
@@ -258,4 +264,17 @@ export function parsePdfLibraryUpdateRequest(value: unknown): PdfLibraryUpdateRe
   if (!isRecord(value) || value.type !== 'VOCAB_T_PDF_LIBRARY_UPDATE' || Object.keys(value).length !== 2) return null;
   const update = parsePdfLibraryUpdate(value.update);
   return update ? { type: 'VOCAB_T_PDF_LIBRARY_UPDATE', update } : null;
+}
+
+// Viewer frame → background: this document's reading position. The background
+// is the only writer of the position map (background/pdfDocStateStore.ts).
+export interface PdfDocStateSaveRequest {
+  type: 'VOCAB_T_PDF_DOC_STATE_SAVE';
+  record: PdfDocRecord;
+}
+
+export function parsePdfDocStateSaveRequest(value: unknown): PdfDocStateSaveRequest | null {
+  if (!isRecord(value) || value.type !== 'VOCAB_T_PDF_DOC_STATE_SAVE' || Object.keys(value).length !== 2) return null;
+  const record = parsePdfDocRecord(value.record);
+  return record ? { type: 'VOCAB_T_PDF_DOC_STATE_SAVE', record } : null;
 }

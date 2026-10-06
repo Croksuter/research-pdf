@@ -15,6 +15,15 @@ export function isOrderKey(value: unknown): value is string {
   return typeof value === 'string' && value.length <= ORDER_KEY_MAX_CHARS && KEY_PATTERN.test(value);
 }
 
+/**
+ * A well-formed key that may be a little over the stored limit: what a page
+ * computes between two long neighbours. Accepted in an update, whose apply
+ * then re-keys that level (stored keys are always `isOrderKey`).
+ */
+export function isOrderKeyCandidate(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= ORDER_KEY_MAX_CHARS * 2 && KEY_PATTERN.test(value);
+}
+
 export function compareOrderKeys(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
@@ -47,8 +56,30 @@ function orderKeyAfter(before: string | null): string {
   return digit + 1 < DIGITS.length ? DIGITS[digit + 1] : midpoint(before ?? '', null);
 }
 
-/** `count` increasing keys between `before` and `after`. */
+/**
+ * `count` increasing keys spread evenly over the whole range, as short as the
+ * count allows (one character up to 61 items): a fresh start for a level.
+ */
+export function evenOrderKeys(count: number): string[] {
+  let width = 1;
+  while (DIGITS.length ** width < count + 1) width += 1;
+  const span = DIGITS.length ** width;
+  const keys: string[] = [];
+  for (let i = 0; i < count; i += 1) {
+    let n = Math.floor(((i + 1) * span) / (count + 1));
+    let key = '';
+    for (let d = 0; d < width; d += 1) {
+      key = DIGITS[n % DIGITS.length] + key;
+      n = Math.floor(n / DIGITS.length);
+    }
+    keys.push(key.replace(/0+$/u, ''));
+  }
+  return keys;
+}
+
+/** `count` increasing keys between `before` and `after` (both open: evenly spread). */
 export function orderKeysBetween(before: string | null, after: string | null, count: number): string[] {
+  if (before === null && after === null) return evenOrderKeys(count);
   const keys: string[] = [];
   let low = before;
   for (let i = 0; i < count; i += 1) {

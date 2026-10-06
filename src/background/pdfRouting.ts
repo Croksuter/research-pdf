@@ -13,9 +13,11 @@ import {
   PDF_HUB_PAGE,
   PDF_VIEWER_PAGE,
   WEB_PDF_HOST_ORIGINS,
+  WEB_PDF_NATIVE_EXEMPT_RULE_IDS,
   WEB_PDF_REDIRECT_RULE_IDS,
   buildPdfHubEntryUrl,
   buildPdfHubUrl,
+  buildWebPdfNativeExemptRules,
   buildWebPdfRedirectRules,
   isLocalPdfUrl,
   isPdfViewerSourceUrl,
@@ -34,13 +36,14 @@ import {
   parseRestoreViewerTabsRequest,
   parseSyncWebPdfRoutingRequest,
 } from '../shared/messages';
-import { DEFAULT_PROJECT_ID, isPdfProjectId } from '../shared/pdfProjects';
+import { DEFAULT_PROJECT_ID, PDF_PROJECTS_MAX, PDF_PROJECT_FOLDERS_MAX, isPdfProjectId } from '../shared/pdfProjects';
 import { getSetting } from '../db/settingsRepository';
 import { debugError, debugLog } from '../shared/debugLog';
 import { claimPdfHub, movePdfToProject, noteTopLevelCommit, openPdfProject, promoteEmbeddedPdf, showPdfSettings } from './pdfHub';
-import { updatePdfProjectFolders, updatePdfProjects } from './pdfProjectStore';
+import { applyPdfProjectRequest, updatePdfProjects } from './pdfProjectStore';
 import { isExtensionPageSender } from './messageDispatcher';
 import { requestPdfSyncSoon } from './pdfSyncService';
+import { createSerialQueue } from './serialQueue';
 import { S } from './background.strings';
 
 // ─── PDF viewer routing ───
@@ -59,9 +62,10 @@ import { S } from './background.strings';
 //     opt-in web-PDF setting AND granted optional host access; Chrome itself
 //     limits the rule to origins the user granted.
 //
-// `nativePdfBypassTabs` holds one-shot exemptions for tabs that asked to reopen
-// the document in the native viewer. It is in-memory on purpose: the bypass is
-// consumed by the very next navigation the same handler triggers, and a
+// `nativePdfBypassTabs` holds one-shot exemptions from the URL routes for tabs
+// that asked to reopen the document in the native viewer. It is in-memory on
+// purpose: the bypass is consumed by the next top-level navigation of that
+// tab (or its commit, for a URL the URL routes never look at), and a
 // service-worker restart in between simply falls back to the viewer.
 const nativePdfBypassTabs = new Set<number>();
 
@@ -73,19 +77,24 @@ async function hasWebPdfHostAccess(): Promise<boolean> {
   }
 }
 
-// Re-derives the web-PDF redirect rule from durable state. Idempotent: always
-// removes the rule id first, then adds it back only when both gates hold.
+// Re-derives the web-PDF redirect rules from durable state. Idempotent:
+// always removes the rule ids first, then adds them back only when both gates
+// hold.
 async function syncWebPdfRouting(): Promise<{ enabled: boolean }> {
   let enabled = false;
   try {
     enabled = await getSetting(WEB_PDF_VIEWER_ENABLED_SETTING_KEY, DEFAULT_WEB_PDF_VIEWER_ENABLED)
       && await hasWebPdfHostAccess();
+    const ids = new Set<number>(WEB_PDF_REDIRECT_RULE_IDS);
+    const had = (await chrome.declarativeNetRequest.getDynamicRules()).some((rule) => ids.has(rule.id));
     await chrome.declarativeNetRequest.updateDynamicRules({
       removeRuleIds: [...WEB_PDF_REDIRECT_RULE_IDS],
       addRules: enabled
         ? buildWebPdfRedirectRules(chrome.runtime.getURL(PDF_VIEWER_PAGE), chrome.runtime.getURL(PDF_HUB_PAGE)) as unknown as chrome.declarativeNetRequest.Rule[]
         : [],
     });
+    // Rules just turned on may take a while to honor header conditions, as at start-up.
+    if (enabled && !had) openSuffixRouteWindow();
     debugLog('bg:pdf', `web PDF routing ${enabled ? 'enabled' : 'disabled'}`);
   } catch (error) {
     debugError('bg:pdf', 'failed to sync web PDF routing', () => ({
@@ -99,23 +108,47 @@ void syncWebPdfRouting();
 chrome.permissions.onRemoved.addListener(() => { void syncWebPdfRouting(); });
 chrome.permissions.onAdded.addListener(() => { void syncWebPdfRouting(); });
 
-// Web-PDF "open natively": the DNR rule is not per-tab, so it is dropped for
-// the duration of that one navigation and restored once the tab commits (or
-// after a safety timeout if the navigation never commits).
+// Web-PDF "open natively": the redirect rules match any tab, so the tab is
+// exempted by a session rule naming it (allow, above their priority) for the
+// duration of that one navigation, and released once the tab commits (or
+// after a safety timeout if it never does). The redirect rules themselves
+// stay, so nothing that re-derives them (a worker start, a permission change)
+// can send the tab back to the hub mid-reopen.
 const WEB_PDF_NATIVE_REOPEN_TIMEOUT_MS = 10_000;
 const webPdfNativeReopenTabs = new Map<number, ReturnType<typeof setTimeout>>();
+const exemptionQueue = createSerialQueue();
+
+function writeNativeExemptions(): Promise<void> {
+  return exemptionQueue(async () => {
+    try {
+      await chrome.declarativeNetRequest.updateSessionRules({
+        removeRuleIds: [...WEB_PDF_NATIVE_EXEMPT_RULE_IDS],
+        addRules: buildWebPdfNativeExemptRules([...webPdfNativeReopenTabs.keys()]) as unknown as chrome.declarativeNetRequest.Rule[],
+      });
+    } catch (error) {
+      debugError('bg:pdf', 'failed to update the native-viewer exemption', () => ({ error: error instanceof Error ? error.message : String(error) }));
+    }
+  });
+}
+
+// A worker that starts has no reopen in flight: drop what a previous one left.
+void writeNativeExemptions();
 
 function finishWebPdfNativeReopen(tabId: number) {
   const timer = webPdfNativeReopenTabs.get(tabId);
   if (timer === undefined) return;
   clearTimeout(timer);
   webPdfNativeReopenTabs.delete(tabId);
-  if (webPdfNativeReopenTabs.size === 0) void syncWebPdfRouting();
+  void writeNativeExemptions();
 }
 
 chrome.webNavigation.onCommitted.addListener((details) => {
   if (details.frameId !== 0) return;
-  finishWebPdfNativeReopen(details.tabId);
+  // The blank page a native reopen's new tab starts on is not that navigation.
+  if (details.url !== 'about:blank') {
+    finishWebPdfNativeReopen(details.tabId);
+    nativePdfBypassTabs.delete(details.tabId);
+  }
   noteTopLevelCommit(details.tabId, details.url);
   // A hub tab that navigated somewhere else is no longer restorable.
   if (!details.url.startsWith(chrome.runtime.getURL(PDF_HUB_PAGE))) void forgetViewerTab(details.tabId);
@@ -129,17 +162,48 @@ async function isFileSchemeAccessAllowed(): Promise<boolean> {
   }
 }
 
-// Per-navigation gate for the two URL-suffix routes. Web `.pdf` URLs are also
-// handled here (not only by the DNR rule) because Chrome starts honoring
-// response-header *value* conditions only ~20 s after browser startup; the
-// suffix route is immediate. The DNR rule remains the only path for
-// extension-less PDF URLs.
+// Web `.pdf` URLs are also routed by URL here, not only by the redirect
+// rules, because Chrome honors the rules' response-header conditions only
+// some ~20 s after it starts (and after rules are newly added); the URL route
+// is immediate. It is a stand-in for that window only: it cannot see the
+// request method (a form POSTing to `….pdf` must stay), Content-Disposition
+// (an attachment must download) or the content type (a `.pdf` URL that
+// answers with an HTML sign-in page must show it), all of which the rules
+// respect. After the window the rules alone decide. The rules remain the only
+// path for extension-less PDF URLs; local files have only the URL route.
+const SUFFIX_ROUTE_WINDOW_MS = 60_000;
+// When the window opened: the first worker run of this browser session (or
+// since the extension was updated: both clear session storage), or new rules.
+const SUFFIX_ROUTE_SINCE_KEY = 'rpdfSuffixRouteSince';
+let suffixRouteSince: number | null = null;
+
+function openSuffixRouteWindow(now = Date.now()): void {
+  suffixRouteSince = now;
+  chrome.storage.session.set({ [SUFFIX_ROUTE_SINCE_KEY]: now }).catch(() => undefined);
+}
+
+async function suffixRouteWindowOpen(now = Date.now()): Promise<boolean> {
+  if (suffixRouteSince === null) {
+    try {
+      const stored = (await chrome.storage.session.get(SUFFIX_ROUTE_SINCE_KEY))[SUFFIX_ROUTE_SINCE_KEY];
+      if (typeof stored === 'number') suffixRouteSince = stored;
+      else openSuffixRouteWindow(now);
+    } catch {
+      suffixRouteSince = now;
+    }
+  }
+  return now - (suffixRouteSince ?? now) < SUFFIX_ROUTE_WINDOW_MS;
+}
+void suffixRouteWindowOpen();
+
+// Per-navigation gate for the two URL-suffix routes.
 async function shouldRouteByUrl(url: string): Promise<boolean> {
   if (isLocalPdfUrl(url)) {
     return await getSetting(LOCAL_PDF_VIEWER_ENABLED_SETTING_KEY, DEFAULT_LOCAL_PDF_VIEWER_ENABLED)
       && await isFileSchemeAccessAllowed();
   }
   if (isWebPdfSuffixUrl(url)) {
+    if (!(await suffixRouteWindowOpen())) return false;
     if (!(await getSetting(WEB_PDF_VIEWER_ENABLED_SETTING_KEY, DEFAULT_WEB_PDF_VIEWER_ENABLED))) return false;
     // The viewer must be able to fetch this exact origin.
     const origin = `${new URL(url).origin}/*`;
@@ -150,8 +214,8 @@ async function shouldRouteByUrl(url: string): Promise<boolean> {
 
 chrome.webNavigation.onBeforeNavigate.addListener((details) => {
   if (details.frameId !== 0) return;
-  if (!isLocalPdfUrl(details.url) && !isWebPdfSuffixUrl(details.url)) return;
   if (nativePdfBypassTabs.delete(details.tabId)) return;
+  if (!isLocalPdfUrl(details.url) && !isWebPdfSuffixUrl(details.url)) return;
   void (async () => {
     const route = await shouldRouteByUrl(details.url);
     debugLog('bg:pdf', `PDF URL navigation ${route ? 'routing' : 'left to Chrome'}`, () => ({ tabId: details.tabId, url: details.url }));
@@ -190,13 +254,10 @@ async function openNativePdf(url: string, sender: chrome.runtime.MessageSender):
   if (tabId === null) return { success: false, error: S.tabNotFound };
   nativePdfBypassTabs.add(tabId);
   if (isWeb) {
-    try {
-      await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [...WEB_PDF_REDIRECT_RULE_IDS] });
-    } catch {
-      // Rule may already be absent; the navigation proceeds either way.
-    }
-    finishWebPdfNativeReopen(tabId);
+    const timer = webPdfNativeReopenTabs.get(tabId);
+    if (timer !== undefined) clearTimeout(timer);
     webPdfNativeReopenTabs.set(tabId, setTimeout(() => finishWebPdfNativeReopen(tabId), WEB_PDF_NATIVE_REOPEN_TIMEOUT_MS));
+    await writeNativeExemptions();
   }
   try {
     await chrome.tabs.update(tabId, { url });
@@ -213,10 +274,14 @@ async function openNativePdf(url: string, sender: chrome.runtime.MessageSender):
 // Chrome closes every page of an extension when the extension is reloaded or
 // updated, taking the hub tabs with it. Each hub reports its URL-backed
 // documents (VOCAB_T_PDF_HUB_STATE); entries are dropped when the tab closes
-// or navigates elsewhere. Whatever is still recorded when onInstalled fires
-// belonged to a tab Chrome killed, so it is recreated in the same window at
-// the same index, for the same project. Reading positions come back from the
-// per-document records. The same report is the project's saved layout.
+// or navigates elsewhere. Whatever is still recorded when the extension is
+// updated (onInstalled, reason 'update') belonged to a tab Chrome killed, so
+// it is recreated in the same window at the same index, for the same project.
+// A browser restart is not that: Chrome's own session restore brings hubs
+// back, and records from the last session (whose tab ids mean nothing now)
+// are dropped at start. Reading positions come back from the per-document
+// records. The same report is the project's saved layout. Records are
+// read-modified-written one at a time.
 interface HubTabRecord {
   urls: string[];
   active: number;
@@ -227,6 +292,9 @@ interface HubTabRecord {
 }
 const VIEWER_TABS_STORAGE_KEY = 'vtViewerTabs';
 const VIEWER_TAB_RECORD_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const viewerTabsQueue = createSerialQueue();
+// Records written before this worker started at browser start are the last session's.
+const workerStartedAt = Date.now();
 
 // Records written before the hub existed held one `sourceUrl` per viewer tab,
 // and before projects existed every hub was the default project's.
@@ -270,30 +338,35 @@ async function recordHubState(
 ): Promise<Record<string, unknown>> {
   const tab = sender.tab;
   if (!tab || typeof tab.id !== 'number' || sender.frameId !== 0) return { success: false, error: S.tabNotFound };
-  const records = await readViewerTabs();
-  if (request.urls.length === 0) {
-    delete records[String(tab.id)];
-  } else {
-    records[String(tab.id)] = {
-      urls: request.urls,
-      active: request.active,
-      project: request.project,
-      windowId: tab.windowId,
-      index: tab.index,
-      updatedAt: Date.now(),
-    };
-  }
-  await writeViewerTabs(records);
+  const tabId = tab.id;
+  await viewerTabsQueue(async () => {
+    const records = await readViewerTabs();
+    if (request.urls.length === 0) {
+      delete records[String(tabId)];
+    } else {
+      records[String(tabId)] = {
+        urls: request.urls,
+        active: request.active,
+        project: request.project,
+        windowId: tab.windowId,
+        index: tab.index,
+        updatedAt: Date.now(),
+      };
+    }
+    await writeViewerTabs(records);
+  });
   const { urls, active, project, show } = request;
   if (await updatePdfProjects({ kind: 'layout', id: project, urls, active, show })) requestPdfSyncSoon();
   return { success: true };
 }
 
-async function forgetViewerTab(tabId: number): Promise<void> {
-  const records = await readViewerTabs();
-  if (!(String(tabId) in records)) return;
-  delete records[String(tabId)];
-  await writeViewerTabs(records);
+function forgetViewerTab(tabId: number): Promise<void> {
+  return viewerTabsQueue(async () => {
+    const records = await readViewerTabs();
+    if (!(String(tabId) in records)) return;
+    delete records[String(tabId)];
+    await writeViewerTabs(records);
+  });
 }
 
 // When the extension itself is reloaded Chrome closes its pages and the dying
@@ -305,7 +378,11 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   setTimeout(() => { void forgetViewerTab(tabId); }, VIEWER_TAB_FORGET_DELAY_MS);
 });
 
-async function restoreViewerTabs(): Promise<{ restored: number; open: number }> {
+function restoreViewerTabs(): Promise<{ restored: number; open: number }> {
+  return viewerTabsQueue(restoreViewerTabsNow);
+}
+
+async function restoreViewerTabsNow(): Promise<{ restored: number; open: number }> {
   const records = await readViewerTabs();
   const entries = Object.entries(records);
   let restored = 0;
@@ -353,8 +430,19 @@ async function restoreViewerTabs(): Promise<{ restored: number; open: number }> 
   return { restored, open };
 }
 
-chrome.runtime.onInstalled.addListener(() => {
-  void restoreViewerTabs();
+chrome.runtime.onStartup.addListener(() => {
+  void viewerTabsQueue(async () => {
+    const records = await readViewerTabs();
+    const current = Object.fromEntries(Object.entries(records).filter(([, record]) => record.updatedAt >= workerStartedAt));
+    if (Object.keys(current).length !== Object.keys(records).length) await writeViewerTabs(current);
+  });
+});
+
+chrome.runtime.onInstalled.addListener((details) => {
+  // Only an extension update (or a developer reload) closed hub tabs that are
+  // not coming back by themselves; a Chrome update restarts the browser,
+  // whose session restore brings them back.
+  if (details.reason === 'update') void restoreViewerTabs();
   void syncWebPdfRouting();
 });
 
@@ -398,11 +486,11 @@ export const pdfMessageHandlers: Record<string, PdfMessageHandler> = {
   VOCAB_T_PDF_PROJECT_UPDATE: async (m, sender) => {
     const request = parsePdfProjectUpdateRequest(m);
     if (!request || !isHubPageSender(sender)) return { success: false, error: S.badProjectRequest };
-    const { update } = request;
-    const changed = update.kind === 'folder-create' || update.kind === 'folder-rename' || update.kind === 'folder-delete' || update.kind === 'arrange'
-      ? await updatePdfProjectFolders(update)
-      : await updatePdfProjects(update);
+    const { changed, refused } = await applyPdfProjectRequest(request.update);
     if (changed) requestPdfSyncSoon();
+    // At a cap nothing is created: `code` and `limit` let the hub say so.
+    if (refused === 'project-limit') return { success: false, code: refused, limit: PDF_PROJECTS_MAX, error: S.projectLimit(PDF_PROJECTS_MAX) };
+    if (refused === 'folder-limit') return { success: false, code: refused, limit: PDF_PROJECT_FOLDERS_MAX, error: S.folderLimit(PDF_PROJECT_FOLDERS_MAX) };
     return { success: true };
   },
   VOCAB_T_PDF_PROJECT_OPEN: (m, sender) => {

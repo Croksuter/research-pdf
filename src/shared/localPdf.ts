@@ -217,18 +217,6 @@ export function parsePdfHubUrl(search: string, hash: string): { docs: PdfHubDoc[
   return { docs, active: Number.isInteger(active) && active >= 0 && active < docs.length ? active : 0, show, project };
 }
 
-/**
- * If `url` is our own viewer page carrying an http(s) source, returns that
- * source URL; otherwise null. Used by the sender trust boundary so a web PDF
- * read through the viewer still records its real origin as the source.
- */
-export function extractWebPdfSourceFromViewerUrl(url: string): string | null {
-  const parsed = parseUrl(url);
-  if (!parsed || parsed.protocol !== 'chrome-extension:' || parsed.pathname !== `/${PDF_VIEWER_PAGE}`) return null;
-  const source = parsePdfViewerFile(parsed.search);
-  return source && isWebPdfSourceUrl(source) ? source : null;
-}
-
 // ─── declarativeNetRequest rules (Chrome ≥ 128 for response-header matching) ───
 
 export interface WebPdfRedirectRule {
@@ -265,6 +253,19 @@ export const PDF_CONTENT_TYPE_PATTERNS = [
 
 // Explicit downloads stay downloads.
 const NOT_ATTACHMENT = { header: 'content-disposition', values: ['attachment*'] };
+
+// `Content-Disposition` naming a `.pdf` file. Header value patterns match the
+// whole value (`*` any run, `?` one character), so each form is anchored at
+// the end of the name: `paper.pdf.zip` or `x.pdf.html` never match. The
+// second `*` also covers RFC 5987's `filename*=UTF-8''…`.
+export const PDF_FILENAME_DISPOSITION_PATTERNS = [
+  '*filename*=*.pdf',
+  '*filename*=*.pdf;*',
+  '*filename*=*.pdf ;*',
+  '*filename*=*.pdf"',
+  '*filename*=*.pdf";*',
+  '*filename*=*.pdf" ;*',
+];
 
 /**
  * Redirects any http(s) PDF response to the viewer, mirroring the cases
@@ -330,12 +331,42 @@ function pdfRedirectRuleSet(
       condition: {
         ...base,
         regexFilter: '^https?://.*',
-        responseHeaders: [{ header: 'content-disposition', values: ['*filename=*.pdf*', '*filename*=*.pdf*'] }],
+        responseHeaders: [{ header: 'content-disposition', values: PDF_FILENAME_DISPOSITION_PATTERNS }],
         excludedResponseHeaders: [
           NOT_ATTACHMENT,
           { header: 'content-type', values: ['text/*', 'image/*', 'video/*', 'audio/*', 'application/json*', 'application/javascript*', 'application/xml*', 'application/xhtml*'] },
         ],
       },
     },
+  ];
+}
+
+// ─── "Open in Chrome's viewer" for one tab ───
+//
+// Session rules (ids outside WEB_PDF_REDIRECT_RULE_IDS) that let the top-level
+// navigations of the given tabs through, above the redirect rules' priority:
+// one matching before the request, one on any response with a content type
+// (the redirect rules match on response headers). Only session rules can name
+// tabs; the redirect rules themselves stay untouched.
+export const WEB_PDF_NATIVE_EXEMPT_RULE_IDS = [100, 101] as const;
+
+export interface WebPdfNativeExemptRule {
+  id: number;
+  priority: number;
+  action: { type: 'allow' };
+  condition: {
+    regexFilter: string;
+    tabIds: number[];
+    resourceTypes: ['main_frame'];
+    responseHeaders?: Array<{ header: string }>;
+  };
+}
+
+export function buildWebPdfNativeExemptRules(tabIds: readonly number[]): WebPdfNativeExemptRule[] {
+  if (tabIds.length === 0) return [];
+  const condition = { regexFilter: '^https?://', tabIds: [...tabIds], resourceTypes: ['main_frame'] as ['main_frame'] };
+  return [
+    { id: WEB_PDF_NATIVE_EXEMPT_RULE_IDS[0], priority: 2, action: { type: 'allow' }, condition },
+    { id: WEB_PDF_NATIVE_EXEMPT_RULE_IDS[1], priority: 2, action: { type: 'allow' }, condition: { ...condition, responseHeaders: [{ header: 'content-type' }] } },
   ];
 }

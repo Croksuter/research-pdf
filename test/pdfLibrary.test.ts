@@ -11,7 +11,6 @@ import {
   mergePdfLibraryEntries,
   parsePdfLibrary,
   parsePdfLibraryUpdate,
-  pinnedLibraryEntries,
   relativeTimeKo,
   searchPdfLibrary,
   type PdfLibrary,
@@ -66,25 +65,21 @@ describe('library updates', () => {
     expect(lib.local.urls[0]).toBe(`https://a.org/${PDF_LIBRARY_MAX_URLS + 1}.pdf`);
   });
 
-  it('pins only documents it knows, and a no-op pin changes nothing', () => {
-    const lib = applyPdfLibraryUpdate({}, { kind: 'opened', docId: 'd1', url: null, fileName: 'a.pdf', numPages: 1 }, NOW);
-    expect(applyPdfLibraryUpdate(lib, { kind: 'pin', docId: 'missing', pinned: true }, NOW)).toBe(lib);
-    expect(applyPdfLibraryUpdate(lib, { kind: 'pin', docId: 'd1', pinned: false }, NOW)).toBe(lib);
-    const pinned = applyPdfLibraryUpdate(lib, { kind: 'pin', docId: 'd1', pinned: true }, NOW);
-    expect(pinned.d1).toMatchObject({ pinned: true, pinChangedAt: NOW });
-    // Two changes within one millisecond still order.
-    const unpinned = applyPdfLibraryUpdate(pinned, { kind: 'pin', docId: 'd1', pinned: false }, NOW);
-    expect(unpinned.d1.pinChangedAt).toBeGreaterThan(NOW);
+  it('keeps an older build\'s pin through later opens (pins themselves live in projects now)', () => {
+    let lib = applyPdfLibraryUpdate({}, { kind: 'opened', docId: 'd1', url: null, fileName: 'a.pdf', numPages: 1 }, NOW);
+    lib = { d1: { ...lib.d1, pinned: true, pinChangedAt: 5 } };
+    lib = applyPdfLibraryUpdate(lib, { kind: 'opened', docId: 'd1', url: 'https://a.org/a.pdf', fileName: null, numPages: 1 }, NOW + 1);
+    expect(lib.d1).toMatchObject({ pinned: true, pinChangedAt: 5 });
   });
 
   it('parses update messages strictly', () => {
     expect(parsePdfLibraryUpdate({ kind: 'opened', docId: 'd', url: 'javascript:alert(1)', fileName: 'x', numPages: 1 })).toBeNull();
     expect(parsePdfLibraryUpdate({ kind: 'opened', docId: 'd', url: null, fileName: 'x', numPages: 0 })).toBeNull();
-    expect(parsePdfLibraryUpdate({ kind: 'pin', docId: 'd', pinned: 'yes' })).toBeNull();
+    expect(parsePdfLibraryUpdate({ kind: 'pin', docId: 'd', pinned: true })).toBeNull();
     expect(parsePdfLibraryUpdate({ kind: 'meta', docId: 'd', title: ' T ', venue: null, year: 20170 })).toEqual({ kind: 'meta', docId: 'd', docTitle: null, title: 'T', venue: null, year: null, paperKind: null });
-    expect(parsePdfLibraryUpdateRequest({ type: 'VOCAB_T_PDF_LIBRARY_UPDATE', update: { kind: 'pin', docId: 'd', pinned: true } }))
-      .toEqual({ type: 'VOCAB_T_PDF_LIBRARY_UPDATE', update: { kind: 'pin', docId: 'd', pinned: true } });
-    expect(parsePdfLibraryUpdateRequest({ type: 'VOCAB_T_PDF_LIBRARY_UPDATE', update: { kind: 'pin', docId: 'd', pinned: true }, extra: 1 })).toBeNull();
+    expect(parsePdfLibraryUpdateRequest({ type: 'VOCAB_T_PDF_LIBRARY_UPDATE', update: { kind: 'user-kind', docId: 'd', userKind: 'survey' } }))
+      .toEqual({ type: 'VOCAB_T_PDF_LIBRARY_UPDATE', update: { kind: 'user-kind', docId: 'd', userKind: 'survey' } });
+    expect(parsePdfLibraryUpdateRequest({ type: 'VOCAB_T_PDF_LIBRARY_UPDATE', update: { kind: 'user-kind', docId: 'd', userKind: null }, extra: 1 })).toBeNull();
   });
 
   it('drops malformed stored rows and rows filed under another id', () => {
@@ -122,13 +117,12 @@ describe('library merge and bounds', () => {
 });
 
 describe('library display', () => {
-  it('orders pins by when they were pinned and searches every word', () => {
+  it('searches every word', () => {
     const lib: PdfLibrary = {
       a: entry('a', { pinned: true, pinChangedAt: 30, title: 'Attention Is All You Need', openedAt: 5 }),
       b: entry('b', { pinned: true, pinChangedAt: 10, fileName: 'resnet.pdf', openedAt: 9 }),
       c: entry('c', { urls: ['https://arxiv.org/pdf/2401.00001'], venue: 'NeurIPS', openedAt: 7 }),
     };
-    expect(pinnedLibraryEntries(lib).map((e) => e.docId)).toEqual(['b', 'a']);
     expect(searchPdfLibrary(Object.values(lib), '').map((e) => e.docId)).toEqual(['b', 'c', 'a']);
     expect(searchPdfLibrary(Object.values(lib), 'attention need').map((e) => e.docId)).toEqual(['a']);
     expect(searchPdfLibrary(Object.values(lib), 'neurips 2401').map((e) => e.docId)).toEqual(['c']);

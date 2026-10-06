@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { clearAllStores } from './helpers';
 import {
+  PDF_ANNOTATION_SWEEP_INTERVAL_MS,
   deletePdfAnnotationCache,
   getPdfAnnotationCache,
   putPdfAnnotationCache,
-  trimPdfAnnotationCaches,
+  sweepEmptyPdfAnnotationCaches,
 } from '../src/db/pdfAnnotationRepository';
+import { dbGetAll, dbPut } from '../src/db/database';
+import { STORE_PDF_ANNOTATIONS } from '../src/shared/constants';
 import { PDF_ANNOTATION_CACHE_VERSION, cachedItemKey, type PdfAnnotationCache } from '../src/shared/pdfAnnotations';
 
 function cache(docId: string, updatedAt: number, withItem = true): PdfAnnotationCache {
@@ -38,14 +41,24 @@ describe('pdfAnnotationRepository', () => {
     expect(await getPdfAnnotationCache('fp:a:3')).toBeNull();
   });
 
-  it('trims the least-recently-updated documents past the cap, keeping the one just written', async () => {
-    for (let i = 0; i < 5; i += 1) await putPdfAnnotationCache(cache(`fp:${i}:1`, 100 + i));
-    await putPdfAnnotationCache(cache('fp:new:1', 1));
-    expect(await trimPdfAnnotationCaches('fp:new:1', 3)).toBe(3);
-    expect(await getPdfAnnotationCache('fp:new:1')).not.toBeNull();
-    expect(await getPdfAnnotationCache('fp:0:1')).toBeNull();
-    expect(await getPdfAnnotationCache('fp:1:1')).toBeNull();
-    expect(await getPdfAnnotationCache('fp:2:1')).toBeNull();
-    expect(await getPdfAnnotationCache('fp:4:1')).not.toBeNull();
+  it('never evicts a document with drawings, however many there are', async () => {
+    for (let i = 0; i < 260; i += 1) await putPdfAnnotationCache(cache(`fp:${i}:1`, 100 + i), 1 + i);
+    expect(await dbGetAll(STORE_PDF_ANNOTATIONS)).toHaveLength(260);
+    expect(await getPdfAnnotationCache('fp:0:1')).not.toBeNull();
+  });
+
+  it('sweeps only rows without drawings, and at most once per interval', async () => {
+    const t0 = Date.now() + 10 * PDF_ANNOTATION_SWEEP_INTERVAL_MS;
+    await putPdfAnnotationCache(cache('fp:a:1', 10), t0);
+    // Rows an older build (or a crash) left behind: empty, and unreadable.
+    await dbPut(STORE_PDF_ANNOTATIONS, cache('fp:empty:1', 5, false));
+    await dbPut(STORE_PDF_ANNOTATIONS, { docId: 'fp:junk:1', version: 99 });
+    // Within the interval a save does not read the store again.
+    await putPdfAnnotationCache(cache('fp:b:1', 11), t0 + 1_000);
+    expect(await dbGetAll(STORE_PDF_ANNOTATIONS)).toHaveLength(4);
+    await putPdfAnnotationCache(cache('fp:c:1', 12), t0 + PDF_ANNOTATION_SWEEP_INTERVAL_MS + 1);
+    const left = (await dbGetAll<{ docId: string }>(STORE_PDF_ANNOTATIONS)).map((row) => row.docId).sort();
+    expect(left).toEqual(['fp:a:1', 'fp:b:1', 'fp:c:1']);
+    expect(await sweepEmptyPdfAnnotationCaches()).toBe(0);
   });
 });

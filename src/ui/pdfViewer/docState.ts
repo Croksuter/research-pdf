@@ -1,9 +1,13 @@
 // ─── Per-document viewer state (chrome.storage.local) ───
 //
-// One bounded map under a single key, like the background's viewer-tab
-// records; see shared/pdfIdentity.ts for how documents are keyed.
+// One bounded map under a single key; see shared/pdfIdentity.ts for how
+// documents are keyed. Read here directly; written only by the background
+// (background/pdfDocStateStore.ts), which serializes every frame's save with
+// the Drive sync's apply so none of them drops another's row.
 
 import type { PDFDocumentProxy } from 'pdfjs-dist';
+import { debugWarn } from '../../shared/debugLog';
+import type { PdfDocStateSaveRequest } from '../../shared/messages';
 import {
   PDF_DOC_STATE_STORAGE_KEY,
   buildPdfDocId,
@@ -12,7 +16,6 @@ import {
   hasTrailerId,
   parsePdfDocRecords,
   sha256Hex,
-  upsertPdfDocRecord,
   type PdfDocIdentity,
   type PdfDocRecord,
   type PdfDocRecords,
@@ -24,14 +27,6 @@ async function readRecords(): Promise<PdfDocRecords> {
     return parsePdfDocRecords(stored[PDF_DOC_STATE_STORAGE_KEY]);
   } catch {
     return {};
-  }
-}
-
-async function writeRecords(records: PdfDocRecords): Promise<void> {
-  try {
-    await chrome.storage.local.set({ [PDF_DOC_STATE_STORAGE_KEY]: records });
-  } catch {
-    /* best effort */
   }
 }
 
@@ -84,7 +79,16 @@ export async function loadPdfDocRecord(identity: PdfDocIdentity): Promise<PdfDoc
   return findPdfDocRecord(records, { docId: identity.docId, sha256: identity.sha256 });
 }
 
+/**
+ * Hands the position to the background's writer. The message leaves at once,
+ * so a save made while the page is going away (pagehide, sleep) still lands.
+ */
 export async function savePdfDocRecord(record: PdfDocRecord): Promise<void> {
-  const records = await readRecords();
-  await writeRecords(upsertPdfDocRecord(records, record));
+  const message: PdfDocStateSaveRequest = { type: 'VOCAB_T_PDF_DOC_STATE_SAVE', record };
+  try {
+    const response = await chrome.runtime.sendMessage(message) as { success?: boolean } | undefined;
+    if (response?.success !== true) debugWarn('viewer:docs', 'reading position not stored', () => ({ docId: record.docId, response }));
+  } catch (error) {
+    debugWarn('viewer:docs', 'reading position not stored', () => ({ docId: record.docId, error: error instanceof Error ? error.message : String(error) }));
+  }
 }

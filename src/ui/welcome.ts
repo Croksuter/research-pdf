@@ -228,11 +228,20 @@ async function renderSync(): Promise<void> {
 syncButton.addEventListener('click', () => {
   syncButton.disabled = true;
   syncStatus.textContent = S.syncConnecting;
-  void send<{ success: boolean }>({ type: 'VOCAB_T_CONNECT_GOOGLE_SYNC' }).then(async (response) => {
+  type ConnectResponse = { success: boolean; needsConfirm?: 'account-change'; previousEmail?: string; email?: string };
+  void (async () => {
+    let response = await send<ConnectResponse>({ type: 'VOCAB_T_CONNECT_GOOGLE_SYNC' });
+    // Another account than this device's data last went to: ask before merging into it.
+    let declined = false;
+    if (response?.needsConfirm === 'account-change') {
+      declined = !confirm(S.confirmAccountChange(response.previousEmail || 'Google', response.email || 'Google'));
+      if (!declined) response = await send<ConnectResponse>({ type: 'VOCAB_T_CONNECT_GOOGLE_SYNC', confirmAccountChange: true });
+    }
     syncButton.disabled = false;
-    if (!response?.success) syncStatus.textContent = S.syncFailed;
+    if (declined) syncStatus.textContent = S.accountChangeDeclined;
+    else if (!response?.success) syncStatus.textContent = S.syncFailed;
     await renderSync();
-  });
+  })();
 });
 
 // ─── Tour ───

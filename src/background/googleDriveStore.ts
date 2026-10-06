@@ -1,14 +1,14 @@
-import { GOOGLE_DRIVE_SYNC_FILE_NAME } from '../shared/constants';
+import { PDF_SYNC_FILE_NAME } from '../shared/constants';
 import { CloudSyncError } from './cloudSyncError';
-import { S } from './background.strings';
+import { isRecord } from '../shared/guards';
 
 /**
  * A byte store over ONE file in the signed-in user's Drive `appDataFolder`.
  *
  * The folder is private to this OAuth client: it is invisible in the Drive UI,
  * unreachable by other apps, and the `drive.appdata` scope gives the app no
- * view of any other file. This module knows nothing about backups or merging;
- * cloudSyncService owns validation and the 3-way merge.
+ * view of any other file. This module knows nothing about the document or
+ * merging; ./pdfSyncService.ts owns validation and the 3-way merge.
  *
  * Drive v3 has no conditional write (`If-Match`), so version safety is
  * emulated with `headRevisionId`:
@@ -75,9 +75,6 @@ export function parseDriveEtag(etag: string | null): { fileId: string; revisionI
   return DRIVE_ID_PATTERN.test(fileId) && DRIVE_ID_PATTERN.test(revisionId) ? { fileId, revisionId } : null;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
 
 function fileRefFromUnknown(value: unknown): DriveFileRef | null {
   if (!isRecord(value)) return null;
@@ -107,13 +104,13 @@ async function decodeBody(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
       // The file is ours, but never let a corrupt object exhaust memory.
       if (total > MAX_DECOMPRESSED_BYTES) {
         await reader.cancel();
-        throw new CloudSyncError(S.driveFileTooLarge);
+        throw new CloudSyncError('drive-file-too-large');
       }
       chunks.push(value);
     }
   } catch (error) {
     if (error instanceof CloudSyncError) throw error;
-    throw new CloudSyncError(S.driveReadFailed);
+    throw new CloudSyncError('drive-read-failed');
   }
   const merged = new Uint8Array(total);
   let offset = 0;
@@ -134,26 +131,26 @@ async function driveErrorReason(response: Response): Promise<string> {
 
 async function driveError(response: Response): Promise<CloudSyncError> {
   if (response.status === 401) {
-    return new CloudSyncError(S.authExpired);
+    return new CloudSyncError('auth-expired');
   }
   if (response.status === 403) {
     const reason = await driveErrorReason(response);
-    if (reason === 'storageQuotaExceeded') return new CloudSyncError(S.driveQuotaExceeded);
+    if (reason === 'storageQuotaExceeded') return new CloudSyncError('drive-quota');
     if (reason === 'rateLimitExceeded' || reason === 'userRateLimitExceeded') {
-      return new CloudSyncError(S.driveRateLimited);
+      return new CloudSyncError('drive-rate-limited');
     }
-    return new CloudSyncError(S.driveDenied);
+    return new CloudSyncError('drive-denied');
   }
-  if (response.status === 429) return new CloudSyncError(S.driveRateLimited);
-  return new CloudSyncError(S.driveHttpError(response.status));
+  if (response.status === 429) return new CloudSyncError('drive-rate-limited');
+  return new CloudSyncError('drive-http', String(response.status));
 }
 
-export function createGoogleDriveStore(getToken: DriveTokenProvider, fileName: string = GOOGLE_DRIVE_SYNC_FILE_NAME) {
+export function createGoogleDriveStore(getToken: DriveTokenProvider, fileName: string = PDF_SYNC_FILE_NAME) {
   async function request(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
     // Every request is pinned to Google's API host, including the resumable
     // session URI that comes back from the server.
     if (!url.startsWith(`${DRIVE_API}/`) && !url.startsWith(`${DRIVE_UPLOAD}/`)) {
-      throw new CloudSyncError(S.driveBadUrl);
+      throw new CloudSyncError('drive-bad-url');
     }
     for (let attempt = 0; ; attempt += 1) {
       const token = await getToken(attempt > 0);
@@ -170,9 +167,9 @@ export function createGoogleDriveStore(getToken: DriveTokenProvider, fileName: s
         });
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') {
-          throw new CloudSyncError(S.syncTimeout);
+          throw new CloudSyncError('timeout');
         }
-        throw new CloudSyncError(S.driveUnreachable);
+        throw new CloudSyncError('drive-unreachable');
       } finally {
         clearTimeout(timeout);
       }
@@ -185,7 +182,7 @@ export function createGoogleDriveStore(getToken: DriveTokenProvider, fileName: s
     const response = await request(url, init, METADATA_TIMEOUT_MS);
     if (!response.ok) throw await driveError(response);
     try { return await response.json(); } catch {
-      throw new CloudSyncError(S.driveBadResponse);
+      throw new CloudSyncError('drive-bad-response');
     }
   }
 
@@ -248,7 +245,7 @@ export function createGoogleDriveStore(getToken: DriveTokenProvider, fileName: s
       ?? (uploadId
         ? `${DRIVE_UPLOAD}/files${fileId ? `/${fileId}` : ''}?uploadType=resumable&fields=${FILE_FIELDS}&upload_id=${encodeURIComponent(uploadId)}`
         : null);
-    if (!session) throw new CloudSyncError(S.driveUploadSessionFailed);
+    if (!session) throw new CloudSyncError('drive-upload-session');
     const finish = await request(
       session,
       { method: 'PUT', headers: { 'Content-Type': 'application/gzip' }, body: bytes },
@@ -256,7 +253,7 @@ export function createGoogleDriveStore(getToken: DriveTokenProvider, fileName: s
     );
     if (!finish.ok) throw await driveError(finish);
     const written = fileRefFromUnknown(await finish.json().catch(() => null));
-    if (!written) throw new CloudSyncError(S.driveUploadUnverified);
+    if (!written) throw new CloudSyncError('drive-upload-unverified');
     return written;
   }
 
@@ -284,7 +281,7 @@ export function createGoogleDriveStore(getToken: DriveTokenProvider, fileName: s
       const body = await json(`${DRIVE_API}/about?fields=user(permissionId,emailAddress)`);
       const user = isRecord(body) && isRecord(body.user) ? body.user : {};
       if (typeof user.permissionId !== 'string' || !user.permissionId) {
-        throw new CloudSyncError(S.accountInfoFailed);
+        throw new CloudSyncError('account-info-failed');
       }
       return {
         id: user.permissionId.slice(0, 128),
@@ -310,7 +307,7 @@ export function createGoogleDriveStore(getToken: DriveTokenProvider, fileName: s
           return { kind: 'file', text, etag: driveEtag(winner.id, winner.headRevisionId) };
         }
       }
-      throw new CloudSyncError(S.driveFileChanging);
+      throw new CloudSyncError('drive-file-changing');
     },
 
     /** One exact historical body, for clobber repair. null when Drive pruned it. */

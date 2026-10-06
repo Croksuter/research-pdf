@@ -1,10 +1,12 @@
 // ─── Library: every document the hub has shown (pure) ───
 //
 // One row per document identity (`docId`, shared/pdfIdentity.ts): the URLs it
-// was opened from, its names, when it was last opened and whether it is
-// pinned. The hub's home page lists it and pinned rows become tabs in every
-// hub. Reading positions and drawings stay in their own records; the home page
-// joins them in by `docId`, nothing is stored twice.
+// was opened from, its names and when it was last opened. The hub's home page
+// lists it. Reading positions and drawings stay in their own records; the
+// home page joins them in by `docId`, nothing is stored twice. Pins belong to
+// projects now (shared/pdfProjects.ts); a row's own `pinned` is what an older
+// build stored, kept and merged so the first project record can be seeded
+// from it.
 //
 // Stored in chrome.storage.local (written by the background only, see
 // background/pdfLibraryStore.ts) and synced through Drive with the rest of the
@@ -19,6 +21,7 @@
 // user said otherwise. The hub draws it as the document's icon.
 
 import { S } from './shared.strings';
+import { isRecord } from './guards';
 
 export const PDF_LIBRARY_STORAGE_KEY = 'rpdfLibrary';
 export const PDF_LIBRARY_MAX = 1_000;
@@ -75,9 +78,6 @@ export function libraryEntryKind(entry: Pick<PdfLibraryEntry, 'paperKind' | 'use
 
 export type PdfLibrary = Record<string, PdfLibraryEntry>;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /** A source URL the library keeps: http(s) or file, fragment dropped. */
 export function librarySourceUrl(value: unknown): string | null {
@@ -229,7 +229,6 @@ export type PdfLibraryUpdate =
   // Names found after opening: the PDF's Title metadata, the detected paper.
   // Null leaves a field as it was.
   | { kind: 'meta'; docId: string; docTitle: string | null; title: string | null; venue: string | null; year: number | null; paperKind?: PdfPaperKind | null }
-  | { kind: 'pin'; docId: string; pinned: boolean }
   // The user's kind for the document (null: back to automatic).
   | { kind: 'user-kind'; docId: string; userKind: PdfDocKind | null };
 
@@ -255,7 +254,7 @@ export function applyPdfLibraryUpdate(library: PdfLibrary, update: PdfLibraryUpd
       userKindAt: current?.userKindAt ?? 0,
     };
   } else if (!current) {
-    return library; // meta and pins only ever apply to a document that was opened
+    return library; // meta and kinds only ever apply to a document that was opened
   } else if (update.kind === 'meta') {
     next = {
       ...current,
@@ -266,12 +265,9 @@ export function applyPdfLibraryUpdate(library: PdfLibrary, update: PdfLibraryUpd
       paperKind: update.paperKind ?? current.paperKind,
     };
     if (JSON.stringify(next) === JSON.stringify(current)) return library;
-  } else if (update.kind === 'user-kind') {
+  } else {
     if (current.userKind === update.userKind) return library;
     next = { ...current, userKind: update.userKind, userKindAt: Math.max(now, current.userKindAt + 1) };
-  } else {
-    if (current.pinned === update.pinned) return library;
-    next = { ...current, pinned: update.pinned, pinChangedAt: Math.max(now, current.pinChangedAt + 1) };
   }
   const entries = Object.values({ ...library, [next.docId]: next });
   return libraryFromList(boundPdfLibrary(entries, now, keep));
@@ -293,21 +289,12 @@ export function parsePdfLibraryUpdate(value: unknown): PdfLibraryUpdate | null {
     }
     case 'user-kind':
       return value.userKind === null || isPdfDocKind(value.userKind) ? { kind: 'user-kind', docId, userKind: value.userKind } : null;
-    case 'pin':
-      return typeof value.pinned === 'boolean' ? { kind: 'pin', docId, pinned: value.pinned } : null;
     default:
       return null;
   }
 }
 
 // ─── Display helpers (home page) ───
-
-/** Pinned rows the hub can open as tabs, in pin order (oldest pin leftmost). */
-export function pinnedLibraryEntries(library: PdfLibrary): PdfLibraryEntry[] {
-  return Object.values(library)
-    .filter((e) => e.pinned)
-    .sort((a, b) => a.pinChangedAt - b.pinChangedAt || a.docId.localeCompare(b.docId));
-}
 
 /** The name a row is listed under: the paper, the PDF's title, the file. */
 export function libraryEntryName(entry: PdfLibraryEntry, displayName: (url: string) => string): string {

@@ -7,7 +7,6 @@ import {
   revokeGoogleToken,
 } from './googleAuth';
 import { DriveAccount, GoogleDriveStore, createGoogleDriveStore } from './googleDriveStore';
-import { S } from './background.strings';
 
 /**
  * The connected Google account, as each sync engine stores it: the Drive
@@ -36,7 +35,7 @@ export async function accessTokenForAccount(account: GoogleAccountRef, forceRefr
   const actual = await createGoogleDriveStore(async () => token.accessToken).account();
   if (actual.id !== account.id) {
     await revokeGoogleToken(token.accessToken);
-    throw new CloudSyncError(S.accountMismatch);
+    throw new CloudSyncError('account-mismatch');
   }
   await cacheGoogleToken(account.id, token);
   return token.accessToken;

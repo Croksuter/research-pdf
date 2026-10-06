@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   PDF_SYNC_SOON_ALARM_NAME,
   PDF_SYNC_STATE_SETTING_KEY,
+  exportPdfSyncSnapshot,
   autoSyncPdfIfConnected,
   connectPdfSyncGoogle,
   disconnectPdfSyncGoogle,
@@ -24,12 +25,16 @@ import {
   parsePdfSyncSnapshot,
   pdfSyncSnapshotDataEquals,
 } from '../src/shared/pdfSync';
-import { parsePdfSyncHintRequest, parseSetPdfSyncEnabledRequest } from '../src/shared/messages';
+import { parseConnectGoogleSyncRequest, parsePdfDocStateSaveRequest, parsePdfSyncHintRequest, parseSetPdfSyncEnabledRequest } from '../src/shared/messages';
 import { PDF_LIBRARY_STORAGE_KEY, type PdfLibraryEntry } from '../src/shared/pdfLibrary';
 import type { PdfProject, PdfProjectFolder } from '../src/shared/pdfProjects';
 import researchManifest from '../manifest.json';
 import { FakeGoogle, createFakeGoogle } from './fakeGoogleDrive';
 import { clearAllStores } from './helpers';
+import { savePdfDocRecord } from '../src/background/pdfDocStateStore';
+import { setLanguage } from '../src/shared/i18n';
+import { syncStatusErrorText } from '../src/shared/syncErrors';
+import { PDF_DOC_RECORD_MAX_AGE_MS } from '../src/shared/pdfIdentity';
 
 const DOC_A = 'a'.repeat(32);
 const DOC_B = 'b'.repeat(32);
@@ -182,6 +187,14 @@ describe('pdf sync merge', () => {
     expect(parsePdfSyncHintRequest({ type: 'VOCAB_T_PDF_SYNC_HINT', reason: 'edit', extra: 1 })).toBeNull();
     expect(parseSetPdfSyncEnabledRequest({ type: 'VOCAB_T_SET_PDF_SYNC_ENABLED', enabled: false })).toEqual({ type: 'VOCAB_T_SET_PDF_SYNC_ENABLED', enabled: false });
     expect(parseSetPdfSyncEnabledRequest({ type: 'VOCAB_T_SET_PDF_SYNC_ENABLED', enabled: 'yes' })).toBeNull();
+    expect(parseConnectGoogleSyncRequest({ type: 'VOCAB_T_CONNECT_GOOGLE_SYNC' })).toEqual({ type: 'VOCAB_T_CONNECT_GOOGLE_SYNC', confirmAccountChange: false });
+    expect(parseConnectGoogleSyncRequest({ type: 'VOCAB_T_CONNECT_GOOGLE_SYNC', confirmAccountChange: true })).toEqual({ type: 'VOCAB_T_CONNECT_GOOGLE_SYNC', confirmAccountChange: true });
+    expect(parseConnectGoogleSyncRequest({ type: 'VOCAB_T_CONNECT_GOOGLE_SYNC', confirmAccountChange: 'yes' })).toBeNull();
+    expect(parseConnectGoogleSyncRequest({ type: 'VOCAB_T_CONNECT_GOOGLE_SYNC', confirmAccountChange: true, extra: 1 })).toBeNull();
+    const record = doc(DOC_A, 3, 5);
+    expect(parsePdfDocStateSaveRequest({ type: 'VOCAB_T_PDF_DOC_STATE_SAVE', record })).toEqual({ type: 'VOCAB_T_PDF_DOC_STATE_SAVE', record });
+    expect(parsePdfDocStateSaveRequest({ type: 'VOCAB_T_PDF_DOC_STATE_SAVE', record: { ...record, numPages: 0 } })).toBeNull();
+    expect(parsePdfDocStateSaveRequest({ type: 'VOCAB_T_PDF_DOC_STATE_SAVE', record, extra: 1 })).toBeNull();
   });
 });
 
@@ -359,8 +372,32 @@ describe('drive sync', () => {
     await expect(syncPdfNow()).resolves.toEqual({
       success: false,
       error: 'Google 로그인이 만료되었습니다. 설정에서 Google 계정을 다시 연결하세요.',
+      errorCode: 'auth-expired',
     });
-    await expect(getPdfSyncStatus()).resolves.toMatchObject({ error: expect.stringContaining('만료') });
+    await expect(getPdfSyncStatus()).resolves.toMatchObject({ errorCode: 'auth-expired', error: expect.stringContaining('만료') });
+  });
+
+  it('stores what went wrong as a code, so a page shows it in its own language; an older stored sentence still shows', async () => {
+    await connect();
+    google.clearSessionCache();
+    google.state.session = null;
+    await syncPdfNow();
+    const stored = await dbGet<{ value: Record<string, unknown> }>(STORE_SETTINGS, PDF_SYNC_STATE_SETTING_KEY);
+    expect(stored?.value).toMatchObject({ errorCode: 'auth-expired', error: null });
+    const status = await getPdfSyncStatus();
+    try {
+      setLanguage('en');
+      expect(syncStatusErrorText(status)).toBe('Google sign-in expired. Reconnect your Google account in settings.');
+    } finally {
+      setLanguage('ko');
+    }
+    expect(syncStatusErrorText({ errorCode: 'drive-http', errorDetail: '503' })).toBe('Google Drive 요청이 실패했습니다 (HTTP 503).');
+    // An older build stored the sentence itself.
+    await dbPut(STORE_SETTINGS, { key: PDF_SYNC_STATE_SETTING_KEY, value: { ...stored!.value, errorCode: undefined, errorDetail: undefined, error: 'Old sentence.' } });
+    const legacy = await getPdfSyncStatus();
+    expect(legacy).toMatchObject({ errorCode: null, error: 'Old sentence.' });
+    expect(syncStatusErrorText(legacy)).toBe('Old sentence.');
+    expect(syncStatusErrorText({ errorCode: null, error: null })).toBeNull();
   });
 
   it('disable stops unattended sync; disconnect forgets the account and revokes the token', async () => {
@@ -382,5 +419,168 @@ describe('drive sync', () => {
     requestPdfSyncSoon();
     requestPdfSyncSoon();
     expect(google.chrome.alarms.created.get(PDF_SYNC_SOON_ALARM_NAME)).toEqual({ delayInMinutes: 0.5 });
+  });
+
+  // ─── Two devices on one account ───
+
+  interface Device { local: Map<string, unknown>; session: Map<string, unknown>; settings: unknown[]; annotations: unknown[] }
+
+  async function saveDevice(): Promise<Device> {
+    return {
+      local: new Map(google.localStore), session: new Map(google.sessionStore),
+      settings: await dbGetAll(STORE_SETTINGS), annotations: await dbGetAll(STORE_PDF_ANNOTATIONS),
+    };
+  }
+
+  async function loadDevice(device: Device): Promise<void> {
+    google.localStore.clear();
+    device.local.forEach((value, key) => google.localStore.set(key, value));
+    google.sessionStore.clear();
+    device.session.forEach((value, key) => google.sessionStore.set(key, value));
+    await clearAllStores();
+    for (const row of device.settings) await dbPut(STORE_SETTINGS, row);
+    for (const row of device.annotations) await dbPut(STORE_PDF_ANNOTATIONS, row);
+  }
+
+  const uploads = () => google.requests.filter((request) => request.url.includes('/upload/') && request.method === 'PUT').length;
+
+  it('converges two devices and then stops writing: a merge that only brings the remote side in pushes nothing', async () => {
+    // Device A.
+    await dbPut(STORE_PDF_ANNOTATIONS, cache(DOC_A, [item('a')], 5));
+    await setDocs([doc(DOC_A, 3, ago(50))]);
+    await connect();
+    const deviceA = await saveDevice();
+
+    // Device B, same account, its own papers.
+    await loadDevice({ local: new Map(), session: new Map(), settings: [], annotations: [] });
+    await setDocs([doc(DOC_B, 7, ago(40))]);
+    await connect();
+    expect((await google.headBody<PdfSyncSnapshot>()).docs.map((d) => d.docId)).toEqual([DOC_A, DOC_B]);
+    const deviceB = await saveDevice();
+
+    // From here on both have everything: nobody writes, and nobody downloads again.
+    const before = uploads();
+    await loadDevice(deviceA);
+    await expect(syncPdfNow()).resolves.toMatchObject({ success: true, changedDocIds: [DOC_B] });
+    expect((await localDocs())[DOC_B].page).toBe(7);
+    const deviceA2 = await saveDevice();
+    await loadDevice(deviceB);
+    const downloads = google.dataRequests().length;
+    await expect(syncPdfNow()).resolves.toMatchObject({ success: true, merged: false });
+    await loadDevice(deviceA2);
+    await expect(syncPdfNow()).resolves.toMatchObject({ success: true, merged: false });
+    await expect(syncPdfNow()).resolves.toMatchObject({ success: true, merged: false });
+    expect(uploads()).toBe(before);
+    expect(google.dataRequests().length).toBe(downloads);
+    const state = await dbGet<{ value: { pendingLocalChanges: boolean; errorCode: unknown } }>(STORE_SETTINGS, PDF_SYNC_STATE_SETTING_KEY);
+    expect(state?.value).toMatchObject({ pendingLocalChanges: false, errorCode: null });
+  });
+
+  it('keeps a reading position the viewer saves while the sync applies its merge', async () => {
+    await setDocs([doc(DOC_A, 2, ago(50))]);
+    await dbPut(STORE_PDF_ANNOTATIONS, cache(DOC_A, [item('mine')], 5));
+    await connect();
+    google.remoteWrite(snapshot([doc(DOC_A, 9, ago(30)), doc(DOC_B, 1, ago(30))], [cache(DOC_A, [item('mine'), item('theirs')], 50)]));
+    await dbPut(STORE_PDF_ANNOTATIONS, cache(DOC_A, [item('mine'), item('new')], 60));
+
+    // The viewer saves right as the sync reads the position map to apply its merge.
+    const saved = doc(DOC_A, 42, Date.now());
+    let uploaded = false;
+    let viewerSave: Promise<boolean> | null = null;
+    const realGet = google.chrome.storage.local.get;
+    google.chrome.storage.local.get = async (key: string) => {
+      const result = await realGet(key);
+      if (uploaded && key === PDF_DOC_STATE_STORAGE_KEY && !viewerSave) viewerSave = savePdfDocRecord(saved);
+      return result;
+    };
+    const realFetch = google.fetch.getMockImplementation()!;
+    google.fetch.mockImplementation(async (input, init) => {
+      const response = await realFetch(input, init);
+      if (String(input).includes('upload_id=')) uploaded = true;
+      return response;
+    });
+    try {
+      await expect(syncPdfNow()).resolves.toMatchObject({ success: true });
+      expect(viewerSave).not.toBeNull();
+      await viewerSave;
+    } finally {
+      google.chrome.storage.local.get = realGet;
+      google.fetch.mockImplementation(realFetch);
+    }
+    expect((await localDocs())[DOC_A].page).toBe(42);
+    expect((await localDocs())[DOC_B].page).toBe(1);
+    // And the next sync carries it.
+    await expect(syncPdfNow()).resolves.toMatchObject({ success: true });
+    expect((await google.headBody<PdfSyncSnapshot>()).docs.find((d) => d.docId === DOC_A)?.page).toBe(42);
+  });
+
+  it('prunes reading positions past the age limit here too, so they are not a local change forever', async () => {
+    await setDocs([doc(DOC_A, 2, Date.now() - PDF_DOC_RECORD_MAX_AGE_MS - 60_000), doc(DOC_B, 5, ago(10))]);
+    await connect();
+    expect(Object.keys(await localDocs())).toEqual([DOC_B]);
+    const state = await dbGet<{ value: { pendingLocalChanges: boolean } }>(STORE_SETTINGS, PDF_SYNC_STATE_SETTING_KEY);
+    expect(state?.value.pendingLocalChanges).toBe(false);
+    const before = google.dataRequests().length;
+    await expect(syncPdfNow()).resolves.toMatchObject({ success: true, merged: false });
+    expect(google.dataRequests().length).toBe(before);
+  });
+
+  it('never drops a document with drawings from the sync document, however many there are', () => {
+    const caches = Array.from({ length: 260 }, (_, i) => cache(`${String(i).padStart(32, '0')}`, [item(`k${i}`)], i));
+    const merged = mergePdfSyncSnapshots(snapshot([], caches.slice(0, 150)), snapshot([], caches.slice(100)), null);
+    expect(merged.annotations).toHaveLength(260);
+    expect(parsePdfSyncSnapshot(merged)?.annotations).toHaveLength(260);
+  });
+
+  it('runs once more after a sync that was asked for while one was running; an open\'s pull joins the running one', async () => {
+    await connect();
+    const first = syncPdfNow();
+    const joined = syncPdfNow({ join: true });
+    const second = syncPdfNow();
+    const third = syncPdfNow();
+    expect(joined).toBe(first);
+    expect(second).not.toBe(first);
+    expect(third).toBe(second);
+    // Stored while the first run is going: the follow-up pushes it.
+    await setDocs([doc(DOC_A, 11, ago(1))]);
+    await expect(first).resolves.toMatchObject({ success: true });
+    await expect(second).resolves.toMatchObject({ success: true });
+    expect((await google.headBody<PdfSyncSnapshot>()).docs.map((d) => d.page)).toEqual([11]);
+    await expect(getPdfSyncStatus()).resolves.toMatchObject({ syncing: false });
+  });
+
+  it('asks before adding this device\'s data to a different Google account, and connects once confirmed', async () => {
+    await setDocs([doc(DOC_A, 4, ago(20))]);
+    await connect();
+    await disconnectPdfSyncGoogle();
+
+    google.state.session = { id: 'perm-other', email: 'other@example.test' };
+    await expect(connectPdfSyncGoogle()).resolves.toEqual({
+      success: false, needsConfirm: 'account-change', previousEmail: 'main@example.test', email: 'other@example.test',
+    });
+    await expect(getPdfSyncStatus()).resolves.toMatchObject({ googleConnected: false });
+    const flows = google.state.authFlows.length;
+    await expect(connectPdfSyncGoogle({ confirmAccountChange: true })).resolves.toMatchObject({ success: true, status: { googleConnected: true, googleAccountEmail: 'other@example.test' } });
+    // The confirmation used the sign-in already made.
+    expect(google.state.authFlows.length).toBe(flows);
+    await expect(syncPdfNow()).resolves.toMatchObject({ success: true });
+
+    // Back to the first account, now from the second: asked again.
+    google.state.session = { id: 'perm-main', email: 'main@example.test' };
+    await expect(connectPdfSyncGoogle()).resolves.toMatchObject({ needsConfirm: 'account-change', previousEmail: 'other@example.test' });
+    await expect(getPdfSyncStatus()).resolves.toMatchObject({ googleConnected: true, googleAccountEmail: 'other@example.test' });
+  });
+
+  it('connects another account without asking when this device has nothing to carry over', async () => {
+    await connect();
+    await disconnectPdfSyncGoogle();
+    expect((await exportPdfSyncSnapshot()).docs).toEqual([]);
+    google.state.session = { id: 'perm-other', email: 'other@example.test' };
+    await expect(connectPdfSyncGoogle()).resolves.toMatchObject({ success: true, status: { googleAccountEmail: 'other@example.test' } });
+    // A stale confirmation without a waiting sign-in signs in again and asks as usual.
+    await setDocs([doc(DOC_A, 4, ago(20))]);
+    await syncPdfNow();
+    google.state.session = { id: 'perm-main', email: 'main@example.test' };
+    await expect(connectPdfSyncGoogle({ confirmAccountChange: true })).resolves.toMatchObject({ needsConfirm: 'account-change' });
   });
 });

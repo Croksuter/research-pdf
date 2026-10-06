@@ -1,10 +1,10 @@
 // ─── ResearchPDF service worker ───
 //
 // The PDF viewer's background, and nothing else: viewer routing (file:// and
-// opt-in web PDFs), viewer-tab restore after a reload, the library of opened
-// documents, and Google Drive sync of drawings, reading positions and the
-// library. No vocabulary, no content script, no
-// model calls. The sync engine lives in ./background/pdfSyncService.ts.
+// opt-in web PDFs), hub-tab restore after an extension update, the writers of
+// the reading positions, library and projects, and Google Drive sync of all
+// of them with the drawings. No content script, no model calls. The sync
+// engine lives in ./background/pdfSyncService.ts.
 
 import { pdfMessageHandlers } from './background/pdfRouting';
 import { isExtensionPageSender, registerMessageDispatcher, type MessageHandler } from './background/messageDispatcher';
@@ -13,6 +13,7 @@ import {
   parseConnectGoogleSyncRequest,
   parseDisconnectGoogleSyncRequest,
   parseGetCloudSyncStatusRequest,
+  parsePdfDocStateSaveRequest,
   parsePdfLibraryUpdateRequest,
   parsePdfSyncHintRequest,
   parseSetPdfSyncEnabledRequest,
@@ -32,6 +33,7 @@ import {
   syncPdfNow,
 } from './background/pdfSyncService';
 import { updatePdfLibrary } from './background/pdfLibraryStore';
+import { savePdfDocRecord } from './background/pdfDocStateStore';
 import { followStoredLanguage } from './shared/i18n';
 import { S } from './background/background.strings';
 import './background/onboarding';
@@ -48,9 +50,12 @@ const messageHandlers: Record<string, MessageHandler> = {
     ? syncPdfNow()
     : { success: false, error: S.badSyncRequest },
   // Account changes come from this extension's own pages only.
-  VOCAB_T_CONNECT_GOOGLE_SYNC: (m, sender) => parseConnectGoogleSyncRequest(m) && isExtensionPageSender(sender)
-    ? connectPdfSyncGoogle()
-    : { success: false, error: S.badConnectRequest },
+  VOCAB_T_CONNECT_GOOGLE_SYNC: (m, sender) => {
+    const request = parseConnectGoogleSyncRequest(m);
+    return request && isExtensionPageSender(sender)
+      ? connectPdfSyncGoogle({ confirmAccountChange: request.confirmAccountChange })
+      : { success: false, error: S.badConnectRequest };
+  },
   VOCAB_T_DISCONNECT_GOOGLE_SYNC: (m, sender) => parseDisconnectGoogleSyncRequest(m) && isExtensionPageSender(sender)
     ? disconnectPdfSyncGoogle()
     : { success: false, error: S.badDisconnectRequest },
@@ -69,7 +74,14 @@ const messageHandlers: Record<string, MessageHandler> = {
     requestPdfSyncSoon();
     return { success: true };
   },
-  // Opens and detected titles from viewer frames, pins from the hub.
+  // A viewer frame's reading position; the next sync carries it.
+  VOCAB_T_PDF_DOC_STATE_SAVE: async (m, sender) => {
+    const request = parsePdfDocStateSaveRequest(m);
+    if (!request || !isExtensionPageSender(sender)) return { success: false, error: S.badRequest };
+    await savePdfDocRecord(request.record);
+    return { success: true };
+  },
+  // Opens and detected titles from viewer frames.
   VOCAB_T_PDF_LIBRARY_UPDATE: async (m, sender) => {
     const request = parsePdfLibraryUpdateRequest(m);
     if (!request || !isExtensionPageSender(sender)) return { success: false, error: S.badLibraryRequest };

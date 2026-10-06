@@ -26,6 +26,8 @@
 // matches even if its fingerprint key differs (it never should, but the alias
 // is free once the hash exists).
 
+import { isRecord } from './guards';
+
 export const PDF_DOC_STATE_STORAGE_KEY = 'vtPdfDocs';
 export const PDF_DOC_RECORD_MAX = 300;
 export const PDF_DOC_RECORD_MAX_AGE_MS = 180 * 24 * 60 * 60 * 1000;
@@ -146,6 +148,25 @@ export function findPdfDocRecord(
 }
 
 /**
+ * The records a device keeps: none older than the age limit, then the most
+ * recently updated up to the count limit. The sync document is bounded the
+ * same way, so a record outside these bounds is gone everywhere.
+ */
+export function boundPdfDocRecords(
+  records: readonly PdfDocRecord[],
+  now: number = Date.now(),
+  limits: { max?: number; maxAgeMs?: number } = {},
+): PdfDocRecord[] {
+  const max = limits.max ?? PDF_DOC_RECORD_MAX;
+  const maxAgeMs = limits.maxAgeMs ?? PDF_DOC_RECORD_MAX_AGE_MS;
+  return records
+    .filter((record) => now - record.updatedAt <= maxAgeMs)
+    .sort((a, b) => b.updatedAt - a.updatedAt || a.docId.localeCompare(b.docId))
+    .slice(0, max)
+    .sort((a, b) => a.docId.localeCompare(b.docId));
+}
+
+/**
  * Returns a new map with `record` stored under its docId. Expired and
  * least-recently-updated entries are pruned so the map stays bounded; a
  * record that only aliases the new one via sha256 is replaced.
@@ -177,9 +198,6 @@ export function upsertPdfDocRecord(
   return next;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 export function parsePdfDocRecord(value: unknown): PdfDocRecord | null {
   if (!isRecord(value)) return null;

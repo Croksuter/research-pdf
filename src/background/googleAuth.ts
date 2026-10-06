@@ -1,6 +1,6 @@
 import { GOOGLE_DRIVE_APPDATA_SCOPE, GOOGLE_OAUTH_CLIENT_ID } from '../shared/constants';
 import { CloudSyncError } from './cloudSyncError';
-import { S } from './background.strings';
+import type { SyncErrorCode } from '../shared/syncErrors';
 
 /**
  * Google sign-in for Drive sync.
@@ -23,6 +23,7 @@ import { S } from './background.strings';
 const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKENINFO_ENDPOINT = 'https://oauth2.googleapis.com/tokeninfo';
 const REVOKE_ENDPOINT = 'https://oauth2.googleapis.com/revoke';
+// The key keeps the name an earlier build gave it, so a cached token survives the update.
 const TOKEN_SESSION_KEY = 'vocabTGoogleAccessToken';
 const REQUEST_TIMEOUT_MS = 20_000;
 const SILENT_FLOW_TIMEOUT_MS = 10_000;
@@ -40,8 +41,8 @@ export type GoogleAuthFailure =
 export class GoogleAuthError extends CloudSyncError {
   readonly reason: GoogleAuthFailure;
 
-  constructor(reason: GoogleAuthFailure, message: string) {
-    super(message);
+  constructor(reason: GoogleAuthFailure, code: SyncErrorCode) {
+    super(code);
     this.name = 'GoogleAuthError';
     this.reason = reason;
   }
@@ -110,7 +111,7 @@ export function parseGoogleAuthRedirect(
   now: number = Date.now(),
 ): GoogleAccessToken {
   if (!responseUrl || !responseUrl.startsWith(expected.redirectUri)) {
-    throw new GoogleAuthError('failed', S.authBadResponse);
+    throw new GoogleAuthError('failed', 'auth-bad-response');
   }
   let params: URLSearchParams;
   try {
@@ -118,22 +119,22 @@ export function parseGoogleAuthRedirect(
     // Implicit flow answers in the fragment; an error may arrive in the query.
     params = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : url.search);
   } catch {
-    throw new GoogleAuthError('failed', S.authBadResponse);
+    throw new GoogleAuthError('failed', 'auth-bad-response');
   }
   // Check state before anything else: a response that is not bound to the
   // request this extension started is never trusted, not even its error code.
   if (params.get('state') !== expected.state) {
-    throw new GoogleAuthError('failed', S.authVerifyFailed);
+    throw new GoogleAuthError('failed', 'auth-verify-failed');
   }
   const error = params.get('error');
   if (error) {
     if (INTERACTION_ERRORS.has(error)) {
-      throw new GoogleAuthError('interaction-required', S.authExpired);
+      throw new GoogleAuthError('interaction-required', 'auth-expired');
     }
     if (error === 'access_denied') {
-      throw new GoogleAuthError('denied', S.authDenied);
+      throw new GoogleAuthError('denied', 'auth-denied');
     }
-    throw new GoogleAuthError('failed', S.authFailed);
+    throw new GoogleAuthError('failed', 'auth-failed');
   }
   const accessToken = params.get('access_token') ?? '';
   const tokenType = (params.get('token_type') ?? '').toLowerCase();
@@ -141,11 +142,11 @@ export function parseGoogleAuthRedirect(
   const scopes = (params.get('scope') ?? '').split(/\s+/u);
   if (!accessToken || accessToken.length > MAX_TOKEN_CHARS || tokenType !== 'bearer'
     || !Number.isFinite(expiresIn) || expiresIn <= 0) {
-    throw new GoogleAuthError('failed', S.authBadResponse);
+    throw new GoogleAuthError('failed', 'auth-bad-response');
   }
   // Granular consent lets a user untick a scope; without it sync cannot work.
   if (!scopes.includes(GOOGLE_DRIVE_APPDATA_SCOPE)) {
-    throw new GoogleAuthError('denied', S.authDriveDenied);
+    throw new GoogleAuthError('denied', 'auth-drive-denied');
   }
   return { accessToken, expiresAt: now + expiresIn * 1_000 };
 }
@@ -164,7 +165,7 @@ async function postForm(url: string, fields: Record<string, string>): Promise<Re
       cache: 'no-store',
     });
   } catch {
-    throw new GoogleAuthError('failed', S.authServerUnreachable);
+    throw new GoogleAuthError('failed', 'auth-server-unreachable');
   } finally {
     clearTimeout(timeout);
   }
@@ -173,13 +174,13 @@ async function postForm(url: string, fields: Record<string, string>): Promise<Re
 /** Confirm with Google that the token was issued to THIS client for our scope. */
 async function verifyTokenAudience(token: GoogleAccessToken, clientId: string): Promise<void> {
   const response = await postForm(TOKENINFO_ENDPOINT, { access_token: token.accessToken });
-  if (!response.ok) throw new GoogleAuthError('failed', S.tokenVerifyFailed);
+  if (!response.ok) throw new GoogleAuthError('failed', 'token-verify-failed');
   let info: unknown;
   try { info = await response.json(); } catch { info = null; }
   const record = info && typeof info === 'object' ? info as Record<string, unknown> : {};
   const scopes = typeof record.scope === 'string' ? record.scope.split(/\s+/u) : [];
   if (record.aud !== clientId || !scopes.includes(GOOGLE_DRIVE_APPDATA_SCOPE)) {
-    throw new GoogleAuthError('failed', S.tokenVerifyFailed);
+    throw new GoogleAuthError('failed', 'token-verify-failed');
   }
 }
 
@@ -192,7 +193,7 @@ export async function requestGoogleAccessToken(options: {
   loginHint?: string;
 }): Promise<GoogleAccessToken> {
   if (!isGoogleSyncConfigured()) {
-    throw new GoogleAuthError('not-configured', S.syncNotConfigured);
+    throw new GoogleAuthError('not-configured', 'not-configured');
   }
   const clientId = googleClientId();
   const redirectUri = googleRedirectUri();
@@ -215,8 +216,8 @@ export async function requestGoogleAccessToken(options: {
     // Chrome rejects both for a closed window and for a silent flow that needed
     // UI. The rejection text is not a stable API, so classify by mode only.
     throw options.interactive
-      ? new GoogleAuthError('cancelled', S.authCancelled)
-      : new GoogleAuthError('interaction-required', S.authExpired);
+      ? new GoogleAuthError('cancelled', 'auth-cancelled')
+      : new GoogleAuthError('interaction-required', 'auth-expired');
   }
   const token = parseGoogleAuthRedirect(responseUrl, { redirectUri, state });
   await verifyTokenAudience(token, clientId);

@@ -225,6 +225,7 @@ export function createFakeGoogle() {
     },
     clearSessionCache: () => sessionStore.clear(),
     localStore,
+    sessionStore,
     dataRequests: () => requests.filter((request) => request.url.includes('alt=media') || request.url.includes('/upload/')),
   };
 }

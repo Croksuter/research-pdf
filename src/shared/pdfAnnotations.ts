@@ -31,7 +31,6 @@ import { PDF_DOC_ID_MAX_CHARS } from './pdfIdentity';
 import { S } from './shared.strings';
 
 export const PDF_ANNOTATION_CACHE_VERSION = 1;
-export const PDF_ANNOTATION_CACHE_MAX_DOCS = 200;
 export const PDF_ANNOTATION_MAX_ITEMS = 5_000;
 /** PDF user-space units (1/72 in) two rects may differ by and still be "the same". */
 export const RECT_MATCH_TOLERANCE = 1.5;

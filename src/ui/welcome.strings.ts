@@ -47,6 +47,8 @@ export const S = messages({
     syncConnecting: 'Google 로그인 창을 여는 중…',
     syncConnected: (email: string) => `연결됨: ${email}`,
     syncFailed: '연결하지 못했습니다. 나중에 설정에서 다시 시도할 수 있습니다.',
+    confirmAccountChange: (previous: string, next: string) => `이 기기의 논문, 필기, 읽던 위치와 프로젝트는 지금까지 ${previous} 계정의 Google Drive와 동기화했습니다.\n\n${next} 계정으로 연결하면 이 기기의 데이터가 ${next} 계정의 Drive에 더해집니다. ${previous} 계정의 Drive에 있는 데이터는 그대로 남습니다.\n\n${next} 계정으로 연결할까요?`,
+    accountChangeDeclined: '연결하지 않았습니다. 나중에 설정에서 연결할 수 있습니다.',
     syncLater: '나중에 하기',
 
     tourTitle: '이렇게 씁니다',
@@ -116,6 +118,8 @@ export const S = messages({
     syncConnecting: 'Opening Google sign-in…',
     syncConnected: (email: string) => `Connected: ${email}`,
     syncFailed: 'Couldn’t connect. You can try again later in settings.',
+    confirmAccountChange: (previous: string, next: string) => `This device’s papers, drawings, reading positions and projects have been syncing with the Google Drive of ${previous}.\n\nConnecting ${next} adds this device’s data to the Drive of ${next}. What is in the Drive of ${previous} stays there.\n\nConnect ${next}?`,
+    accountChangeDeclined: 'Not connected. You can connect later in settings.',
     syncLater: 'Maybe later',
 
     tourTitle: 'How it works',

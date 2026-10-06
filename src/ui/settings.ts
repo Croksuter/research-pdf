@@ -32,6 +32,7 @@ import { isEmptyAnnotationCache, parsePdfAnnotationCache } from '../shared/pdfAn
 import { openAlexCheck, semanticScholarCheck, type ApiCheck } from '../shared/apiStatus';
 import { DISPLAY_PREFS_STORAGE_KEY, parseDisplayPrefs, type DisplayPrefs } from '../shared/displayPrefs';
 import { LANGUAGE_STORAGE_KEY, currentLanguage, localizeDocument, parseLanguagePref, saveLanguagePref } from '../shared/i18n';
+import { syncStatusErrorText } from '../shared/syncErrors';
 import { S } from './settings.strings';
 
 localizeDocument(S);
@@ -122,9 +123,20 @@ type SyncStatus = {
   googleAccountEmail: string;
   enabled: boolean;
   lastSyncAt: string | null;
+  errorCode?: string | null;
+  errorDetail?: string | null;
   error: string | null;
   pendingLocalChanges: boolean;
   syncing: boolean;
+};
+
+type ConnectResponse = {
+  success: boolean;
+  error?: string;
+  errorCode?: string;
+  needsConfirm?: 'account-change';
+  previousEmail?: string;
+  email?: string;
 };
 
 const syncAvatar = byId<HTMLDivElement>('sync-avatar');
@@ -156,8 +168,9 @@ function renderSync(status: SyncStatus): void {
   syncSetup.textContent = status.googleConfigured
     ? S.setupConfigured(redirectUri())
     : S.setupMissing(redirectUri());
+  const errorText = syncStatusErrorText(status);
   if (status.syncing) syncStatus.textContent = S.syncing;
-  else if (status.error) syncStatus.textContent = S.syncError(status.error);
+  else if (errorText) syncStatus.textContent = S.syncError(errorText);
   else if (status.lastSyncAt) {
     syncStatus.textContent = S.lastSync(new Date(status.lastSyncAt).toLocaleString(currentLanguage()), status.pendingLocalChanges);
   } else if (status.googleConnected) syncStatus.textContent = status.enabled ? S.waitingFirst : S.syncOff;
@@ -176,10 +189,18 @@ async function loadSync(): Promise<void> {
 syncConnectButton.addEventListener('click', () => {
   syncConnectButton.disabled = true;
   syncStatus.textContent = S.signInOpening;
-  void send<{ success: boolean; error?: string }>({ type: 'VOCAB_T_CONNECT_GOOGLE_SYNC' }).then(async (response) => {
+  void (async () => {
+    let response = await send<ConnectResponse>({ type: 'VOCAB_T_CONNECT_GOOGLE_SYNC' });
+    // Another account than this device's data last went to: ask before merging into it.
+    let declined = false;
+    if (response?.needsConfirm === 'account-change') {
+      declined = !confirm(S.confirmAccountChange(response.previousEmail || S.googleAccount, response.email || S.googleAccount));
+      if (!declined) response = await send<ConnectResponse>({ type: 'VOCAB_T_CONNECT_GOOGLE_SYNC', confirmAccountChange: true });
+    }
     await loadSync();
-    if (response && !response.success) syncStatus.textContent = response.error ?? S.connectFailed;
-  });
+    if (declined) syncStatus.textContent = S.accountChangeDeclined;
+    else if (response && !response.success) syncStatus.textContent = syncStatusErrorText(response) ?? S.connectFailed;
+  })();
 });
 
 syncDisconnectButton.addEventListener('click', () => {
@@ -200,9 +221,9 @@ syncEnabledInput.addEventListener('change', () => {
 syncNowButton.addEventListener('click', () => {
   syncNowButton.disabled = true;
   syncStatus.textContent = S.syncing;
-  void send<{ success: boolean; error?: string }>({ type: 'VOCAB_T_SYNC_CLOUD_NOW' }).then(async (response) => {
+  void send<{ success: boolean; error?: string; errorCode?: string }>({ type: 'VOCAB_T_SYNC_CLOUD_NOW' }).then(async (response) => {
     await loadSync();
-    if (!response?.success) syncStatus.textContent = response?.error ?? S.syncFailed;
+    if (!response?.success) syncStatus.textContent = syncStatusErrorText(response) ?? S.syncFailed;
   });
 });
 

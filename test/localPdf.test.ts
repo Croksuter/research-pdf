@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   PDF_CONTENT_TYPE_PATTERNS,
+  PDF_FILENAME_DISPOSITION_PATTERNS,
+  WEB_PDF_NATIVE_EXEMPT_RULE_IDS,
   WEB_PDF_REDIRECT_RULE_IDS,
   buildPdfViewerUrl,
+  buildWebPdfNativeExemptRules,
   buildWebPdfRedirectRules,
-  extractWebPdfSourceFromViewerUrl,
   isLocalPdfUrl,
   isPdfViewerSourceUrl,
   isWebPdfSourceUrl,
@@ -109,22 +111,6 @@ describe('pdfDisplayName', () => {
   });
 });
 
-describe('extractWebPdfSourceFromViewerUrl', () => {
-  it('returns the http(s) source carried by our own viewer page URL', () => {
-    expect(extractWebPdfSourceFromViewerUrl('chrome-extension://abc/pdf-viewer.html?file=https://a.org/p.pdf#page=2'))
-      .toBe('https://a.org/p.pdf');
-    expect(extractWebPdfSourceFromViewerUrl(`${VIEWER}?file=https%3A%2F%2Fa.org%2Fget%3Fid%3D1%26v%3D2`))
-      .toBe('https://a.org/get?id=1&v=2');
-  });
-
-  it('returns null for local sources, other extension pages, and web pages', () => {
-    expect(extractWebPdfSourceFromViewerUrl(`${VIEWER}?file=file%3A%2F%2F%2Fhome%2Fme%2Fp.pdf`)).toBeNull();
-    expect(extractWebPdfSourceFromViewerUrl('chrome-extension://abc/popup.html?file=https://a.org/p.pdf')).toBeNull();
-    expect(extractWebPdfSourceFromViewerUrl('https://a.org/pdf-viewer.html?file=https://b.org/p.pdf')).toBeNull();
-    expect(extractWebPdfSourceFromViewerUrl('')).toBeNull();
-  });
-});
-
 describe('buildWebPdfRedirectRules', () => {
   it('covers PDF content types, octet-stream .pdf URLs, and inline .pdf dispositions', () => {
     const rules = buildWebPdfRedirectRules(VIEWER, HUB);
@@ -147,11 +133,24 @@ describe('buildWebPdfRedirectRules', () => {
     expect(byOctetSuffix.condition.responseHeaders?.[0].values).toContain('application/octet-stream*');
 
     expect(byDisposition.condition.responseHeaders).toEqual([
-      { header: 'content-disposition', values: ['*filename=*.pdf*', '*filename*=*.pdf*'] },
+      { header: 'content-disposition', values: PDF_FILENAME_DISPOSITION_PATTERNS },
     ]);
     expect(byDisposition.condition.excludedResponseHeaders).toContainEqual(
       expect.objectContaining({ header: 'content-type', values: expect.arrayContaining(['text/*', 'image/*']) }),
     );
+  });
+
+  it('matches a .pdf file name in Content-Disposition only at the end of the name', () => {
+    // Chrome's header value patterns: the whole value, case-insensitive, `*` any run, `?` zero or one character.
+    const glob = (pattern: string) => new RegExp(`^${pattern.replace(/[.+^${}()|[\]\\]/gu, '\\$&').replace(/\*/gu, '.*').replace(/\?/gu, '.?')}$`, 'iu');
+    const matches = (value: string) => PDF_FILENAME_DISPOSITION_PATTERNS.some((p) => glob(p).test(value));
+    for (const value of ['inline; filename=paper.pdf', 'inline; filename="paper.PDF"', 'inline; filename="a b.pdf"; size=3',
+      "inline; filename*=UTF-8''%EB%85%BC%EB%AC%B8.pdf", 'inline;filename=paper.pdf;foo=bar', 'inline; filename="x.pdf" ; creation-date=1']) {
+      expect(matches(value), value).toBe(true);
+    }
+    for (const value of ['inline; filename=paper.pdf.zip', 'inline; filename="paper.pdf.html"', 'inline; filename=paper.pdfx', 'inline']) {
+      expect(matches(value), value).toBe(false);
+    }
   });
 
   it('sends top-level PDFs to the hub and embedded ones to the inline viewer, with identical conditions', () => {
@@ -168,5 +167,24 @@ describe('buildWebPdfRedirectRules', () => {
     }
     const strip = ({ id: _id, action: _action, condition: { resourceTypes: _types, ...rest } }: typeof rules[number]) => rest;
     expect(embedded.map(strip)).toEqual(topLevel.map(strip));
+  });
+});
+
+describe('native-viewer exemption', () => {
+  it('allows only the named tabs\' top-level navigations, above the redirect rules', () => {
+    expect(buildWebPdfNativeExemptRules([])).toEqual([]);
+    const rules = buildWebPdfNativeExemptRules([7, 9]);
+    expect(rules.map((r) => r.id)).toEqual([...WEB_PDF_NATIVE_EXEMPT_RULE_IDS]);
+    const redirectPriority = Math.max(...buildWebPdfRedirectRules(VIEWER, HUB).map((r) => r.priority));
+    for (const rule of rules) {
+      expect(rule.action).toEqual({ type: 'allow' });
+      expect(rule.priority).toBeGreaterThan(redirectPriority);
+      expect(rule.condition.tabIds).toEqual([7, 9]);
+      expect(rule.condition.resourceTypes).toEqual(['main_frame']);
+    }
+    // One decided before the request, one where the redirect rules decide: on the response headers.
+    expect(rules[0].condition.responseHeaders).toBeUndefined();
+    expect(rules[1].condition.responseHeaders).toEqual([{ header: 'content-type' }]);
+    expect(WEB_PDF_NATIVE_EXEMPT_RULE_IDS.some((id) => (WEB_PDF_REDIRECT_RULE_IDS as readonly number[]).includes(id))).toBe(false);
   });
 });

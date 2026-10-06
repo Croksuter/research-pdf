@@ -17,13 +17,9 @@ import {
   type PdfLibraryUpdate,
 } from '../shared/pdfLibrary';
 import { PDF_PROJECTS_STORAGE_KEY, parsePdfProjects, projectDocIds } from '../shared/pdfProjects';
+import { createSerialQueue } from './serialQueue';
 
-let queue: Promise<unknown> = Promise.resolve();
-function serialized<T>(task: () => Promise<T>): Promise<T> {
-  const run = queue.then(task, task);
-  queue = run.catch(() => undefined);
-  return run;
-}
+const serialized = createSerialQueue();
 
 export async function readPdfLibrary(): Promise<PdfLibrary> {
   try {

@@ -2,24 +2,29 @@
 //
 // One document per Google account, `researchpdf-sync-v1.json` (gzip; the file
 // name predates snapshot version 2, which added the library), holding
-// the viewer's durable state (shared/pdfSync.ts). Transport, auth, account
-// pinning and Drive's version-safety emulation are the same modules the
-// vocabulary engine uses; the merge is per document and per drawing.
+// the viewer's durable state (shared/pdfSync.ts). Transport, auth and account
+// pinning are ./googleAuth.ts, ./googleDriveStore.ts (which also emulates
+// version-safe writes on Drive) and ./googleDriveAccount.ts; the merge is per
+// document and per drawing.
 //
 // Runs unattended: on an alarm, at browser start, when a document is opened
 // (the viewer waits for this pull) and shortly after a drawing is stored.
-// A run where nothing changed on either side costs one metadata request.
+// A run where nothing changed on either side costs one metadata request, and
+// a run whose merge only brings the remote side in writes nothing back, so
+// two devices that agree never trade revisions.
 
 import { dbGetAll, openDB } from '../db/database';
 import { getSetting, setSetting } from '../db/settingsRepository';
 import { CloudSyncError } from './cloudSyncError';
-import { isGoogleSyncConfigured } from './googleAuth';
-import { connectGoogleAccount, disconnectGoogleAccount, driveStoreForAccount } from './googleDriveAccount';
+import { getCachedGoogleToken, isGoogleSyncConfigured } from './googleAuth';
+import { connectGoogleAccount, disconnectGoogleAccount, driveStoreForAccount, type GoogleAccountRef } from './googleDriveAccount';
 import { DriveClobber, GoogleDriveStore, parseDriveEtag } from './googleDriveStore';
 import { STORE_PDF_ANNOTATIONS, STORE_SETTINGS } from '../shared/constants';
 import { debugError, debugLog, debugWarn } from '../shared/debugLog';
 import { PdfAnnotationCache, isEmptyAnnotationCache, parsePdfAnnotationCache } from '../shared/pdfAnnotations';
-import { PDF_DOC_STATE_STORAGE_KEY, PdfDocRecord, PdfDocRecords, parsePdfDocRecords } from '../shared/pdfIdentity';
+import { PdfDocRecords, boundPdfDocRecords } from '../shared/pdfIdentity';
+import { DEFAULT_PROJECT_ID } from '../shared/pdfProjects';
+import { isSyncErrorCode, syncErrorText, type SyncErrorCode } from '../shared/syncErrors';
 import {
   changedPdfDocIds,
   PDF_SYNC_SNAPSHOT_VERSION,
@@ -32,11 +37,18 @@ import {
 import { stableJson } from '../shared/threeWayMerge';
 import { mergeIntoPdfLibrary, readPdfLibrary } from './pdfLibraryStore';
 import { mergeIntoPdfProjects, readPdfProjectFolders, readPdfProjects } from './pdfProjectStore';
-import { S } from './background.strings';
+import { mutatePdfDocRecords, readPdfDocRecords } from './pdfDocStateStore';
+import { isRecord } from '../shared/guards';
 
 export const PDF_SYNC_CONFIG_SETTING_KEY = 'researchPdfSyncConfig';
 export const PDF_SYNC_STATE_SETTING_KEY = 'researchPdfSyncState';
-export const PDF_SYNC_FILE_NAME = 'researchpdf-sync-v1.json';
+// The account this device last synced with; kept after a disconnect, so that
+// connecting a different account can ask before merging this device's data
+// into it.
+export const PDF_SYNC_LAST_ACCOUNT_SETTING_KEY = 'researchPdfSyncLastAccount';
+// An account signed in but not connected yet, waiting for the user to confirm
+// the switch (chrome.storage.session: gone when the browser closes).
+const PENDING_ACCOUNT_SESSION_KEY = 'rpdfPendingGoogleAccount';
 export const PDF_SYNC_ALARM_NAME = 'researchpdf-sync';
 export const PDF_SYNC_SOON_ALARM_NAME = 'researchpdf-sync-soon';
 export const PDF_SYNC_ALARM_PERIOD_MINUTES = 15;
@@ -56,6 +68,10 @@ export interface PdfSyncPublicStatus {
   googleAccountEmail: string;
   enabled: boolean;
   lastSyncAt: string | null;
+  /** Worded by the page (shared/syncErrors.ts `syncStatusErrorText`). */
+  errorCode: SyncErrorCode | null;
+  errorDetail: string | null;
+  /** The same, worded in the service worker's language; or an older build's stored sentence. */
   error: string | null;
   pendingLocalChanges: boolean;
   syncing: boolean;
@@ -65,6 +81,9 @@ interface PdfSyncState {
   etag: string | null;
   base: PdfSyncSnapshot | null;
   lastSyncAt: string | null;
+  errorCode: SyncErrorCode | null;
+  errorDetail: string | null;
+  /** A sentence an older build stored instead of a code. */
   error: string | null;
   pendingLocalChanges: boolean;
   repair: DriveClobber | null;
@@ -72,23 +91,25 @@ interface PdfSyncState {
 
 export type PdfSyncResult =
   | { success: true; lastSyncAt: string; merged: boolean; changedDocIds: string[] }
-  | { success: false; error: string };
+  | { success: false; error: string; errorCode: SyncErrorCode };
+
+const NO_ERROR = { errorCode: null, errorDetail: null, error: null } as const;
 
 class StaleConfigError extends CloudSyncError {
   constructor() {
-    super(S.accountChangedDuringSync);
+    super('account-changed');
     this.name = 'StaleConfigError';
   }
 }
 
 let activeSync: Promise<PdfSyncResult> | null = null;
+// A run asked for while one is going: it starts when that one ends, so what
+// the asker just stored is pushed (several asks share it).
+let followUpSync: Promise<PdfSyncResult> | null = null;
 let configGeneration = 0;
 
 // ─── Config / state ───
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function emptyConfig(): PdfSyncConfig {
   return { googleAccountId: '', googleAccountEmail: '', enabled: false };
@@ -109,7 +130,7 @@ export async function getPdfSyncConfig(): Promise<PdfSyncConfig> {
 }
 
 function emptyState(): PdfSyncState {
-  return { etag: null, base: null, lastSyncAt: null, error: null, pendingLocalChanges: false, repair: null };
+  return { etag: null, base: null, lastSyncAt: null, ...NO_ERROR, pendingLocalChanges: false, repair: null };
 }
 
 function repairFromUnknown(value: unknown): DriveClobber | null {
@@ -125,7 +146,9 @@ function stateFromUnknown(value: unknown): PdfSyncState {
     etag: typeof value.etag === 'string' ? value.etag : null,
     base: parsePdfSyncSnapshot(value.base),
     lastSyncAt: typeof value.lastSyncAt === 'string' ? value.lastSyncAt : null,
-    error: typeof value.error === 'string' ? value.error : null,
+    errorCode: isSyncErrorCode(value.errorCode) ? value.errorCode : null,
+    errorDetail: isSyncErrorCode(value.errorCode) && typeof value.errorDetail === 'string' ? value.errorDetail.slice(0, 64) : null,
+    error: !isSyncErrorCode(value.errorCode) && typeof value.error === 'string' ? value.error : null,
     pendingLocalChanges: value.pendingLocalChanges === true,
     repair: repairFromUnknown(value.repair),
   };
@@ -156,6 +179,8 @@ async function assertConfigCurrent(config: PdfSyncConfig, generation: number): P
   if (configGeneration !== generation || current.googleAccountId !== config.googleAccountId) throw new StaleConfigError();
 }
 
+const hasError = (state: PdfSyncState) => state.errorCode !== null || state.error !== null;
+
 export async function getPdfSyncStatus(): Promise<PdfSyncPublicStatus> {
   const [config, state] = await Promise.all([getPdfSyncConfig(), getState()]);
   return {
@@ -164,7 +189,9 @@ export async function getPdfSyncStatus(): Promise<PdfSyncPublicStatus> {
     googleAccountEmail: config.googleAccountEmail,
     enabled: config.enabled,
     lastSyncAt: state.lastSyncAt,
-    error: state.error,
+    errorCode: state.errorCode,
+    errorDetail: state.errorDetail,
+    error: state.errorCode ? syncErrorText(state.errorCode, state.errorDetail) : state.error,
     pendingLocalChanges: state.pendingLocalChanges,
     syncing: activeSync !== null,
   };
@@ -172,14 +199,7 @@ export async function getPdfSyncStatus(): Promise<PdfSyncPublicStatus> {
 
 // ─── Local snapshot ───
 
-async function readDocRecords(): Promise<PdfDocRecords> {
-  try {
-    const stored = await chrome.storage.local.get(PDF_DOC_STATE_STORAGE_KEY);
-    return parsePdfDocRecords(stored[PDF_DOC_STATE_STORAGE_KEY]);
-  } catch {
-    return {};
-  }
-}
+const readDocRecords = readPdfDocRecords;
 
 export async function exportPdfSyncSnapshot(): Promise<PdfSyncSnapshot> {
   const [records, rows, library, projects, folders] = await Promise.all([
@@ -223,25 +243,33 @@ async function applyPdfSyncSnapshot(
 
   // Reading positions live in chrome.storage.local, outside the transaction.
   // They are last-writer-wins and re-merged by the next sync, so applying them
-  // first is safe even if the transaction below fails.
-  const current = await readDocRecords();
+  // first is safe even if the transaction below fails. The map is read and
+  // written in the position store's queue, so a position a viewer saves while
+  // this sync runs is either already in `current` (and kept, as pending) or
+  // stored after this write; never lost.
   const expectedDocs = new Map(expected.docs.map((doc) => [doc.docId, doc]));
-  const next: PdfDocRecords = { ...current };
-  const mergedDocIds = new Set<string>();
-  merged.docs.forEach((doc) => {
-    mergedDocIds.add(doc.docId);
-    const local = current[doc.docId];
-    const unchanged = stableJson(local ?? null) === stableJson(expectedDocs.get(doc.docId) ?? null);
-    if (unchanged || !local || local.updatedAt <= doc.updatedAt) next[doc.docId] = doc;
-    else { pending = true; skippedDocs.add(doc.docId); }
+  await mutatePdfDocRecords((current) => {
+    const next: PdfDocRecords = { ...current };
+    const mergedDocIds = new Set<string>();
+    // What the bound keeps of the local rows: the rest (too old, or beyond the
+    // count) was never exported and is gone everywhere, so it goes here too
+    // instead of standing as a local change forever.
+    const inBounds = new Set(boundPdfDocRecords(Object.values(current)).map((doc) => doc.docId));
+    merged.docs.forEach((doc) => {
+      mergedDocIds.add(doc.docId);
+      const local = current[doc.docId];
+      const unchanged = stableJson(local ?? null) === stableJson(expectedDocs.get(doc.docId) ?? null);
+      if (unchanged || !local || local.updatedAt <= doc.updatedAt) next[doc.docId] = doc;
+      else { pending = true; skippedDocs.add(doc.docId); }
+    });
+    Object.keys(current).forEach((docId) => {
+      if (mergedDocIds.has(docId)) return;
+      if (!inBounds.has(docId) || stableJson(current[docId]) === stableJson(expectedDocs.get(docId) ?? null)) delete next[docId];
+      else { pending = true; skippedDocs.add(docId); }
+    });
+    if (!guard()) throw new StaleConfigError();
+    return { next, result: undefined };
   });
-  Object.keys(current).forEach((docId) => {
-    if (mergedDocIds.has(docId)) return;
-    if (stableJson(current[docId]) === stableJson(expectedDocs.get(docId) ?? null)) delete next[docId];
-    else { pending = true; skippedDocs.add(docId); }
-  });
-  if (!guard()) throw new StaleConfigError();
-  await chrome.storage.local.set({ [PDF_DOC_STATE_STORAGE_KEY]: next });
   // The library merge is a join: applying it over whatever the viewer wrote
   // meanwhile loses nothing, and a row that differs from the base afterwards
   // is simply pushed by the next sync.
@@ -304,32 +332,39 @@ function parseRemote(text: string): PdfSyncSnapshot {
   try {
     raw = JSON.parse(text);
   } catch {
-    throw new CloudSyncError(S.syncFileInvalid);
+    throw new CloudSyncError('file-invalid');
   }
   const snapshot = parsePdfSyncSnapshot(raw);
-  if (!snapshot) throw new CloudSyncError(S.syncFileTooNew);
+  if (!snapshot) throw new CloudSyncError('file-too-new');
   return snapshot;
 }
 
 function storeFor(config: PdfSyncConfig): GoogleDriveStore {
-  return driveStoreForAccount({ id: config.googleAccountId, email: config.googleAccountEmail }, PDF_SYNC_FILE_NAME);
+  return driveStoreForAccount({ id: config.googleAccountId, email: config.googleAccountEmail });
 }
 
 function assertReady(config: PdfSyncConfig): void {
-  if (!isGoogleSyncConfigured()) throw new CloudSyncError(S.syncNotConfigured);
-  if (!config.googleAccountId) throw new CloudSyncError(S.connectAccountFirst);
-  if (!config.enabled) throw new CloudSyncError(S.syncTurnedOff);
+  if (!isGoogleSyncConfigured()) throw new CloudSyncError('not-configured');
+  if (!config.googleAccountId) throw new CloudSyncError('connect-first');
+  if (!config.enabled) throw new CloudSyncError('sync-off');
+}
+
+function errorOf(error: unknown): { code: SyncErrorCode; detail: string | null } {
+  return error instanceof CloudSyncError ? { code: error.code, detail: error.detail } : { code: 'failed', detail: null };
 }
 
 function safeError(error: unknown): string {
-  return error instanceof CloudSyncError ? error.message : S.syncFailed;
+  const { code, detail } = errorOf(error);
+  return syncErrorText(code, detail);
 }
 
 // ─── Sync run ───
 
 async function performSync(): Promise<PdfSyncResult> {
-  const config = await getPdfSyncConfig();
+  // The generation first: a connect or disconnect that lands while the config
+  // is being read must make this run stale, not look current.
   const generation = configGeneration;
+  const config = await getPdfSyncConfig();
   debugLog('sync', 'start', () => ({ googleConnected: Boolean(config.googleAccountId), enabled: config.enabled }));
   try {
     assertReady(config);
@@ -345,14 +380,17 @@ async function performSync(): Promise<PdfSyncResult> {
         && await store.probe() === state.etag) {
         await assertConfigCurrent(config, generation);
         const lastSyncAt = new Date().toISOString();
-        await saveState({ lastSyncAt, error: null });
+        await saveState({ lastSyncAt, ...NO_ERROR });
+        await rememberSyncedAccount(config);
         debugLog('sync', 'terminal: success (unchanged)');
         return { success: true, lastSyncAt, merged: false, changedDocIds: [] };
       }
 
       const read = await store.read();
       await assertConfigCurrent(config, generation);
-      let remote: PdfSyncSnapshot | null = read.kind === 'file' ? parseRemote(read.text) : null;
+      // What the file holds now; `remote` may grow by a repaired revision below.
+      const onFile: PdfSyncSnapshot | null = read.kind === 'file' ? parseRemote(read.text) : null;
+      let remote = onFile;
       const remoteEtag = read.kind === 'file' ? read.etag : null;
 
       // A revision one of our own earlier writes replaced unseen is folded
@@ -378,12 +416,17 @@ async function performSync(): Promise<PdfSyncResult> {
         : mergePdfSyncSnapshots(localBeforePut, initiallyMerged, localAtStart);
       await assertConfigCurrent(config, generation);
 
-      const body = JSON.stringify(cloudSnapshot);
-      const written = remote && remoteEtag ? await store.update(body, remoteEtag) : await store.create(body);
-      debugLog('sync', `drive write ${written.kind}`, () => ({ attempt }));
+      // The merge only brought the remote side in: nothing to push. Writing it
+      // anyway would be a new revision that the other device then reads,
+      // merges to the same thing and writes back, every run, forever.
+      const nothingToPush = onFile !== null && remoteEtag !== null && pdfSyncSnapshotDataEquals(cloudSnapshot, onFile);
+      const written = nothingToPush
+        ? { kind: 'written' as const, etag: remoteEtag }
+        : remote && remoteEtag ? await store.update(JSON.stringify(cloudSnapshot), remoteEtag) : await store.create(JSON.stringify(cloudSnapshot));
+      debugLog('sync', nothingToPush ? 'drive write skipped (remote already has it)' : `drive write ${written.kind}`, () => ({ attempt }));
       if (written.kind === 'precondition-failed') {
         if (preconditionRetries >= MAX_PRECONDITION_RETRIES) {
-          throw new CloudSyncError(S.syncConflict);
+          throw new CloudSyncError('conflict');
         }
         preconditionRetries += 1;
         continue;
@@ -392,7 +435,7 @@ async function performSync(): Promise<PdfSyncResult> {
         await assertConfigCurrent(config, generation);
         await saveState({ repair: written.clobber });
         if (clobberRepairRetries >= MAX_CLOBBER_REPAIR_RETRIES) {
-          throw new CloudSyncError(S.syncConflict);
+          throw new CloudSyncError('conflict');
         }
         clobberRepairRetries += 1;
         continue;
@@ -407,34 +450,57 @@ async function performSync(): Promise<PdfSyncResult> {
           etag: written.etag,
           base,
           lastSyncAt,
-          error: null,
+          ...NO_ERROR,
           pendingLocalChanges: pending,
           repair: null,
         }),
         () => configGeneration === generation,
       );
+      await rememberSyncedAccount(config);
       debugLog('sync', 'terminal: success', () => ({ merged: remote !== null, pendingLocalChanges }));
       return { success: true, lastSyncAt, merged: remote !== null, changedDocIds: changedPdfDocIds(localBeforePut, cloudSnapshot) };
     }
   } catch (error) {
-    const message = safeError(error);
-    debugError('sync', 'terminal: failure', () => ({ error: message }));
+    const { code, detail } = errorOf(error);
+    const message = syncErrorText(code, detail);
+    debugError('sync', 'terminal: failure', () => ({ error: code, detail }));
     if (!(error instanceof StaleConfigError)) {
       try {
         await assertConfigCurrent(config, generation);
-        await saveState({ error: message });
+        await saveState({ errorCode: code, errorDetail: detail, error: null });
       } catch {
         // Keep the original failure; state persistence must not obscure it.
       }
     }
-    return { success: false, error: message };
+    return { success: false, error: message, errorCode: code };
   }
 }
 
-/** Single-flight: concurrent callers share one run. */
-export function syncPdfNow(): Promise<PdfSyncResult> {
-  if (!activeSync) activeSync = performSync().finally(() => { activeSync = null; });
-  return activeSync;
+function startSync(): Promise<PdfSyncResult> {
+  const run = performSync().finally(() => {
+    // A queued follow-up takes over as the active run when it starts.
+    if (activeSync === run && !followUpSync) activeSync = null;
+  });
+  activeSync = run;
+  return run;
+}
+
+/**
+ * Runs a sync. Asked while one is running: one more run follows it (shared by
+ * every ask made meanwhile), so a change stored during a run is not left for
+ * the next alarm. `join` instead shares the running one: an open's pull needs
+ * the remote side, which the running sync is fetching anyway.
+ */
+export function syncPdfNow(options: { join?: boolean } = {}): Promise<PdfSyncResult> {
+  if (!activeSync) return startSync();
+  if (options.join) return activeSync;
+  if (!followUpSync) {
+    followUpSync = activeSync.then(() => {
+      followUpSync = null;
+      return startSync();
+    });
+  }
+  return followUpSync;
 }
 
 // A viewer opening a document pulls first, but a sync that finished this
@@ -452,10 +518,10 @@ export async function pullPdfSyncForOpen(): Promise<{ changedDocIds: string[] }>
     const config = await getPdfSyncConfig();
     if (!config.enabled || !config.googleAccountId || !isGoogleSyncConfigured()) return { changedDocIds: [] };
     if (!activeSync) {
-      const { lastSyncAt, error } = await getState();
-      if (!error && lastSyncAt && Date.now() - Date.parse(lastSyncAt) < OPEN_PULL_FRESH_MS) return { changedDocIds: [] };
+      const state = await getState();
+      if (!hasError(state) && state.lastSyncAt && Date.now() - Date.parse(state.lastSyncAt) < OPEN_PULL_FRESH_MS) return { changedDocIds: [] };
     }
-    const result = await syncPdfNow();
+    const result = await syncPdfNow({ join: true });
     return { changedDocIds: result.success ? result.changedDocIds : [] };
   } catch (error) {
     debugError('sync', 'open pull failed', () => ({ error: safeError(error) }));
@@ -485,23 +551,93 @@ export function requestPdfSyncSoon(): void {
 
 // ─── Account ───
 
-export async function connectPdfSyncGoogle(): Promise<
-  | { success: true; status: PdfSyncPublicStatus }
-  | { success: false; error: string }
-> {
+function accountFromUnknown(value: unknown): GoogleAccountRef | null {
+  if (!isRecord(value) || typeof value.id !== 'string' || !value.id) return null;
+  return { id: value.id.slice(0, 128), email: typeof value.email === 'string' ? value.email.slice(0, 320) : '' };
+}
+
+async function rememberSyncedAccount(config: PdfSyncConfig): Promise<void> {
+  const previous = accountFromUnknown(await getSetting<unknown>(PDF_SYNC_LAST_ACCOUNT_SETTING_KEY, null));
+  if (previous?.id === config.googleAccountId && previous.email === config.googleAccountEmail) return;
+  await setSetting(PDF_SYNC_LAST_ACCOUNT_SETTING_KEY, { id: config.googleAccountId, email: config.googleAccountEmail });
+}
+
+/** The account this device's data last went to: the connected one, else the last one synced. */
+async function previousAccount(): Promise<GoogleAccountRef | null> {
+  const config = await getPdfSyncConfig();
+  if (config.googleAccountId) return { id: config.googleAccountId, email: config.googleAccountEmail };
+  return accountFromUnknown(await getSetting<unknown>(PDF_SYNC_LAST_ACCOUNT_SETTING_KEY, null));
+}
+
+/** Whether this device has anything a sync would carry into an account. */
+async function hasLocalSyncData(): Promise<boolean> {
+  const local = await exportPdfSyncSnapshot();
+  return local.docs.length > 0 || local.annotations.length > 0 || local.library.length > 0 || local.folders.length > 0
+    || local.projects.some((p) => p.id !== DEFAULT_PROJECT_ID || p.members.length > 0);
+}
+
+async function readPendingAccount(): Promise<GoogleAccountRef | null> {
   try {
-    const account = await connectGoogleAccount();
+    return accountFromUnknown((await chrome.storage.session.get(PENDING_ACCOUNT_SESSION_KEY))[PENDING_ACCOUNT_SESSION_KEY]);
+  } catch {
+    return null;
+  }
+}
+
+async function setPendingAccount(account: GoogleAccountRef | null): Promise<void> {
+  try {
+    if (account) await chrome.storage.session.set({ [PENDING_ACCOUNT_SESSION_KEY]: account });
+    else await chrome.storage.session.remove(PENDING_ACCOUNT_SESSION_KEY);
+  } catch {
+    /* best effort: without it the user signs in once more */
+  }
+}
+
+export type PdfSyncConnectResult =
+  | { success: true; status: PdfSyncPublicStatus }
+  // Signed in to a different account than this device's data last went to:
+  // nothing is connected until the page asks again with `confirmAccountChange`.
+  | { success: false; needsConfirm: 'account-change'; previousEmail: string; email: string }
+  | { success: false; error: string; errorCode: SyncErrorCode };
+
+/**
+ * Signs in and connects. When the account differs from the one this device
+ * last synced with and there is local data, it stops there and asks: syncing
+ * would add this device's papers and drawings to the other account's Drive.
+ * The sign-in waits (its token stays cached for this browser session) for a
+ * second call with `confirmAccountChange`, which connects it and merges.
+ */
+export async function connectPdfSyncGoogle(options: { confirmAccountChange?: boolean } = {}): Promise<PdfSyncConnectResult> {
+  try {
+    const pending = options.confirmAccountChange ? await readPendingAccount() : null;
+    const confirmed = pending !== null && await getCachedGoogleToken(pending.id) !== null;
+    const account: GoogleAccountRef = confirmed && pending ? pending : await connectGoogleAccount();
+    await setPendingAccount(null);
+    if (!confirmed) {
+      const previous = await previousAccount();
+      if (previous && previous.id !== account.id && await hasLocalSyncData()) {
+        await setPendingAccount(account);
+        debugLog('sync', 'google account differs from the last one synced: asking first');
+        return { success: false, needsConfirm: 'account-change', previousEmail: previous.email, email: account.email };
+      }
+    }
     await commitConfig(() => ({ googleAccountId: account.id, googleAccountEmail: account.email, enabled: true }));
     debugLog('sync', 'google account connected');
     void syncPdfNow();
     return { success: true, status: await getPdfSyncStatus() };
   } catch (error) {
-    return { success: false, error: safeError(error) };
+    const { code, detail } = errorOf(error);
+    return { success: false, error: syncErrorText(code, detail), errorCode: code };
   }
 }
 
 /** Forgets the account here and revokes its token; the Drive file stays for other devices. */
 export async function disconnectPdfSyncGoogle(): Promise<{ success: true; status: PdfSyncPublicStatus }> {
+  // An install from before the last-account record: the connected account is
+  // the one this device's data went to, if it ever synced.
+  const [config, state] = await Promise.all([getPdfSyncConfig(), getState()]);
+  if (config.googleAccountId && state.lastSyncAt) await rememberSyncedAccount(config);
+  await setPendingAccount(null);
   await commitConfig(() => emptyConfig());
   await disconnectGoogleAccount();
   debugLog('sync', 'google account disconnected');
@@ -511,9 +647,4 @@ export async function disconnectPdfSyncGoogle(): Promise<{ success: true; status
 export async function setPdfSyncEnabled(enabled: boolean): Promise<PdfSyncPublicStatus> {
   await commitConfig((previous) => ({ ...previous, enabled: enabled && Boolean(previous.googleAccountId) }));
   return getPdfSyncStatus();
-}
-
-// Exposed for tests only.
-export function getExpectedDocRecordsForTest(): Promise<Record<string, PdfDocRecord>> {
-  return readDocRecords();
 }

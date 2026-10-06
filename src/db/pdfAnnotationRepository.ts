@@ -1,11 +1,18 @@
 import { dbDelete, dbGet, dbGetAll, dbPut } from './database';
 import { STORE_PDF_ANNOTATIONS } from '../shared/constants';
+import { isRecord } from '../shared/guards';
 import {
-  PDF_ANNOTATION_CACHE_MAX_DOCS,
   isEmptyAnnotationCache,
   parsePdfAnnotationCache,
   type PdfAnnotationCache,
 } from '../shared/pdfAnnotations';
+
+// The store holds one row per document with drawings. Drawings are the user's
+// work, so a document that still has any is never evicted, however many there
+// are; only rows that hold nothing (or are unreadable) are swept, and that
+// sweep reads every row, so it runs at most once per interval per page.
+export const PDF_ANNOTATION_SWEEP_INTERVAL_MS = 30 * 60 * 1000;
+let lastSweepAt = 0;
 
 export async function getPdfAnnotationCache(docId: string): Promise<PdfAnnotationCache | null> {
   const row = await dbGet<unknown>(STORE_PDF_ANNOTATIONS, docId);
@@ -14,29 +21,33 @@ export async function getPdfAnnotationCache(docId: string): Promise<PdfAnnotatio
 }
 
 /** Stores the cache; an empty one is removed instead so the store only holds documents with drawings. */
-export async function putPdfAnnotationCache(cache: PdfAnnotationCache): Promise<void> {
+export async function putPdfAnnotationCache(cache: PdfAnnotationCache, now: number = Date.now()): Promise<void> {
   if (isEmptyAnnotationCache(cache)) {
     await dbDelete(STORE_PDF_ANNOTATIONS, cache.docId);
     return;
   }
   await dbPut(STORE_PDF_ANNOTATIONS, cache);
-  await trimPdfAnnotationCaches(cache.docId);
+  if (now - lastSweepAt >= PDF_ANNOTATION_SWEEP_INTERVAL_MS) {
+    lastSweepAt = now;
+    await sweepEmptyPdfAnnotationCaches();
+  }
 }
 
 export async function deletePdfAnnotationCache(docId: string): Promise<void> {
   await dbDelete(STORE_PDF_ANNOTATIONS, docId);
 }
 
-/** Keeps the store bounded: least-recently-updated documents go first, never the one just written. */
-export async function trimPdfAnnotationCaches(keepDocId: string | null = null, max = PDF_ANNOTATION_CACHE_MAX_DOCS): Promise<number> {
-  const rows = (await dbGetAll<unknown>(STORE_PDF_ANNOTATIONS))
-    .map(parsePdfAnnotationCache)
-    .filter((c): c is PdfAnnotationCache => c !== null);
-  if (rows.length <= max) return 0;
-  const victims = rows
-    .filter((c) => c.docId !== keepDocId)
-    .sort((a, b) => a.updatedAt - b.updatedAt)
-    .slice(0, rows.length - max);
-  for (const victim of victims) await dbDelete(STORE_PDF_ANNOTATIONS, victim.docId);
-  return victims.length;
+/** Removes rows without drawings (or unreadable ones); never one with drawings. Answers how many went. */
+export async function sweepEmptyPdfAnnotationCaches(): Promise<number> {
+  const rows = await dbGetAll<unknown>(STORE_PDF_ANNOTATIONS);
+  let removed = 0;
+  for (const row of rows) {
+    const cache = parsePdfAnnotationCache(row);
+    if (cache && !isEmptyAnnotationCache(cache)) continue;
+    const key = cache?.docId ?? (isRecord(row) && typeof row.docId === 'string' ? row.docId : null);
+    if (key === null) continue;
+    await dbDelete(STORE_PDF_ANNOTATIONS, key);
+    removed += 1;
+  }
+  return removed;
 }
