@@ -123,11 +123,11 @@ describe('pdf sync merge', () => {
 
   it('joins projects: the latest rename and saved tabs, final deletions, the latest change per document', () => {
     const local = snapshot([], [], [entry(DOC_A)], [
-      project('pa', { name: 'Local name', renamedAt: ago(10), members: [{ docId: DOC_A, member: true, pinned: true, changedAt: ago(30) }] }),
+      project('pa', { name: 'Local name', renamedAt: ago(10), members: [{ docId: DOC_A, member: true, pinned: true, changedAt: ago(30) , pinOrder: null}] }),
       project('pb'),
     ]);
     const remote = snapshot([], [], [entry(DOC_B)], [
-      project('pa', { name: 'Remote name', renamedAt: ago(20), members: [{ docId: DOC_A, member: false, pinned: false, changedAt: ago(5) }, { docId: DOC_B, member: true, pinned: false, changedAt: ago(5) }],
+      project('pa', { name: 'Remote name', renamedAt: ago(20), members: [{ docId: DOC_A, member: false, pinned: false, changedAt: ago(5) , pinOrder: null}, { docId: DOC_B, member: true, pinned: false, changedAt: ago(5) , pinOrder: null}],
         layout: { urls: ['https://a.org/x.pdf'], active: 0, show: null, savedAt: ago(1) } }),
       project('pb', { deletedAt: ago(2) }),
     ]);
@@ -143,7 +143,7 @@ describe('pdf sync merge', () => {
 
   it('keeps every library row a project still refers to', () => {
     const old = entry(DOC_A, { openedAt: ago(400 * 24 * 60 * 60) });
-    const kept = mergePdfSyncSnapshots(snapshot([], [], [old], [project('pa', { members: [{ docId: DOC_A, member: true, pinned: false, changedAt: ago(1) }] })]), snapshot(), null);
+    const kept = mergePdfSyncSnapshots(snapshot([], [], [old], [project('pa', { members: [{ docId: DOC_A, member: true, pinned: false, changedAt: ago(1) , pinOrder: null}] })]), snapshot(), null);
     expect(kept.library.map((e) => e.docId)).toEqual([DOC_A]);
     expect(mergePdfSyncSnapshots(snapshot([], [], [old]), snapshot(), null).library).toEqual([]);
   });

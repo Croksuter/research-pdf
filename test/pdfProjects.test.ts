@@ -124,10 +124,10 @@ describe('projects', () => {
   });
 
   it('merges as a join: commutative, idempotent, deletions final, latest change per document', () => {
-    const left = project('pa', { name: 'L', renamedAt: 5, members: [{ docId: 'd1', member: true, pinned: true, changedAt: 10 }] });
+    const left = project('pa', { name: 'L', renamedAt: 5, members: [{ docId: 'd1', member: true, pinned: true, changedAt: 10 , pinOrder: null}] });
     const right = project('pa', {
       name: 'R', renamedAt: 7, deletedAt: 0,
-      members: [{ docId: 'd1', member: false, pinned: false, changedAt: 20 }, { docId: 'd2', member: true, pinned: false, changedAt: 3 }],
+      members: [{ docId: 'd1', member: false, pinned: false, changedAt: 20 , pinOrder: null}, { docId: 'd2', member: true, pinned: false, changedAt: 3 , pinOrder: null}],
       layout: { urls: [A], active: 0, show: null, savedAt: 9 },
     });
     const merged = mergePdfProjects(left, right);
@@ -146,8 +146,8 @@ describe('projects', () => {
   it('bounds what every device keeps: deleted projects as bare tombstones for a while, removals aged out', () => {
     const old = NOW - PDF_PROJECT_TOMBSTONE_MAX_AGE_MS - 1;
     const bounded = boundPdfProjects([
-      project('pa', { members: [{ docId: 'gone', member: false, pinned: false, changedAt: old }, { docId: 'kept', member: false, pinned: false, changedAt: NOW - 5 }, { docId: 'in', member: true, pinned: false, changedAt: old }] }),
-      project('pb', { deletedAt: NOW - 5, members: [{ docId: 'x', member: true, pinned: false, changedAt: 1 }] }),
+      project('pa', { members: [{ docId: 'gone', member: false, pinned: false, changedAt: old , pinOrder: null}, { docId: 'kept', member: false, pinned: false, changedAt: NOW - 5 , pinOrder: null}, { docId: 'in', member: true, pinned: false, changedAt: old , pinOrder: null}] }),
+      project('pb', { deletedAt: NOW - 5, members: [{ docId: 'x', member: true, pinned: false, changedAt: 1 , pinOrder: null}] }),
       project('pc', { deletedAt: old }),
     ], NOW);
     expect(bounded.map((p) => p.id)).toEqual(['pa', 'pb']);

@@ -9,6 +9,10 @@ import { WEB_PDF_HOST_ORIGINS, isLocalPdfUrl, isWebPdfSuffixUrl } from '../share
 
 /** Message a framed page (settings) sends its hub: add these and close the tabs they came from. */
 export const GATHER_MESSAGE = 'rpdf-gather-pdfs';
+/** The hub's answer to GATHER_MESSAGE: { type, gathered, kept } (kept: left open, not loaded or over the cap). */
+export const GATHER_RESULT_MESSAGE = 'rpdf-gather-result';
+/** The hub tells its settings frame it is being shown again (refresh what may be stale). */
+export const SETTINGS_SHOWN_MESSAGE = 'rpdf-settings-shown';
 
 // What Chrome's viewer lets an extension read: its zoom, which it keeps as
 // the tab's zoom. Its scroll position and page stay inside Chrome's own
