@@ -160,6 +160,9 @@ const PDF_HUB_SHOW_PARAM = 's';
 const PDF_HUB_PROJECT_PARAM = 'p';
 const PROJECT_PARAM_PATTERN = /^[a-z0-9_-]{1,40}$/u;
 export const PDF_HUB_SHOW_HOME = 'home';
+/** The hub's settings page in front (`s=settings`). */
+export const PDF_HUB_SHOW_SETTINGS = 'settings';
+const isHubPage = (value: unknown): value is string => value === PDF_HUB_SHOW_HOME || value === PDF_HUB_SHOW_SETTINGS;
 
 function sourceOnly(candidate: string): string | null {
   if (!isPdfViewerSourceUrl(candidate)) return null;
@@ -175,11 +178,12 @@ export function buildPdfHubEntryUrl(sourceUrl: string, hubBaseUrl: string): stri
 
 /**
  * Canonical hub URL for a document list; fragments are not persisted. `show`
- * is `PDF_HUB_SHOW_HOME` or the source URL of a pinned document in front.
+ * is `PDF_HUB_SHOW_HOME`, `PDF_HUB_SHOW_SETTINGS`, or the source URL of a
+ * pinned document in front.
  */
 export function buildPdfHubUrl(urls: readonly string[], active: number, hubBaseUrl: string, show: string | null = null, project: string | null = null): string {
   const files = urls.map(sourceOnly).filter((url): url is string => url !== null).slice(0, PDF_HUB_MAX_DOCS);
-  const shown = show === PDF_HUB_SHOW_HOME ? show : show ? sourceOnly(show) : null;
+  const shown = isHubPage(show) ? show : show ? sourceOnly(show) : null;
   const projectId = project && PROJECT_PARAM_PATTERN.test(project) ? project : null;
   if (files.length === 0 && (shown === null || shown === PDF_HUB_SHOW_HOME) && !projectId) return hubBaseUrl;
   const params = new URLSearchParams();
@@ -207,7 +211,7 @@ export function parsePdfHubUrl(search: string, hash: string): { docs: PdfHubDoc[
   }
   const active = Number.parseInt(params.get(PDF_HUB_ACTIVE_PARAM) ?? '0', 10);
   const rawShow = params.get(PDF_HUB_SHOW_PARAM);
-  const show = rawShow === PDF_HUB_SHOW_HOME ? rawShow : rawShow ? sourceOnly(rawShow) : null;
+  const show = isHubPage(rawShow) ? rawShow : rawShow ? sourceOnly(rawShow) : null;
   const rawProject = params.get(PDF_HUB_PROJECT_PARAM);
   const project = rawProject && PROJECT_PARAM_PATTERN.test(rawProject) ? rawProject : null;
   return { docs, active: Number.isInteger(active) && active >= 0 && active < docs.length ? active : 0, show, project };

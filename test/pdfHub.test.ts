@@ -44,6 +44,14 @@ describe('hub URL', () => {
     expect(hubParts(buildPdfHubUrl([A], 0, HUB, 'javascript:alert(1)')).show).toBeNull();
   });
 
+  it('remembers the settings page in front, even with no documents', () => {
+    expect(buildPdfHubUrl([], 0, HUB, 'settings')).toBe(`${HUB}?s=settings`);
+    expect(hubParts(buildPdfHubUrl([A], 0, HUB, 'settings', 'p1x'))).toEqual({ docs: [{ url: A, hash: '' }], active: 0, show: 'settings', project: 'p1x' });
+    expect(parsePdfHubOpenMessage({ type: 'VOCAB_T_PDF_HUB_OPEN', tabId: 3, docs: [], activate: true, show: 'settings' }))
+      .toEqual({ type: 'VOCAB_T_PDF_HUB_OPEN', tabId: 3, docs: [], activate: true, show: 'settings' });
+    expect(parsePdfHubOpenMessage({ type: 'VOCAB_T_PDF_HUB_OPEN', tabId: 3, docs: [], activate: true, show: 'home' })).toBeNull();
+  });
+
   it('names the project the hub holds', () => {
     expect(buildPdfHubUrl([], 0, HUB, null, 'default')).toBe(`${HUB}?p=default`);
     expect(hubParts(buildPdfHubUrl([A, B], 1, HUB, 'home', 'p1x')))

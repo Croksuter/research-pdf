@@ -37,7 +37,7 @@ import {
 import { DEFAULT_PROJECT_ID, isPdfProjectId } from '../shared/pdfProjects';
 import { getSetting } from '../db/settingsRepository';
 import { debugError, debugLog } from '../shared/debugLog';
-import { claimPdfHub, movePdfToProject, noteTopLevelCommit, openPdfProject, promoteEmbeddedPdf } from './pdfHub';
+import { claimPdfHub, movePdfToProject, noteTopLevelCommit, openPdfProject, promoteEmbeddedPdf, showPdfSettings } from './pdfHub';
 import { updatePdfProjectFolders, updatePdfProjects } from './pdfProjectStore';
 import { isExtensionPageSender } from './messageDispatcher';
 import { requestPdfSyncSoon } from './pdfSyncService';
@@ -392,6 +392,8 @@ export const pdfMessageHandlers: Record<string, PdfMessageHandler> = {
     }
     return { success: true, promoted: await promoteEmbeddedPdf(request, sender) };
   },
+  // The popup's "설정", Chrome's extension options: the settings page in a hub.
+  VOCAB_T_PDF_SHOW_SETTINGS: (_m, sender) => (isExtensionPageSender(sender) ? showPdfSettings() : { success: false }),
   VOCAB_T_PDF_PROJECT_UPDATE: async (m, sender) => {
     const request = parsePdfProjectUpdateRequest(m);
     if (!request || !isHubPageSender(sender)) return { success: false, error: '프로젝트 요청 형식이 올바르지 않습니다.' };

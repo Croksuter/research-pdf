@@ -22,7 +22,7 @@
 // registry (project → hub tab) lives in chrome.storage.session so a
 // service-worker restart keeps it.
 
-import { PDF_HUB_PAGE, buildPdfHubEntryUrl, buildPdfHubUrl, type PdfHubDoc } from '../shared/localPdf';
+import { PDF_HUB_PAGE, PDF_HUB_SHOW_SETTINGS, buildPdfHubEntryUrl, buildPdfHubUrl, type PdfHubDoc } from '../shared/localPdf';
 import type { PdfHubOpenMessage } from '../shared/messages';
 import { hubDocKey } from '../shared/hubTabs';
 import { DEFAULT_PROJECT_ID, appendToPdfProjectLayout, applyPdfProjectUpdate, targetProjectForDoc, type PdfProjects } from '../shared/pdfProjects';
@@ -147,8 +147,8 @@ function register(registry: HubRegistry, project: string, entry: HubRegistryEntr
 const HUB_ANSWER_MS = 1500;
 
 /** 'taken'; 'gone' when no hub page answered; 'asleep' when the tab is there but has not answered yet. */
-async function forwardToLiveHub(hubTabId: number, docs: PdfHubDoc[], activate: boolean): Promise<'taken' | 'gone' | 'asleep'> {
-  const message: PdfHubOpenMessage = { type: 'VOCAB_T_PDF_HUB_OPEN', tabId: hubTabId, docs, activate };
+async function forwardToLiveHub(hubTabId: number, docs: PdfHubDoc[], activate: boolean, show?: 'settings'): Promise<'taken' | 'gone' | 'asleep'> {
+  const message: PdfHubOpenMessage = { type: 'VOCAB_T_PDF_HUB_OPEN', tabId: hubTabId, docs, activate, ...(show ? { show } : {}) };
   const sent = chrome.runtime.sendMessage(message).then(
     (response: { ok?: boolean } | undefined) => (response?.ok === true ? 'taken' as const : 'gone' as const),
     () => 'gone' as const,
@@ -336,6 +336,38 @@ export function claimPdfHub(
         default:
           return { success: false, error: 'unreachable' };
       }
+    }
+  });
+}
+
+// ─── The settings page ───
+
+/**
+ * Shows the settings page in a hub: the one in front in the focused window,
+ * else any open hub, else a new hub tab. (The popup's "설정" and Chrome's
+ * extension options both land here.)
+ */
+export function showPdfSettings(): Promise<{ success: boolean }> {
+  return serialized(async () => {
+    const registry = await readRegistry();
+    const focused = await chrome.windows.getLastFocused().then((w) => w.id, () => undefined);
+    const hubs: Array<{ tabId: number; windowId: number; active: boolean }> = [];
+    for (const project of Object.keys(registry)) {
+      const entry = await liveEntry(registry, project);
+      if (!entry?.ready) continue;
+      const tab = await chrome.tabs.get(entry.tabId).catch(() => null);
+      if (tab && !tab.discarded) hubs.push({ tabId: entry.tabId, windowId: tab.windowId, active: tab.active });
+    }
+    const pick = hubs.find((h) => h.windowId === focused && h.active) ?? hubs.find((h) => h.windowId === focused) ?? hubs[0];
+    if (pick) {
+      await activateTab(pick.tabId);
+      if (await forwardToLiveHub(pick.tabId, [], true, 'settings') !== 'gone') return { success: true };
+    }
+    try {
+      await chrome.tabs.create({ url: buildPdfHubUrl([], 0, chrome.runtime.getURL(PDF_HUB_PAGE), PDF_HUB_SHOW_SETTINGS), ...(focused !== undefined ? { windowId: focused } : {}) });
+      return { success: true };
+    } catch {
+      return { success: false };
     }
   });
 }

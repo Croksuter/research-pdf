@@ -41,9 +41,9 @@ function send<T>(message: Record<string, unknown>): Promise<T | null> {
   });
 }
 
+/** The settings page lives in the PDF tab: the background brings one forward with it. */
 function openSettings(): void {
-  void chrome.runtime.openOptionsPage();
-  window.close();
+  void send({ type: 'VOCAB_T_PDF_SHOW_SETTINGS' }).then(() => window.close());
 }
 
 let syncNow = false;

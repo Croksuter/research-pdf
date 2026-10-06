@@ -66,6 +66,7 @@
     <symbol id="i-kind-technical" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 18v-3M12 18v-5M15 18v-2"/></symbol>
     <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2h8.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/><path d="M12 11v5M9.5 13.5h5"/></symbol>
     <symbol id="i-more" viewBox="0 0 24 24"><path d="M5.5 12h.01M12 12h.01M18.5 12h.01"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
     <symbol id="i-back" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></symbol>
   </svg>
   <nav id="rpdf-strip" class="rpdf-strip" aria-label="열린 PDF">
@@ -79,6 +80,7 @@
     <button id="rpdf-move-btn" class="rpdf-move-btn" type="button" title="다른 프로젝트로 이동" aria-haspopup="dialog" aria-expanded="false">
       <svg><use href="#i-move"/></svg><span>프로젝트로 이동</span>
     </button>
+    <button id="rpdf-settings-btn" class="rpdf-home-btn rpdf-settings-btn" type="button" title="설정" aria-label="설정" aria-pressed="false"><svg><use href="#i-settings"/></svg></button>
     <button id="rpdf-list-btn" class="rpdf-list-btn" type="button" title="모든 탭 · 최근 닫은 탭" aria-haspopup="dialog" aria-expanded="false">
       <span id="rpdf-list-count" class="rpdf-list-count"></span><svg><use href="#i-chevron"/></svg>
     </button>
@@ -142,6 +144,7 @@
         <div id="rpdf-home-sections"></div>
       </div>
     </section>
+    <section id="rpdf-settings" class="rpdf-settings" aria-label="설정" hidden></section>
   </main>
   <div id="rpdf-empty" class="rpdf-empty" hidden>
     <p id="rpdf-empty-text"></p>

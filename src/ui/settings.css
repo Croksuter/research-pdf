@@ -18,6 +18,33 @@
   }
 }
 
+/* Inside the hub: the hub's own dark palette (pdfHub.css), whatever the system theme. */
+html.is-embedded {
+  color-scheme: dark;
+  --st-page: #323639;
+  --st-card: #292a2d;
+  --st-warn-text: #fdd663;
+  --st-warn-soft: rgba(253, 214, 99, 0.14);
+  --surface-strong: #202124;
+  --surface-soft: rgba(255, 255, 255, 0.06);
+  --surface-hover: rgba(255, 255, 255, 0.08);
+  --border: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.2);
+  --text-strong: #e8eaed;
+  --text-default: #dadce0;
+  --text-muted: #9aa0a6;
+  --text-subtle: #80868b;
+  --accent: #8ab4f8;
+  --accent-soft: rgba(138, 180, 248, 0.12);
+  --accent-soft-strong: rgba(138, 180, 248, 0.18);
+  --accent-bottom: #669df6;
+  --success-text: #81c995;
+  --success-soft: rgba(129, 201, 149, 0.14);
+  --danger-text: #f28b82;
+}
+html.is-embedded .st-btn-primary { color: #0b1220; }
+html.is-embedded .st-brand img { display: none; }
+
 * { box-sizing: border-box; }
 html { scroll-padding-top: 150px; scroll-behavior: smooth; }
 body {

@@ -40,6 +40,7 @@ import {
   PDF_HUB_MAX_DOCS,
   PDF_HUB_PAGE,
   PDF_HUB_SHOW_HOME,
+  PDF_HUB_SHOW_SETTINGS,
   PDF_VIEWER_PAGE,
   buildPdfHubUrl,
   buildPdfViewerUrl,
@@ -143,6 +144,9 @@ interface HubTab {
 }
 
 const HOME = 0;
+// The settings page, shown like home in place of a document.
+const SETTINGS = -1;
+const isPage = (key: number | null) => key === HOME || key === SETTINGS;
 const SLEEP_CHECK_MS = 60_000;
 const SLEEP_REPLY_TIMEOUT_MS = 2_000;
 const BUSY_RETRY_MS = 5 * 60_000;
@@ -152,6 +156,8 @@ const CLOSED_STORAGE_KEY = 'rpdfClosed';
 
 const strip = byId<HTMLElement>('rpdf-strip');
 const homeBtn = byId<HTMLButtonElement>('rpdf-home-btn');
+const settingsBtn = byId<HTMLButtonElement>('rpdf-settings-btn');
+const settingsView = byId<HTMLElement>('rpdf-settings');
 const tabList = byId<HTMLDivElement>('rpdf-tabs');
 const frames = byId<HTMLElement>('rpdf-frames');
 const addBtn = byId<HTMLButtonElement>('rpdf-add');
@@ -573,6 +579,7 @@ function postToFrame(tab: HubTab, message: HubToViewerMessage): void {
 
 function activate(key: number): void {
   if (key === HOME) { showHome(true); return; }
+  if (key === SETTINGS) { showSettings(); return; }
   const tab = tabs.find((t) => t.key === key);
   if (!tab) return;
   const now = Date.now();
@@ -589,6 +596,8 @@ function activate(key: number): void {
   }
   home.hidden = true;
   homeBtn.setAttribute('aria-pressed', 'false');
+  settingsView.hidden = true;
+  settingsBtn.setAttribute('aria-pressed', 'false');
   tab.button.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   frame.focus();
   render();
@@ -606,10 +615,42 @@ function showHome(focusSearch: boolean): void {
   }
   home.hidden = false;
   homeBtn.setAttribute('aria-pressed', 'true');
+  settingsView.hidden = true;
+  settingsBtn.setAttribute('aria-pressed', 'false');
   homeLimit = HOME_PAGE_SIZE;
   renderHome();
   void loadAnnotated().then(() => scheduleHomeRender());
   if (focusSearch) homeSearch.focus();
+  render();
+}
+
+/**
+ * The settings page in place of the documents. Its frame (settings.html,
+ * which styles itself for the hub when framed) is made on first use and kept.
+ */
+function showSettings(): void {
+  const previous = activeTab();
+  if (previous) previous.lastShownAt = Date.now();
+  activeKey = SETTINGS;
+  for (const t of tabs) {
+    t.button.setAttribute('aria-selected', 'false');
+    t.button.tabIndex = -1;
+    if (t.frame) t.frame.hidden = true;
+  }
+  home.hidden = true;
+  homeBtn.setAttribute('aria-pressed', 'false');
+  settingsView.hidden = false;
+  settingsBtn.setAttribute('aria-pressed', 'true');
+  let frame = settingsView.querySelector('iframe');
+  if (!frame) {
+    frame = el('iframe', { src: 'settings.html', title: '설정' });
+    // Shown once it has styled itself for the hub, without a light flash.
+    frame.style.visibility = 'hidden';
+    frame.addEventListener('load', () => { frame?.style.removeProperty('visibility'); frame?.focus(); }, { once: true });
+    settingsView.append(frame);
+  } else {
+    frame.focus();
+  }
   render();
 }
 
@@ -639,12 +680,12 @@ function closeTab(key: number, remember = true): void {
 
 function step(action: HubKeyAction): void {
   if (action === 'close') {
-    if (activeKey !== null && activeKey !== HOME) closeTab(activeKey);
+    if (activeKey !== null && !isPage(activeKey)) closeTab(activeKey);
     return;
   }
   if (action === 'reopen') { reopenClosed(); return; }
   if (tabs.length === 0) return;
-  if (activeKey === HOME || activeKey === null) {
+  if (isPage(activeKey) || activeKey === null) {
     activate((action === 'next' ? tabs[0] : tabs[tabs.length - 1]).key);
     return;
   }
@@ -828,13 +869,14 @@ function hubState(): { urls: string[]; active: number; show: string | null } {
   return {
     urls: urlTabs.map((t) => t.url),
     active: Math.max(0, urlTabs.findIndex((t) => t.key === activeKey)),
-    show: activeKey === HOME ? PDF_HUB_SHOW_HOME : current?.pinned ? current.url : null,
+    // The project reopens on home rather than on settings.
+    show: isPage(activeKey) ? PDF_HUB_SHOW_HOME : current?.pinned ? current.url : null,
   };
 }
 
 function render(): void {
   const current = activeTab();
-  const name = activeKey === HOME ? '홈' : current?.paperTitle ?? current?.title ?? 'PDF';
+  const name = activeKey === HOME ? '홈' : activeKey === SETTINGS ? '설정' : current?.paperTitle ?? current?.title ?? 'PDF';
   const appName = projectId === DEFAULT_PROJECT_ID ? APP_NAME : `${currentProject().name} · ${APP_NAME}`;
   document.title = hubDocumentTitle(name, tabs.length, appName);
   moveBtn.disabled = !current;
@@ -847,7 +889,8 @@ function render(): void {
   updateOverflow();
   if (!isHub) return;
   const { urls, active, show } = hubState();
-  const canonical = buildPdfHubUrl(urls, active, hubBase, show, projectId);
+  // A reload keeps settings in front; the project's saved state does not.
+  const canonical = buildPdfHubUrl(urls, active, hubBase, activeKey === SETTINGS ? PDF_HUB_SHOW_SETTINGS : show, projectId);
   if (location.href !== canonical) history.replaceState(null, '', canonical);
   if (stateTimer) clearTimeout(stateTimer);
   const project = projectId;
@@ -1285,6 +1328,7 @@ function renderHome(): void {
 }
 
 homeBtn.addEventListener('click', () => showHome(true));
+settingsBtn.addEventListener('click', () => { if (activeKey === SETTINGS) showHome(false); else showSettings(); });
 homeOpen.addEventListener('click', () => fileInput.click());
 let homeSearchTimer: ReturnType<typeof setTimeout> | null = null;
 homeSearch.addEventListener('input', () => {
@@ -2268,7 +2312,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // response has been processed here — accept regardless of `isHub`.
   if (!request || myTabId === null || request.tabId !== myTabId) return false;
   // No documents: the popup's "open the PDF tab", which shows the home page.
-  if (request.docs.length === 0) showHome(false);
+  if (request.show === 'settings') showSettings();
+  else if (request.docs.length === 0) showHome(false);
   else addDocs(request.docs.map((doc) => ({ ...doc, file: null })), request.activate);
   sendResponse({ ok: true });
   return false;
@@ -2359,12 +2404,13 @@ async function boot(): Promise<void> {
   addDocs(docs.map((doc) => ({ ...doc, file: null })), false, false);
   let front: HubTab | undefined;
   const identities = () => tabs.map((t) => ({ url: t.url, docId: t.docId ?? t.libraryId }));
-  if (initial.show && initial.show !== PDF_HUB_SHOW_HOME) {
+  if (initial.show && initial.show !== PDF_HUB_SHOW_HOME && initial.show !== PDF_HUB_SHOW_SETTINGS) {
     front = tabs[findOpenDoc(initial.show, identities())];
   } else if (!initial.show && docs[initial.active]) {
     front = tabs[findOpenDoc(docs[initial.active].url, identities(), libraryIdForUrl)];
   }
   if (front) activate(front.key);
+  else if (initial.show === PDF_HUB_SHOW_SETTINGS) showSettings();
   else showHome(false);
   const handedOver = response?.docs ?? [];
   if (handedOver.length) addDocs(handedOver.map((doc) => ({ ...doc, file: null })), true);

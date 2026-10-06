@@ -1,6 +1,7 @@
 // ─── ResearchPDF settings page ───
 //
-// Every setting on one page of cards, with section chips and a search that
+// Shown inside the PDF tab (the hub's ⚙ button, the popup's "설정"). Every
+// setting on one page of cards, with section chips and a search that
 // narrows the rows. Besides the switches it shows what the switches depend
 // on — Chrome's site and file-URL access, whether an API key works and how
 // much of the day's database budget is left — and the keyboard shortcuts.
@@ -55,6 +56,19 @@ function badge(element: HTMLElement, text: string, tone: 'ok' | 'warn' | 'muted'
 }
 
 const MAC = /Mac|iPhone|iPad/u.test(navigator.platform);
+
+// The settings live in the PDF tab (the hub frames this page, which then
+// takes the hub's colors). Opened on its own — Chrome's extension options —
+// it hands over to a hub and closes; if that fails it stays usable here.
+const embedded = window.top !== window.self;
+document.documentElement.classList.toggle('is-embedded', embedded);
+if (!embedded) {
+  void send<{ success: boolean }>({ type: 'VOCAB_T_PDF_SHOW_SETTINGS' }).then(async (response) => {
+    if (!response?.success) return;
+    const tab = await chrome.tabs.getCurrent().catch(() => undefined);
+    if (typeof tab?.id === 'number') void chrome.tabs.remove(tab.id).catch(() => undefined);
+  });
+}
 
 byId('st-version').textContent = `ResearchPDF ${chrome.runtime.getManifest().version}`;
 

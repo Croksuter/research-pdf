@@ -155,13 +155,16 @@ export interface PdfHubOpenMessage {
   tabId: number;
   docs: PdfHubDoc[];
   activate: boolean;
+  /** Bring the hub's settings page to the front instead (no docs). */
+  show?: 'settings';
 }
 
 export function parsePdfHubOpenMessage(value: unknown): PdfHubOpenMessage | null {
   if (!isRecord(value) || value.type !== 'VOCAB_T_PDF_HUB_OPEN') return null;
   if (typeof value.tabId !== 'number' || !Number.isInteger(value.tabId) || typeof value.activate !== 'boolean') return null;
   const docs = parseHubDocs(value.docs);
-  return docs ? { type: 'VOCAB_T_PDF_HUB_OPEN', tabId: value.tabId, docs, activate: value.activate } : null;
+  if (!docs || (value.show !== undefined && value.show !== 'settings')) return null;
+  return { type: 'VOCAB_T_PDF_HUB_OPEN', tabId: value.tabId, docs, activate: value.activate, ...(value.show ? { show: value.show } : {}) };
 }
 
 // An embedded viewer filling (almost) the whole tab — a publisher's "view
