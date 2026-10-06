@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ResearchPDF</title>
+  <link rel="icon" href="icons/icon-32.png">
+  <link rel="stylesheet" href="welcome.css">
+</head>
+<body>
+  <svg hidden aria-hidden="true">
+    <symbol id="w-tabs" viewBox="0 0 24 24"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2h8.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/></symbol>
+    <symbol id="w-paper" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="1"/><path d="M12 16v3.5M8.5 21l3.5-1.5 3.5 1.5M7 12l3-3 2 2 4-4"/></symbol>
+    <symbol id="w-pen" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></symbol>
+    <symbol id="w-capture" viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><rect x="8" y="8" width="8" height="8" rx="1"/></symbol>
+    <symbol id="w-cloud" viewBox="0 0 24 24"><path d="M7 18a4.5 4.5 0 0 1-.4-9A6 6 0 0 1 18 9.5a4.3 4.3 0 0 1-.5 8.5z"/></symbol>
+    <symbol id="w-web" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.4 2.6 3.5 5.6 3.5 9s-1.1 6.4-3.5 9c-2.4-2.6-3.5-5.6-3.5-9s1.1-6.4 3.5-9z"/></symbol>
+    <symbol id="w-folder" viewBox="0 0 24 24"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2h8.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/><path d="M12 11v5M9.5 13.5h5"/></symbol>
+    <symbol id="w-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+  </svg>
+
+  <header class="wl-top">
+    <div class="wl-brand"><img src="icons/icon-48.png" width="28" height="28" alt="">ResearchPDF</div>
+    <label class="wl-lang"><span data-i18n="language">언어</span>
+      <select id="wl-language">
+        <option value="ko">한국어</option>
+        <option value="en">English</option>
+      </select>
+    </label>
+  </header>
+
+  <main class="wl-main">
+    <ol class="wl-dots" id="wl-dots" aria-hidden="true"></ol>
+
+    <!-- 1. Hello -->
+    <section class="wl-step" data-step="hello">
+      <div class="wl-hero">
+        <div class="wl-hero-text">
+          <h1 data-i18n="helloTitle">안녕하세요! 👋</h1>
+          <p class="wl-lead" data-i18n="helloLead"></p>
+          <ul class="wl-points">
+            <li><svg><use href="#w-tabs"/></svg><div><strong data-i18n="helloPoint1Title"></strong><span data-i18n="helloPoint1"></span></div></li>
+            <li><svg><use href="#w-paper"/></svg><div><strong data-i18n="helloPoint2Title"></strong><span data-i18n="helloPoint2"></span></div></li>
+            <li><svg><use href="#w-cloud"/></svg><div><strong data-i18n="helloPoint3Title"></strong><span data-i18n="helloPoint3"></span></div></li>
+          </ul>
+        </div>
+        <!-- A small picture of the PDF tab, drawn in CSS. -->
+        <div class="wl-mock" aria-hidden="true">
+          <div class="wl-mock-strip">
+            <span class="wl-mock-badge">🧠</span><span class="wl-mock-tab is-on">Tree of Thoughts</span><span class="wl-mock-tab">Chain-of-Thought</span><span class="wl-mock-tab">ReAct</span>
+          </div>
+          <div class="wl-mock-bar"><span class="wl-mock-kind">conference</span> NeurIPS 2023 · <b>5,045</b> <i class="wl-spark"><i></i><i></i><i></i><i></i><i></i></i></div>
+          <div class="wl-mock-page">
+            <div class="wl-mock-title"></div>
+            <div class="wl-mock-line"></div><div class="wl-mock-line"></div>
+            <div class="wl-mock-line is-hl"></div><div class="wl-mock-line"></div>
+            <div class="wl-mock-fig"><span>Figure 1</span></div>
+            <div class="wl-mock-line"></div><div class="wl-mock-line short"></div>
+          </div>
+        </div>
+      </div>
+      <div class="wl-actions"><button type="button" class="wl-btn wl-primary" data-go="next" data-i18n="start">시작하기</button></div>
+    </section>
+
+    <!-- 2. Opening PDFs -->
+    <section class="wl-step" data-step="open" hidden>
+      <h2 data-i18n="openTitle"></h2>
+      <p class="wl-lead" data-i18n="openLead"></p>
+      <div class="wl-card">
+        <svg class="wl-card-icon"><use href="#w-web"/></svg>
+        <div class="wl-card-text"><strong data-i18n="webTitle"></strong><span data-i18n="webSub"></span><span id="wl-web-note" class="wl-note" hidden></span></div>
+        <button type="button" id="wl-web" class="wl-btn wl-primary"></button>
+      </div>
+      <div class="wl-card">
+        <svg class="wl-card-icon"><use href="#w-folder"/></svg>
+        <div class="wl-card-text"><strong data-i18n="fileTitle"></strong><span id="wl-file-sub"></span></div>
+        <button type="button" id="wl-file" class="wl-btn"></button>
+      </div>
+      <div class="wl-actions"><button type="button" class="wl-btn wl-ghost" data-go="back" data-i18n="back"></button><button type="button" class="wl-btn wl-primary" data-go="next" data-i18n="next"></button></div>
+    </section>
+
+    <!-- 3. Gather open PDFs -->
+    <section class="wl-step" data-step="gather" hidden>
+      <h2 data-i18n="gatherTitle"></h2>
+      <p class="wl-lead" data-i18n="gatherLead"></p>
+      <ul id="wl-gather-list" class="wl-list"></ul>
+      <p id="wl-gather-empty" class="wl-note" hidden></p>
+      <label id="wl-gather-close-row" class="wl-check"><input type="checkbox" id="wl-gather-close" checked><span data-i18n="gatherCloseOriginals"></span></label>
+      <p id="wl-gather-done" class="wl-ok" hidden></p>
+      <div class="wl-actions"><button type="button" class="wl-btn wl-ghost" data-go="back" data-i18n="back"></button><span class="wl-gap"></span><button type="button" id="wl-gather" class="wl-btn wl-primary"></button><button type="button" class="wl-btn" data-go="next" data-i18n="next"></button></div>
+    </section>
+
+    <!-- 4. Sync -->
+    <section class="wl-step" data-step="sync" hidden>
+      <h2 data-i18n="syncTitle"></h2>
+      <p class="wl-lead" data-i18n="syncLead"></p>
+      <div class="wl-sync">
+        <svg class="wl-sync-icon"><use href="#w-cloud"/></svg>
+        <button type="button" id="wl-sync" class="wl-btn wl-primary" data-i18n="syncConnect"></button>
+        <p id="wl-sync-status" class="wl-note" aria-live="polite"></p>
+      </div>
+      <div class="wl-actions"><button type="button" class="wl-btn wl-ghost" data-go="back" data-i18n="back"></button><button type="button" class="wl-btn" data-go="next" id="wl-sync-next" data-i18n="syncLater"></button></div>
+    </section>
+
+    <!-- 5. Tour -->
+    <section class="wl-step" data-step="tour" hidden>
+      <h2 data-i18n="tourTitle"></h2>
+      <p class="wl-lead" data-i18n="tourLead"></p>
+      <button type="button" id="wl-demo" class="wl-btn wl-primary wl-demo"><svg><use href="#w-paper"/></svg><span data-i18n="tourDemo"></span></button>
+      <div class="wl-grid">
+        <div class="wl-feature"><svg><use href="#w-tabs"/></svg><strong data-i18n="tourTabsTitle"></strong><span data-i18n="tourTabs"></span></div>
+        <div class="wl-feature"><svg><use href="#w-paper"/></svg><strong data-i18n="tourPaperTitle"></strong><span data-i18n="tourPaper"></span></div>
+        <div class="wl-feature"><svg><use href="#w-pen"/></svg><strong data-i18n="tourNotesTitle"></strong><span data-i18n="tourNotes"></span></div>
+        <div class="wl-feature"><svg><use href="#w-capture"/></svg><strong data-i18n="tourFiguresTitle"></strong><span data-i18n="tourFigures"></span></div>
+      </div>
+      <h3 data-i18n="tourKeysTitle"></h3>
+      <dl class="wl-keys" id="wl-keys"></dl>
+      <div class="wl-actions"><button type="button" class="wl-btn wl-ghost" data-go="back" data-i18n="back"></button><button type="button" class="wl-btn wl-primary" data-go="next" data-i18n="next"></button></div>
+    </section>
+
+    <!-- 6. Done -->
+    <section class="wl-step" data-step="done" hidden>
+      <div class="wl-done-mark"><svg><use href="#w-check"/></svg></div>
+      <h2 data-i18n="doneTitle"></h2>
+      <p class="wl-lead" data-i18n="doneLead"></p>
+      <div class="wl-actions wl-center"><button type="button" id="wl-open-tab" class="wl-btn wl-primary" data-i18n="doneOpenTab"></button><button type="button" id="wl-open-settings" class="wl-btn" data-i18n="doneSettings"></button></div>
+    </section>
+  </main>
+  <footer class="wl-foot"><span id="wl-step-count"></span><button type="button" class="wl-link" id="wl-skip" data-i18n="skip"></button></footer>
+  <script src="welcome.js"></script>
+</body>
+</html>

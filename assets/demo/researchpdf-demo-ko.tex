@@ -1,0 +1,146 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=2.4cm]{geometry}
+\usepackage{kotex}
+\setmainhangulfont{Noto Serif CJK KR}
+\setsanshangulfont{Noto Sans CJK KR}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.17}
+\usepackage[hidelinks]{hyperref}
+\hypersetup{
+  pdftitle={ResearchPDF: 논문을 위한 Chrome PDF 뷰어},
+  pdfauthor={ResearchPDF},
+  pdfsubject={시작 가이드에서 여는 ResearchPDF 둘러보기},
+  pdfkeywords={PDF viewer, papers, annotations, Google Drive sync}
+}
+
+\title{\textbf{ResearchPDF: 논문을 위한 Chrome PDF 뷰어}}
+\author{ResearchPDF 둘러보기\\[2pt]\small\url{https://research-pdf.croksuter.com}}
+\date{}
+
+\renewcommand{\refname}{참고문헌}
+\renewcommand{\figurename}{그림}
+\renewcommand{\tablename}{표}
+\renewcommand{\abstractname}{요약}
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+지금 이 문서는 ResearchPDF 안에서 열려 있습니다. 확장 프로그램 자체를 소개하는
+짧은 논문이라, 여기서 설명하는 기능을 바로 이 자리에서 써 볼 수 있습니다. 지금
+보고 있는 탭, 위쪽의 논문 정보 줄, 필기 도구, 그림 캡처가 모두 그렇습니다. 각 절은
+\emph{해 보기} 한 줄로 끝납니다.
+\end{abstract}
+
+\section{논문은 탭 하나에}
+웹이나 컴퓨터에서 연 PDF는 웹 탭 사이에 흩어지지 않고, 자체 탭 줄을 가진
+\emph{PDF 탭} 하나에 모입니다. 논문은 \emph{프로젝트}로 나눕니다. 새로 연 PDF는 모두
+기본 프로젝트에서 시작하고, \emph{프로젝트로 이동}으로 다른 곳에 보냅니다. 프로젝트는
+폴더로 묶고, 끌어서 순서를 정하고, 아이콘·이모지·색을 줄 수 있습니다. 그 아이콘은
+Chrome 탭 아이콘으로도 보입니다. 프로젝트 탭을 닫았다가 다시 열면 같은 논문들이
+그대로 돌아옵니다.
+
+\smallskip\noindent\emph{해 보기:} \textsf{Alt+Shift+\(\rightarrow\)}로 다음 탭,
+\textsf{Alt+W}로 닫기, \textsf{Alt+Shift+T}로 다시 열기. 집 모양 버튼은 \emph{홈}을
+엽니다. 열어 본 모든 문서를 읽은 정도, 필터, 검색과 함께 보여 줍니다.
+
+\section{논문을 알아보기}
+DOI, arXiv 식별자, 제목으로 문서를 논문으로 알아보면, 도구 모음 아래 줄에 게재처와
+연도, 인용 수(연도별 그래프 포함), 참고문헌, 바로 복사할 수 있는 BibTeX·APA가
+나옵니다. 데이터는 공개 학술 데이터베이스에서 가져오며(표~\ref{tab:sources}),
+보내는 것은 식별자뿐입니다.
+
+\begin{table}[h]
+\centering
+\caption{논문 정보 줄의 데이터 출처.}
+\label{tab:sources}
+\begin{tabular}{@{}lll@{}}
+\toprule
+출처 & 제공하는 것 & 참고문헌 \\
+\midrule
+OpenAlex & 게재처, 연도별 인용, 참고문헌 & \cite{openalex} \\
+Crossref & DOI, 출판사, 참고문헌 수 & \cite{crossref} \\
+Semantic Scholar & 프리프린트·출판본 통합 인용 수 & \cite{s2} \\
+arXiv & 프리프린트와 버전 & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent\emph{해 보기:} arXiv나 출판사에서 아무 논문이나 열어 보세요. 이 문서는
+출판된 논문이 아니라서 정보 줄에 그렇게 나옵니다.
+
+\section{따라오는 필기}
+형광펜, 펜, 텍스트 메모는 문서마다 저장되고, 문서는 파일 이름이 아니라 내용으로
+알아봅니다. Google 계정을 연결하면 필기와 읽던 페이지가 \emph{내} Drive의 앱 전용
+숨김 폴더를 통해 모든 Chrome 프로필과 기기를 따라옵니다(그림~\ref{fig:sync}).
+PDF 파일 자체는 올리지 않습니다.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[
+  node distance=1.2cm and 1.6cm,
+  dev/.style={draw, rounded corners=3pt, minimum width=2.6cm, minimum height=0.9cm, fill=blue!6},
+  cloud/.style={draw, ellipse, minimum width=3.6cm, minimum height=1.2cm, fill=green!8},
+  link/.style={{Latex[length=2mm]}-{Latex[length=2mm]}, thick}
+]
+\node[cloud] (drive) {내 Google Drive (앱 전용 폴더)};
+\node[dev, below left=of drive] (lap) {노트북};
+\node[dev, below=of drive] (lab) {연구실 PC};
+\node[dev, below right=of drive] (pro) {다른 프로필};
+\draw[link] (lap) -- node[left, font=\small] {동기화} (drive);
+\draw[link] (lab) -- (drive);
+\draw[link] (pro) -- (drive);
+\end{tikzpicture}
+\caption{필기와 읽던 위치는 내 Drive의 앱 전용 폴더로 동기화됩니다. 개발자 서버는
+거치지 않습니다.}
+\label{fig:sync}
+\end{figure}
+
+\noindent\emph{해 보기:} 필기 도구(펜 버튼)를 열고 이 문단의 한 문장에 형광펜을 칠한
+뒤, 다른 기기에서 이 문서를 다시 열어 보세요.
+
+\section{키 하나로 그림 캡처}
+\textsf{S}를 누르고 원하는 영역을 끌면 출처와 함께 이미지로 복사됩니다. \textsf{S}를
+한 번 더 누르면 페이지의 그림과 표를 찾아 줍니다. 기기 안에서 도는 작은 레이아웃
+모델\cite{ppdoclayout}과 PDF의 캡션을 함께 씁니다. 하나를 누르면 복사됩니다.
+그림~\ref{fig:plot}과 표~\ref{tab:sources}로 해 보세요.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  ybar, bar width=10pt, width=0.8\linewidth, height=5cm,
+  xlabel={연도}, ylabel={인용 수},
+  symbolic x coords={2019,2020,2021,2022,2023,2024,2025},
+  xtick=data, ymin=0, enlarge x limits=0.08,
+  nodes near coords, every node near coord/.append style={font=\scriptsize}
+]
+\addplot[fill=blue!35, draw=blue!60] coordinates {(2019,12) (2020,41) (2021,88) (2022,143) (2023,190) (2024,231) (2025,204)};
+\end{axis}
+\end{tikzpicture}
+\caption{논문 정보 줄이 그리는 연도별 인용 그래프의 예(예시 수치).}
+\label{fig:plot}
+\end{figure}
+
+\noindent\emph{해 보기:} 지금 \textsf{S}를 두 번 누르고 그림 하나를 눌러 보세요.
+
+\begin{thebibliography}{9}
+\bibitem{openalex} J.~Priem, H.~Piwowar, and R.~Orr. OpenAlex: A fully-open
+index of scholarly works, authors, venues, institutions, and concepts.
+\emph{arXiv:2205.01833}, 2022.
+\bibitem{crossref} G.~Hendricks, D.~Tkaczyk, J.~Lin, and P.~Feeney. Crossref:
+The sustainable source of community-owned scholarly metadata.
+\emph{Quantitative Science Studies}, 1(1):414--427, 2020.
+\bibitem{s2} R.~Kinney et al. The Semantic Scholar Open Data Platform.
+\emph{arXiv:2301.10140}, 2023.
+\bibitem{ppdoclayout} T.~Sun et al. PP-DocLayout: A unified document layout
+detection model to accelerate large-scale data construction.
+\emph{arXiv:2503.17213}, 2025.
+\end{thebibliography}
+
+\end{document}

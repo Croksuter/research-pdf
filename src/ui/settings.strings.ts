@@ -160,6 +160,7 @@ export const S = messages({
     // ── About ──
     aboutTitle: '정보',
     homepage: '홈페이지',
+    welcomeAgain: '시작 가이드 다시 보기',
     privacy: '개인정보처리방침',
     feedback: '문의·버그 제보',
     webStore: 'Chrome 웹 스토어',
@@ -322,6 +323,7 @@ export const S = messages({
     // ── About ──
     aboutTitle: 'About',
     homepage: 'Homepage',
+    welcomeAgain: 'Show the welcome guide again',
     privacy: 'Privacy policy',
     feedback: 'Feedback and bug reports',
     webStore: 'Chrome Web Store',

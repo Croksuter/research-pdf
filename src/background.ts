@@ -34,6 +34,7 @@ import {
 import { updatePdfLibrary } from './background/pdfLibraryStore';
 import { followStoredLanguage } from './shared/i18n';
 import { S } from './background/background.strings';
+import './background/onboarding';
 
 initDebugLogging();
 followStoredLanguage();

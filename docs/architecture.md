@@ -100,6 +100,18 @@ no longer scatter across tabs that look like web pages.
 - A top-level `pdf-viewer.html` (old tabs, bookmarks) redirects into the hub;
   a hub framed by a web page acts as the plain viewer.
 
+## First run
+
+`background/onboarding.ts` opens `welcome.html` (`ui/welcome.ts`) on a fresh
+install, never on updates; the settings page links to it again. Six steps,
+each skippable: hello; open PDFs here (web access request, file-URL access
+status with a link to Chrome's page); gather the PDFs already open in Chrome's
+viewer (tabs whose address looks like a PDF — visible once site access is
+granted) into one PDF tab, closing the originals; Google Drive (optional);
+a tour with a demo paper; done. The demo paper is LaTeX about the extension
+itself (`assets/demo/`, Korean and English), published on the site
+(`docs/demo/`) so it opens as an ordinary web PDF.
+
 ## Languages
 
 Korean and English (`src/shared/i18n.ts`). Each module keeps its strings in a

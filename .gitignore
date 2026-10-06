@@ -6,3 +6,6 @@ coverage/
 .DS_Store
 scripts/audit/.ext/
 artifact/chrome-web-store/tools/raw/
+# LaTeX build output (the PDFs are published from docs/demo/)
+assets/demo/*.log
+assets/demo/*.pdf

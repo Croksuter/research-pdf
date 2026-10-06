@@ -11,7 +11,7 @@ describe.skipIf(!existsSync(resolve(dist, 'pdfViewer.js')))('production package'
     expect(files).toEqual([
       '_locales', 'background.js', 'icons', 'manifest.json', 'models', 'ort', 'ort.js', 'pdf-hub.html', 'pdf-upkeep.html', 'pdf-viewer.html', 'pdfHub.css', 'pdfHub.js',
       'pdfUpkeep.js', 'pdfViewer.css', 'pdfViewer.js', 'pdfjs', 'popup.css', 'popup.html', 'popup.js', 'settings.css', 'settings.html',
-      'settings.js', 'tokens.css',
+      'settings.js', 'tokens.css', 'welcome.css', 'welcome.html', 'welcome.js',
     ]);
     // Figure auto-detect: the model with its license, and ONNX Runtime's wasm (loaded on first use).
     for (const file of ['models/pp-doclayout-s.onnx', 'models/LICENSE-Apache-2.0.txt', 'models/NOTICE.md', 'ort/ort-wasm-simd-threaded.wasm', 'ort/ort-wasm-simd-threaded.mjs']) {
