@@ -26,6 +26,7 @@
     <nav class="st-chips" aria-label="설정 섹션">
       <a href="#sync">동기화</a>
       <a href="#open">PDF 열기</a>
+      <a href="#display">화면</a>
       <a href="#paper">논문 정보</a>
       <a href="#storage">저장 공간</a>
       <a href="#keys">단축키</a>
@@ -88,6 +89,49 @@
         <button type="button" id="restore-viewer-tabs" class="st-btn">복구</button>
       </div>
       <p id="open-status" class="st-status" aria-live="polite"></p>
+    </section>
+
+    <section id="display" class="st-card" aria-labelledby="display-title">
+      <h2 id="display-title">화면 <span class="st-optional">이 기기만</span></h2>
+      <div class="st-row" data-search="탭 제목 논문 제목 파일 이름">
+        <div class="st-row-text">
+          <p class="st-row-title">탭 제목</p>
+          <p class="st-row-sub">PDF 탭 줄의 첫 줄에 보일 이름입니다.</p>
+        </div>
+        <select id="display-tab-title" class="st-select" aria-label="탭 제목">
+          <option value="paper">논문 제목 (없으면 PDF 이름)</option>
+          <option value="document">PDF 제목·파일 이름</option>
+        </select>
+      </div>
+      <div class="st-row" data-search="탭 부제목 게재처 연도 두 번째 줄">
+        <div class="st-row-text">
+          <p class="st-row-title">탭 부제목</p>
+          <p class="st-row-sub">탭의 둘째 줄입니다. 고정한 탭에는 나오지 않습니다.</p>
+        </div>
+        <select id="display-tab-subtitle" class="st-select" aria-label="탭 부제목">
+          <option value="venue">게재처·연도</option>
+          <option value="other">다른 이름 (PDF 이름 또는 논문 제목)</option>
+          <option value="none">없음 — 한 줄로</option>
+        </select>
+      </div>
+      <div class="st-row" data-search="문서 종류 아이콘 색 저널 학회 프리프린트">
+        <div class="st-row-text">
+          <p class="st-row-title">문서 종류 아이콘</p>
+          <p class="st-row-sub">탭과 홈에서 저널·학회·프리프린트·서베이·보고서를 아이콘으로 구분합니다.</p>
+        </div>
+        <select id="display-kind-icons" class="st-select" aria-label="문서 종류 아이콘">
+          <option value="color">색 아이콘</option>
+          <option value="mono">아이콘만 (한 색)</option>
+          <option value="off">끄기 — 모두 문서 아이콘</option>
+        </select>
+      </div>
+      <div class="st-row" data-search="chrome 탭 아이콘 프로젝트 아이콘 파비콘">
+        <div class="st-row-text">
+          <p class="st-row-title">Chrome 탭에 프로젝트 아이콘</p>
+          <p class="st-row-sub">PDF 탭의 Chrome 탭 아이콘을 그 프로젝트의 아이콘으로 바꿔, 프로젝트별 탭을 한눈에 구분합니다.</p>
+        </div>
+        <input type="checkbox" id="display-project-favicon" class="st-switch" aria-label="Chrome 탭에 프로젝트 아이콘">
+      </div>
     </section>
 
     <section id="paper" class="st-card" aria-labelledby="paper-title">

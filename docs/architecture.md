@@ -75,10 +75,12 @@ no longer scatter across tabs that look like web pages.
   with + to add), most recent first, with reading progress, a drawings mark
   and search over the whole library. `s=home` in the hub URL keeps it in
   front across a reload.
+- **Home tools**: filter chips (kinds, with drawings, reading, unread, with counts) and a sort (recent, title, year, progress), remembered per device; rows have a checkbox and "⋯" (open, pin, add to another project, move, remove, kind, copy URL), and a selection gets a bar with the same actions in bulk.
 - **Pins** belong to a project, so a pinned document is a narrow tab at the
   left of that project's hub on every device (loaded only when shown;
   `s=<url>` remembers one in front). Pin/unpin from the tab's context menu or
-  home. A pinned tab has no close button; unpinning one this hub never loaded
+  home. Their order is a per-member order key (`pinOrder`, sync v5), set by
+  dragging pinned rows on home or pinned tabs in the strip. A pinned tab has no close button; unpinning one this hub never loaded
   because another device unpinned it removes the tab.
 - **Recently closed**: a per-hub stack (sessionStorage, 20) with a 5 s undo
   toast and Alt+Shift+T (Ctrl+Shift+T is Chrome's). Local files reopen while

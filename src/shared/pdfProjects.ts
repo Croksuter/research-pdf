@@ -49,7 +49,9 @@ export interface PdfProjectMember {
   /** Registered to the project. Ignored in the default project (see above). */
   member: boolean;
   pinned: boolean;
-  /** Last change of either flag (0 = seeded): the latest change wins a merge. */
+  /** Where the pin sits among the project's pins (order key); null: by pin time, after keyed ones. */
+  pinOrder: string | null;
+  /** Last change of either flag or the pin order (0 = seeded): the latest change wins a merge. */
   changedAt: number;
 }
 
@@ -209,7 +211,10 @@ function parseMember(value: unknown): PdfProjectMember | null {
   const changedAt = time(value.changedAt);
   if (typeof docId !== 'string' || !docId || docId.length > DOC_ID_MAX_CHARS || changedAt === null) return null;
   if (typeof value.member !== 'boolean' || typeof value.pinned !== 'boolean') return null;
-  return { docId, member: value.member, pinned: value.pinned, changedAt };
+  // Rows from before pin order read as unordered.
+  const pinOrder = value.pinOrder === undefined || value.pinOrder === null ? null : isOrderKey(value.pinOrder) ? value.pinOrder : undefined;
+  if (pinOrder === undefined) return null;
+  return { docId, member: value.member, pinned: value.pinned, pinOrder, changedAt };
 }
 
 export function parsePdfProject(value: unknown): PdfProject | null {
@@ -333,7 +338,7 @@ export function seedPdfProjects(library: readonly PdfLibraryEntry[]): PdfProject
   const project = emptyPdfProject(DEFAULT_PROJECT_ID, DEFAULT_PROJECT_NAME, 0);
   project.members = library
     .filter((e) => e.pinned)
-    .map((e) => ({ docId: e.docId, member: true, pinned: true, changedAt: e.pinChangedAt }))
+    .map((e) => ({ docId: e.docId, member: true, pinned: true, pinOrder: null, changedAt: e.pinChangedAt }))
     .sort((a, b) => a.docId.localeCompare(b.docId));
   return { [DEFAULT_PROJECT_ID]: project };
 }
@@ -467,12 +472,14 @@ export type PdfProjectUpdate =
   | { kind: 'move'; docId: string; from: string; to: string }
   | { kind: 'layout'; id: string; urls: string[]; active: number; show: string | null }
   // Icon and color together (null: the defaults).
-  | { kind: 'style'; id: string; icon: string | null; color: string | null };
+  | { kind: 'style'; id: string; icon: string | null; color: string | null }
+  // New places for pinned documents (a drag in the strip or on home).
+  | { kind: 'pin-order'; id: string; order: Array<{ docId: string; order: string }> };
 
 function setMember(project: PdfProject, docId: string, change: (m: PdfProjectMember) => PdfProjectMember, now: number): PdfProject {
-  const current = project.members.find((m) => m.docId === docId) ?? { docId, member: false, pinned: false, changedAt: 0 };
+  const current = project.members.find((m) => m.docId === docId) ?? { docId, member: false, pinned: false, pinOrder: null, changedAt: 0 };
   const next = change(current);
-  if (next.member === current.member && next.pinned === current.pinned) return project;
+  if (next.member === current.member && next.pinned === current.pinned && next.pinOrder === current.pinOrder) return project;
   const stamped = { ...next, changedAt: Math.max(now, current.changedAt + 1) };
   return {
     ...project,
@@ -510,7 +517,8 @@ export function applyPdfProjectUpdate(projects: PdfProjects, update: PdfProjectU
     case 'pin': {
       const project = live(update.id);
       if (!project) return projects;
-      next[update.id] = setMember(project, update.docId, (m) => (update.pinned ? { ...m, member: true, pinned: true } : { ...m, pinned: false }), now);
+      // A new pin goes last (unkeyed pins follow keyed ones); an unpin forgets its place.
+      next[update.id] = setMember(project, update.docId, (m) => (update.pinned ? { ...m, member: true, pinned: true } : { ...m, pinned: false, pinOrder: null }), now);
       break;
     }
     case 'move': {
@@ -531,6 +539,17 @@ export function applyPdfProjectUpdate(projects: PdfProjects, update: PdfProjectU
       const same = layout.urls.join('\n') === project.layout.urls.join('\n') && layout.active === project.layout.active && layout.show === project.layout.show;
       if (same) return projects;
       next[update.id] = { ...project, layout };
+      break;
+    }
+    case 'pin-order': {
+      let project = live(update.id);
+      if (!project) return projects;
+      for (const place of update.order) {
+        if (!project.members.some((m) => m.docId === place.docId && m.pinned)) continue;
+        project = setMember(project, place.docId, (m) => ({ ...m, pinOrder: place.order }), now);
+      }
+      if (project === projects[update.id]) return projects;
+      next[update.id] = project;
       break;
     }
     case 'style': {
@@ -582,6 +601,15 @@ export function parsePdfProjectUpdate(value: unknown): PdfProjectUpdate | null {
       const layout = parseLayout({ urls: value.urls, active: value.active, show: value.show ?? null, savedAt: 0 });
       return layout ? { kind: 'layout', id: value.id, urls: layout.urls, active: layout.active, show: layout.show } : null;
     }
+    case 'pin-order': {
+      if (!isPdfProjectId(value.id) || !Array.isArray(value.order) || value.order.length > PDF_PROJECT_MAX_MEMBERS) return null;
+      const order: Array<{ docId: string; order: string }> = [];
+      for (const raw of value.order) {
+        if (!isRecord(raw) || !docIdOk(raw.docId) || !isOrderKey(raw.order)) return null;
+        order.push({ docId: raw.docId, order: raw.order });
+      }
+      return { kind: 'pin-order', id: value.id, order };
+    }
     case 'style': {
       if (!isPdfProjectId(value.id)) return null;
       const icon = value.icon === null ? null : isPdfProjectIcon(value.icon) ? value.icon : undefined;
@@ -616,13 +644,17 @@ export function isDocInProject(projects: PdfProjects, projectId: string, docId: 
   return !!project && project.deletedAt === 0 && project.members.some((m) => m.docId === docId && m.member);
 }
 
-/** Documents pinned in the project, oldest pin first (the leftmost tab). */
+/** Documents pinned in the project, in pin order (the leftmost tab first): placed ones by key, the rest oldest pin first. */
 export function projectPinnedDocIds(projects: PdfProjects, projectId: string): string[] {
   const project = projects[projectId];
   if (!project || project.deletedAt !== 0) return [];
   return project.members
     .filter((m) => m.pinned && isDocInProject(projects, projectId, m.docId))
-    .sort((a, b) => a.changedAt - b.changedAt || a.docId.localeCompare(b.docId))
+    .sort((a, b) => {
+      if (a.pinOrder !== null && b.pinOrder !== null && a.pinOrder !== b.pinOrder) return compareOrderKeys(a.pinOrder, b.pinOrder);
+      if ((a.pinOrder === null) !== (b.pinOrder === null)) return a.pinOrder === null ? 1 : -1;
+      return a.changedAt - b.changedAt || a.docId.localeCompare(b.docId);
+    })
     .map((m) => m.docId);
 }
 

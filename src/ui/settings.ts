@@ -29,6 +29,7 @@ import { PDF_LIBRARY_STORAGE_KEY, parsePdfLibrary } from '../shared/pdfLibrary';
 import { PDF_PROJECTS_STORAGE_KEY, parsePdfProjects } from '../shared/pdfProjects';
 import { isEmptyAnnotationCache, parsePdfAnnotationCache } from '../shared/pdfAnnotations';
 import { openAlexCheck, semanticScholarCheck, type ApiCheck } from '../shared/apiStatus';
+import { DISPLAY_PREFS_STORAGE_KEY, parseDisplayPrefs, type DisplayPrefs } from '../shared/displayPrefs';
 
 const byId = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
@@ -304,6 +305,37 @@ restoreTabsButton.addEventListener('click', () => {
   });
 });
 
+// ─── Display (this device; open hubs follow at once) ───
+
+const displayTitle = byId<HTMLSelectElement>('display-tab-title');
+const displaySubtitle = byId<HTMLSelectElement>('display-tab-subtitle');
+const displayKinds = byId<HTMLSelectElement>('display-kind-icons');
+const displayFavicon = byId<HTMLInputElement>('display-project-favicon');
+
+async function readDisplay(): Promise<DisplayPrefs> {
+  return parseDisplayPrefs((await chrome.storage.local.get(DISPLAY_PREFS_STORAGE_KEY))[DISPLAY_PREFS_STORAGE_KEY]);
+}
+
+async function renderDisplay(): Promise<void> {
+  const prefs = await readDisplay();
+  displayTitle.value = prefs.tabTitle;
+  displaySubtitle.value = prefs.tabSubtitle;
+  displayKinds.value = prefs.kindIcons;
+  displayFavicon.checked = prefs.projectFavicon;
+}
+
+function saveDisplay(): void {
+  const prefs = parseDisplayPrefs({
+    tabTitle: displayTitle.value,
+    tabSubtitle: displaySubtitle.value,
+    kindIcons: displayKinds.value,
+    projectFavicon: displayFavicon.checked,
+  });
+  void chrome.storage.local.set({ [DISPLAY_PREFS_STORAGE_KEY]: prefs });
+}
+
+for (const control of [displayTitle, displaySubtitle, displayKinds, displayFavicon]) control.addEventListener('change', saveDisplay);
+
 // ─── Paper info and database keys ───
 
 const paperInfoInput = byId<HTMLInputElement>('paper-info-enabled');
@@ -529,7 +561,7 @@ async function loadSettings(): Promise<void> {
   ]);
   paperInfoInput.checked = paperInfo;
   fileCacheInput.checked = fileCache;
-  await Promise.all([renderAccess(), ...keyFields.map(renderKey), renderStorage()]);
+  await Promise.all([renderAccess(), renderDisplay(), ...keyFields.map(renderKey), renderStorage()]);
 }
 
 renderShortcuts();

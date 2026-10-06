@@ -156,7 +156,7 @@ describe('projects', () => {
   });
 
   it('parses stored and synced projects strictly by shape', () => {
-    const good = project('pa', { members: [{ docId: 'd1', member: true, pinned: false, changedAt: 1 }], layout: { urls: [A], active: 0, show: 'home', savedAt: 2 } });
+    const good = project('pa', { members: [{ docId: 'd1', member: true, pinned: false, pinOrder: null, changedAt: 1 }], layout: { urls: [A], active: 0, show: 'home', savedAt: 2 } });
     expect(parsePdfProjectList([good])).toEqual([good]);
     expect(parsePdfProjectList([good, good])).toBeNull();
     expect(parsePdfProjectList([{ ...good, id: '123' }])).toBeNull(); // a bare number is not a project id
@@ -285,5 +285,26 @@ describe('project folders and order', () => {
       .toEqual({ kind: 'arrange', projects: [{ id: 'pa', folder: 'f1', order: 'a' }], folders: [{ id: 'f1', order: 'b' }] });
     expect(parsePdfProjectUpdateRequest({ type: 'VOCAB_T_PDF_PROJECT_UPDATE', update: { kind: 'folder-delete', id: 'f1' } }))
       .toEqual({ type: 'VOCAB_T_PDF_PROJECT_UPDATE', update: { kind: 'folder-delete', id: 'f1' } });
+  });
+});
+
+describe('pin order', () => {
+  it('orders pins by their keys, unplaced ones after by pin time, and forgets the place on unpin', () => {
+    let projects: PdfProjects = { default: project('default'), pa: project('pa') };
+    for (const [docId, t] of [['d1', 1], ['d2', 2], ['d3', 3]] as const) {
+      projects = applyPdfProjectUpdate(projects, { kind: 'pin', id: 'pa', docId, pinned: true }, NOW + t);
+    }
+    expect(projectPinnedDocIds(projects, 'pa')).toEqual(['d1', 'd2', 'd3']);
+    projects = applyPdfProjectUpdate(projects, { kind: 'pin-order', id: 'pa', order: [{ docId: 'd3', order: '1' }, { docId: 'd1', order: '2' }] }, NOW + 10);
+    expect(projectPinnedDocIds(projects, 'pa')).toEqual(['d3', 'd1', 'd2']);
+    // Not pinned: no place to take.
+    const same = applyPdfProjectUpdate(projects, { kind: 'pin-order', id: 'pa', order: [{ docId: 'zz', order: '0V' }] }, NOW + 11);
+    expect(same).toBe(projects);
+    projects = applyPdfProjectUpdate(projects, { kind: 'pin', id: 'pa', docId: 'd3', pinned: false }, NOW + 12);
+    expect(projects.pa.members.find((m) => m.docId === 'd3')?.pinOrder).toBeNull();
+    expect(projectPinnedDocIds(projects, 'pa')).toEqual(['d1', 'd2']);
+    expect(parsePdfProjectUpdate({ kind: 'pin-order', id: 'pa', order: [{ docId: 'd1', order: 'a0' }] })).toBeNull();
+    expect(parsePdfProjectUpdateRequest({ type: 'VOCAB_T_PDF_PROJECT_UPDATE', update: { kind: 'pin-order', id: 'pa', order: [{ docId: 'd1', order: 'a' }] } }))
+      .toEqual({ type: 'VOCAB_T_PDF_PROJECT_UPDATE', update: { kind: 'pin-order', id: 'pa', order: [{ docId: 'd1', order: 'a' }] } });
   });
 });

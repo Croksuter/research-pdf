@@ -53,7 +53,7 @@ function doc(docId: string, page: number, updatedAt: number): PdfDocRecord {
 }
 
 function snapshot(docs: PdfDocRecord[] = [], annotations: PdfAnnotationCache[] = [], library: PdfLibraryEntry[] = [], projects: PdfProject[] = [], folders: PdfProjectFolder[] = []): PdfSyncSnapshot {
-  return { version: 4, exportedAt: '2026-09-01T00:00:00.000Z', docs, annotations, library, projects, folders };
+  return { version: 5, exportedAt: '2026-09-01T00:00:00.000Z', docs, annotations, library, projects, folders };
 }
 
 function project(id: string, overrides: Partial<PdfProject> = {}): PdfProject {
@@ -150,7 +150,7 @@ describe('pdf sync merge', () => {
 
   it('reads an older build\'s document with what it lacks empty', () => {
     const parsed = parsePdfSyncSnapshot({ version: 1, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [] });
-    expect(parsed).toEqual({ version: 4, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [], folders: [] });
+    expect(parsed).toEqual({ version: 5, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [], folders: [] });
     expect(parsePdfSyncSnapshot({ version: 2, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [] })?.projects).toEqual([]);
     // Version 3: projects without looks or places, library rows without kinds.
     const v3 = parsePdfSyncSnapshot({
@@ -164,7 +164,7 @@ describe('pdf sync merge', () => {
   });
 
   it('refuses a document another build could not read back', () => {
-    expect(parsePdfSyncSnapshot({ version: 5, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [], folders: [] })).toBeNull();
+    expect(parsePdfSyncSnapshot({ version: 6, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [], folders: [] })).toBeNull();
     expect(parsePdfSyncSnapshot({ version: 4, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [] })).toBeNull();
     expect(parsePdfSyncSnapshot({ version: 4, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [], folders: [{ id: 'f1' }] })).toBeNull();
     expect(parsePdfSyncSnapshot({ version: 3, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [] })).toBeNull();
@@ -233,7 +233,7 @@ describe('drive sync', () => {
 
     expect(google.files.size).toBe(1);
     const body = await google.headBody<PdfSyncSnapshot>();
-    expect(body.version).toBe(4);
+    expect(body.version).toBe(5);
     expect(body.docs.map((entry) => entry.page)).toEqual([4]);
     expect(keysOf(body.annotations[0])).toEqual(['k1']);
     expect(JSON.stringify(body)).not.toContain('perm-main');

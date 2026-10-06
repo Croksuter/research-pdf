@@ -7,7 +7,8 @@
 // open), since version 2 the library of opened documents
 // (shared/pdfLibrary.ts), since version 3 the projects — their documents,
 // pins and saved tabs (shared/pdfProjects.ts) — and since version 4 their
-// looks, folders and order, and each document's kind (paper or not). Nothing else: paper-strip lookups are caches,
+// looks, folders and order, and each document's kind (paper or not); since
+// version 5 the order of each project's pins. Nothing else: paper-strip lookups are caches,
 // settings are per device, and there are no credentials in here.
 //
 // Merge rules mirror the vocabulary engine (shared/threeWayMerge.ts):
@@ -41,10 +42,11 @@ import {
 import { byId, chooseThreeWay, mergeRows, stableJson } from './threeWayMerge';
 
 // Version 2 added `library`, version 3 `projects`, version 4 `folders` (and
-// new fields in projects and library rows). An older build's document
+// new fields in projects and library rows), version 5 the pin order in
+// project members. An older build's document
 // still reads, with what it lacks empty; older builds refuse a newer version
 // rather than write it back without what they do not know.
-export const PDF_SYNC_SNAPSHOT_VERSION = 4;
+export const PDF_SYNC_SNAPSHOT_VERSION = 5;
 export const PDF_SYNC_MAX_DOCS = 5_000;
 
 export interface PdfSyncSnapshot {
@@ -63,7 +65,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** Strict: a document another build cannot read back is refused, never repaired. */
 export function parsePdfSyncSnapshot(value: unknown): PdfSyncSnapshot | null {
-  if (!isRecord(value) || (value.version !== 1 && value.version !== 2 && value.version !== 3 && value.version !== PDF_SYNC_SNAPSHOT_VERSION)) return null;
+  if (!isRecord(value) || ![1, 2, 3, 4, PDF_SYNC_SNAPSHOT_VERSION].includes(value.version as number)) return null;
   if (typeof value.exportedAt !== 'string' || !Number.isFinite(Date.parse(value.exportedAt))) return null;
   if (!Array.isArray(value.docs) || !Array.isArray(value.annotations)) return null;
   if (value.docs.length > PDF_SYNC_MAX_DOCS || value.annotations.length > PDF_SYNC_MAX_DOCS) return null;
@@ -87,7 +89,7 @@ export function parsePdfSyncSnapshot(value: unknown): PdfSyncSnapshot | null {
   if (!library) return null;
   const projects = value.version === 1 || value.version === 2 ? [] : parsePdfProjectList(value.projects);
   if (!projects) return null;
-  const folders = value.version === PDF_SYNC_SNAPSHOT_VERSION ? parsePdfProjectFolderList(value.folders) : [];
+  const folders = value.version === 4 || value.version === PDF_SYNC_SNAPSHOT_VERSION ? parsePdfProjectFolderList(value.folders) : [];
   if (!folders) return null;
   return { version: PDF_SYNC_SNAPSHOT_VERSION, exportedAt: value.exportedAt, docs, annotations, library, projects, folders };
 }

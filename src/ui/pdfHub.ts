@@ -54,6 +54,7 @@ import {
   DEFAULT_PROJECT_ID,
   PDF_PROJECTS_STORAGE_KEY,
   PDF_PROJECT_COLORS,
+  applyPdfProjectUpdate,
   PDF_PROJECT_FOLDERS_STORAGE_KEY,
   PDF_PROJECT_ICONS,
   cleanPdfProjectName,
@@ -77,6 +78,7 @@ import {
   type PdfProjectUpdate,
 } from '../shared/pdfProjects';
 import { compareOrderKeys, orderKeyAtEnd, orderKeyBetween, orderKeysBetween } from '../shared/orderKey';
+import { DEFAULT_DISPLAY_PREFS, DISPLAY_PREFS_STORAGE_KEY, parseDisplayPrefs, tabLabels, type DisplayPrefs } from '../shared/displayPrefs';
 import { PDF_UPKEEP_DONE_MESSAGE, PDF_UPKEEP_PAGE, PDF_UPKEEP_STORAGE_KEY, parsePdfUpkeepState, rowsNeedingUpkeep } from '../shared/pdfUpkeep';
 import { PDF_DOC_STATE_STORAGE_KEY, parsePdfDocRecords, type PdfDocRecords } from '../shared/pdfIdentity';
 import {
@@ -253,6 +255,8 @@ let projectId = DEFAULT_PROJECT_ID;
 let storedProjects: unknown;
 let projects: PdfProjects = parsePdfProjects(undefined);
 let folders: PdfProjectFolders = {};
+// How tabs are named and icons drawn on this device (settings page).
+let display: DisplayPrefs = DEFAULT_DISPLAY_PREFS;
 // Projects with a hub right now (the background's registry; may be stale).
 let openProjectIds = new Set<string>();
 // Pin changes sent but not yet seen in storage: they win over a stale read.
@@ -350,7 +354,8 @@ function libraryIdForUrl(url: string): string | null {
 
 async function loadLibraryState(): Promise<void> {
   try {
-    const stored = await chrome.storage.local.get([PDF_LIBRARY_STORAGE_KEY, PDF_DOC_STATE_STORAGE_KEY, PDF_PROJECTS_STORAGE_KEY, PDF_PROJECT_FOLDERS_STORAGE_KEY]);
+    const stored = await chrome.storage.local.get([PDF_LIBRARY_STORAGE_KEY, PDF_DOC_STATE_STORAGE_KEY, PDF_PROJECTS_STORAGE_KEY, PDF_PROJECT_FOLDERS_STORAGE_KEY, DISPLAY_PREFS_STORAGE_KEY]);
+    display = parseDisplayPrefs(stored[DISPLAY_PREFS_STORAGE_KEY]);
     setLibrary(parsePdfLibrary(stored[PDF_LIBRARY_STORAGE_KEY]));
     setProjects(stored[PDF_PROJECTS_STORAGE_KEY]);
     folders = parsePdfProjectFolders(stored[PDF_PROJECT_FOLDERS_STORAGE_KEY]);
@@ -406,6 +411,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
     docRecords = parsePdfDocRecords(changes[PDF_DOC_STATE_STORAGE_KEY].newValue);
     scheduleHomeRender();
   }
+  if (changes[DISPLAY_PREFS_STORAGE_KEY]) {
+    display = parseDisplayPrefs(changes[DISPLAY_PREFS_STORAGE_KEY].newValue);
+    tabs.forEach(updateTabLabel);
+    updateFavicon();
+    scheduleHomeRender();
+  }
 });
 
 // ─── Tab strip ───
@@ -455,18 +466,20 @@ function createTab(doc: { url: string | null; hash: string; file: File | null })
 }
 
 function updateTabLabel(tab: HubTab): void {
-  // A pinned tab is narrow: one line, the best name.
-  tab.titleEl.textContent = tab.pinned ? tab.paperTitle ?? tab.title : tab.title;
-  tab.paperEl.textContent = tab.paperTitle ?? '';
-  tab.paperEl.hidden = tab.pinned || !tab.paperTitle;
-  tab.button.classList.toggle('has-paper', !tab.pinned && !!tab.paperTitle);
+  const entry = library[tab.docId ?? tab.libraryId ?? ''];
+  const { title, subtitle } = tabLabels({ docName: tab.title, paperTitle: tab.paperTitle ?? entry?.title ?? null, venue: entry?.venue ?? null, year: entry?.year ?? null }, display);
+  // A pinned tab is narrow: one line.
+  tab.titleEl.textContent = title;
+  tab.paperEl.textContent = subtitle ?? '';
+  tab.paperEl.hidden = tab.pinned || !subtitle;
+  tab.button.classList.toggle('has-paper', !tab.pinned && !!subtitle);
   tab.button.classList.toggle('is-pinned', tab.pinned);
   tab.button.classList.toggle('is-unloaded', !tab.frame);
-  tab.button.draggable = !tab.pinned;
+  tab.button.draggable = true;
   tab.closeEl.hidden = tab.pinned;
   const kind = docKind(tab.docId ?? tab.libraryId);
-  tab.iconEl.replaceChildren(icon(tab.pinned ? 'i-pin' : kindIcon(kind, isLocal(tab))));
-  tab.iconEl.dataset.kind = tab.pinned ? '' : kind;
+  tab.iconEl.replaceChildren(icon(tab.pinned ? 'i-pin' : kindIcon(display.kindIcons === 'off' ? 'document' : kind, isLocal(tab))));
+  tab.iconEl.dataset.kind = tab.pinned || display.kindIcons !== 'color' ? '' : kind;
   tab.button.title = [tab.paperTitle, tab.title, tab.url, kind !== 'document' ? KIND_LABEL[kind] : null, tab.pinned ? '고정됨 · 우클릭해 고정 해제' : null]
     .filter(Boolean).filter((v, i, all) => all.indexOf(v) === i).join('\n');
   if (tab.frame) tab.frame.title = tab.paperTitle ?? tab.title;
@@ -711,19 +724,28 @@ function wireDrag(tab: HubTab): void {
     button.classList.remove('is-dragging');
     for (const t of tabs) t.button.classList.remove('is-drop-before');
   });
+  // Pinned tabs reorder among pins (the project's pin order), the rest among the rest.
   button.addEventListener('dragover', (e) => {
-    if (dragKey === null || dragKey === tab.key || tab.pinned) return;
+    const moved = dragged();
+    if (!moved || moved === tab || moved.pinned !== tab.pinned) return;
     e.preventDefault();
     for (const t of tabs) t.button.classList.toggle('is-drop-before', t === tab);
   });
   button.addEventListener('drop', (e) => {
     const moved = dragged();
-    if (!moved || moved === tab || tab.pinned) return;
+    if (!moved || moved === tab || moved.pinned !== tab.pinned) return;
     e.preventDefault();
+    tab.button.classList.remove('is-drop-before');
+    if (tab.pinned) {
+      const order = tabs.filter((t) => t.pinned && t !== moved).map((t) => t.libraryId).filter((id): id is string => !!id);
+      if (!moved.libraryId) return;
+      order.splice(order.indexOf(tab.libraryId ?? ''), 0, moved.libraryId);
+      setPinOrder(order);
+      return;
+    }
     tabs.splice(tabs.indexOf(moved), 1);
     tabs.splice(tabs.indexOf(tab), 0, moved);
     tabList.insertBefore(moved.button, tab.button);
-    tab.button.classList.remove('is-drop-before');
     render();
   });
 }
@@ -1161,15 +1183,83 @@ function openEntry(entry: PdfLibraryEntry): void {
 interface HomeRowOptions {
   /** "+": register to this project without opening it. */
   add?: boolean;
-  /** "−": take it out of this project. */
-  remove?: boolean;
   /** Names of the other projects it is in, shown in the meta line. */
   elsewhere?: string[];
+  /** A row of the pinned list: dragged to reorder. */
+  pinnedList?: boolean;
+}
+
+// ─── Home: filters, sort, selection (this page; filter and sort remembered per device) ───
+
+type HomeFilter = 'all' | PdfDocKind | 'annotated' | 'reading' | 'unread';
+type HomeSort = 'recent' | 'title' | 'year' | 'progress';
+const HOME_VIEW_KEY = 'rpdfHomeView';
+const HOME_FILTER_LABEL: Record<Exclude<HomeFilter, PdfDocKind>, string> = { all: '전체', annotated: '필기 있음', reading: '읽는 중', unread: '안 읽음' };
+const HOME_SORT_LABEL: Record<HomeSort, string> = { recent: '최근 연 순', title: '제목 순', year: '최신 연도 순', progress: '많이 읽은 순' };
+
+function loadHomeView(): { filter: HomeFilter; sort: HomeSort } {
+  try {
+    const raw = JSON.parse(localStorage.getItem(HOME_VIEW_KEY) ?? '{}') as { filter?: string; sort?: string };
+    const filter = (['all', 'annotated', 'reading', 'unread', ...KIND_ORDER] as string[]).includes(raw.filter ?? '') ? raw.filter as HomeFilter : 'all';
+    const sort = (Object.keys(HOME_SORT_LABEL) as string[]).includes(raw.sort ?? '') ? raw.sort as HomeSort : 'recent';
+    return { filter, sort };
+  } catch {
+    return { filter: 'all', sort: 'recent' };
+  }
+}
+// Read at boot (it needs the kinds declared further down).
+let homeView: { filter: HomeFilter; sort: HomeSort } = { filter: 'all', sort: 'recent' };
+function setHomeView(next: Partial<typeof homeView>): void {
+  homeView = { ...homeView, ...next };
+  try { localStorage.setItem(HOME_VIEW_KEY, JSON.stringify(homeView)); } catch { /* a nicety */ }
+  homeLimit = HOME_PAGE_SIZE;
+  renderHome();
+}
+
+const selected = new Set<string>();
+
+/** Reading progress 0–1, or null when never opened past the first page. */
+function progressOf(entry: PdfLibraryEntry): number | null {
+  const page = docRecords[entry.docId]?.page ?? null;
+  return page && page > 1 ? Math.min(1, page / Math.max(1, entry.numPages)) : null;
+}
+
+function matchesFilter(entry: PdfLibraryEntry, filter: HomeFilter): boolean {
+  switch (filter) {
+    case 'all': return true;
+    case 'annotated': return annotated.has(entry.docId);
+    case 'reading': { const p = progressOf(entry); return p !== null && p < 0.98; }
+    case 'unread': return progressOf(entry) === null;
+    default: return libraryEntryKind(entry) === filter;
+  }
+}
+
+function sortEntries(entries: PdfLibraryEntry[], sort: HomeSort): PdfLibraryEntry[] {
+  const list = [...entries];
+  switch (sort) {
+    case 'title': return list.sort((a, b) => entryName(a).localeCompare(entryName(b), 'ko'));
+    case 'year': return list.sort((a, b) => (b.year ?? -1) - (a.year ?? -1) || b.openedAt - a.openedAt);
+    case 'progress': return list.sort((a, b) => (progressOf(b) ?? -1) - (progressOf(a) ?? -1) || b.openedAt - a.openedAt);
+    default: return list.sort((a, b) => b.openedAt - a.openedAt);
+  }
 }
 
 function homeRow(entry: PdfLibraryEntry, options: HomeRowOptions = {}): HTMLElement {
   const pinned = isPinnedDoc(entry.docId);
   const row = el('li', { className: 'rpdf-item' });
+  row.dataset.docId = entry.docId;
+  const isSelected = selected.has(entry.docId);
+  row.classList.toggle('is-selected', isSelected);
+  if (!options.pinnedList) {
+    const check = el('input', { type: 'checkbox', className: 'rpdf-item-check', checked: isSelected });
+    check.setAttribute('aria-label', `${entryName(entry)} 선택`);
+    check.addEventListener('change', () => {
+      if (check.checked) selected.add(entry.docId); else selected.delete(entry.docId);
+      row.classList.toggle('is-selected', check.checked);
+      renderSelectionBar();
+    });
+    row.append(check);
+  }
   const main = el('button', { type: 'button', className: 'rpdf-item-main' });
   main.title = [entry.title, entry.docTitle, entry.fileName, ...entry.urls].filter(Boolean).filter((v, i, all) => all.indexOf(v) === i).join('\n');
   const text = el('span', { className: 'rpdf-item-text' });
@@ -1185,11 +1275,10 @@ function homeRow(entry: PdfLibraryEntry, options: HomeRowOptions = {}): HTMLElem
   ].filter(Boolean).join(' · ');
   text.append(el('span', { className: 'rpdf-item-meta', textContent: meta }));
   const kind = libraryEntryKind(entry);
-  const kindMark = icon(kindIcon(kind, !(entry.urls[0] && !entry.urls[0].startsWith('file:'))));
-  kindMark.dataset.kind = kind;
+  const kindMark = icon(kindIcon(display.kindIcons === 'off' ? 'document' : kind, !(entry.urls[0] && !entry.urls[0].startsWith('file:'))));
+  kindMark.dataset.kind = display.kindIcons === 'color' ? kind : '';
   main.append(kindMark, text);
   if (kind !== 'document') main.title = `${KIND_LABEL[kind]}\n${main.title}`;
-  row.addEventListener('contextmenu', (e) => { e.preventDefault(); showKindMenu(entry.docId, e.clientX, e.clientY); });
   const badges = el('span', { className: 'rpdf-item-badges' });
   if (annotated.has(entry.docId)) {
     const pen = el('span', { className: 'rpdf-badge', title: '필기 있음' });
@@ -1211,25 +1300,18 @@ function homeRow(entry: PdfLibraryEntry, options: HomeRowOptions = {}): HTMLElem
     });
     row.append(add);
   }
-  if (options.remove) {
-    const remove = el('button', { type: 'button', className: 'rpdf-item-act', title: '이 프로젝트에서 빼기' });
-    remove.setAttribute('aria-label', `${entryName(entry)}을(를) 이 프로젝트에서 빼기`);
-    remove.append(icon('i-minus'));
-    remove.addEventListener('click', () => {
-      void sendProjectUpdate({ kind: 'member', id: projectId, docId: entry.docId, member: false });
-      showToast('이 프로젝트에서 뺐습니다.', {
-        label: '되돌리기',
-        run: () => { void sendProjectUpdate({ kind: 'member', id: projectId, docId: entry.docId, member: true }); },
-      });
-    });
-    row.append(remove);
-  }
   const pin = el('button', { type: 'button', className: 'rpdf-item-pin', title: pinned ? '고정 해제' : '고정 — 이 프로젝트의 탭 왼쪽에 둡니다' });
   pin.setAttribute('aria-pressed', String(pinned));
   pin.setAttribute('aria-label', pinned ? `${entryName(entry)} 고정 해제` : `${entryName(entry)} 고정`);
   pin.append(icon('i-pin'));
   pin.addEventListener('click', () => setPinnedById(entry.docId, !pinned));
   row.append(pin);
+  const more = el('button', { type: 'button', className: 'rpdf-item-act rpdf-item-more', title: '더 보기' });
+  more.setAttribute('aria-label', `${entryName(entry)} 더 보기`);
+  more.append(icon('i-more'));
+  more.addEventListener('click', () => { const r = more.getBoundingClientRect(); showDocMenu([entry.docId], r.left - 160, r.bottom + 4); });
+  row.append(more);
+  row.addEventListener('contextmenu', (e) => { e.preventDefault(); showDocMenu([entry.docId], e.clientX, e.clientY); });
   if (page && entry.numPages > 1) {
     const bar = el('span', { className: 'rpdf-item-progress' });
     const fill = el('span');
@@ -1237,12 +1319,184 @@ function homeRow(entry: PdfLibraryEntry, options: HomeRowOptions = {}): HTMLElem
     bar.append(fill);
     row.append(bar);
   }
+  if (options.pinnedList) wirePinDrag(row, entry.docId);
   return row;
 }
 
-function homeSection(title: string, rows: HTMLElement[], extra?: HTMLElement): HTMLElement {
+// ─── Pin order: drag on home or in the strip ───
+
+/** Writes `docIds` (this project's pins) in this order; applied here at once. */
+function setPinOrder(docIds: string[]): void {
+  const keys = orderKeysBetween(null, null, docIds.length);
+  const update: PdfProjectUpdate = { kind: 'pin-order', id: projectId, order: docIds.map((docId, i) => ({ docId, order: keys[i] })) };
+  projects = applyPdfProjectUpdate(projects, update);
+  void sendProjectUpdate(update);
+  reconcilePinned();
+  scheduleHomeRender();
+}
+
+let pinDragDoc: string | null = null;
+function wirePinDrag(row: HTMLElement, docId: string): void {
+  row.draggable = true;
+  row.classList.add('is-draggable');
+  row.addEventListener('dragstart', (e) => {
+    pinDragDoc = docId;
+    row.classList.add('is-dragging');
+    if (e.dataTransfer) { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', docId); }
+  });
+  row.addEventListener('dragend', () => {
+    pinDragDoc = null;
+    row.classList.remove('is-dragging');
+    for (const r of Array.from(homeSections.querySelectorAll('.drop-before, .drop-after'))) r.classList.remove('drop-before', 'drop-after');
+  });
+  const after = (e: DragEvent) => { const r = row.getBoundingClientRect(); return e.clientY > r.top + r.height / 2; };
+  row.addEventListener('dragover', (e) => {
+    if (!pinDragDoc || pinDragDoc === docId) return;
+    e.preventDefault();
+    row.classList.toggle('drop-after', after(e));
+    row.classList.toggle('drop-before', !after(e));
+  });
+  row.addEventListener('dragleave', () => row.classList.remove('drop-before', 'drop-after'));
+  row.addEventListener('drop', (e) => {
+    const moving = pinDragDoc;
+    row.classList.remove('drop-before', 'drop-after');
+    if (!moving || moving === docId) return;
+    e.preventDefault();
+    const order = pinnedDocIds().filter((id) => id !== moving);
+    order.splice(order.indexOf(docId) + (after(e) ? 1 : 0), 0, moving);
+    setPinOrder(order);
+  });
+}
+
+// ─── Actions on documents (a row's ⋯, or the selection) ───
+
+/** Projects to offer for `docIds`: live ones but this one, in list order; `holds` marks where all of them already are. */
+function projectChoices(docIds: string[]): Array<{ project: PdfProject; holds: boolean }> {
+  const { root, items } = pdfProjectTree(projects, folders);
+  const all = [root, ...items.flatMap((item) => (item.kind === 'project' ? [item.project] : item.projects))];
+  return all.filter((p) => p.id !== projectId).map((project) => ({ project, holds: docIds.every((id) => isDocInProject(projects, project.id, id)) }));
+}
+
+function docsLabel(docIds: string[]): string {
+  return docIds.length === 1 ? `‘${entryName(library[docIds[0]])}’` : `${docIds.length}개 문서`;
+}
+
+/** Registers the documents to `to` too (they stay where they are). */
+function addDocsToProject(docIds: string[], to: string): void {
+  for (const docId of docIds) void sendProjectUpdate({ kind: 'member', id: to, docId, member: true });
+  showToast(`${docsLabel(docIds)}를 ${projectName(to)}에도 추가했습니다.`, { label: '열기', run: () => { void openProject(to); } });
+}
+
+/** Moves the documents to `to`: open tabs here go with them. */
+async function moveDocsToProject(docIds: string[], to: string): Promise<void> {
+  let moved = 0;
+  for (const docId of docIds) {
+    if (isDocInProject(projects, to, docId)) continue;
+    const tab = openTabFor(docId);
+    const from = moveSource(docId);
+    if (from === to) continue;
+    const response = await ask<{ success?: boolean }>({
+      type: 'VOCAB_T_PDF_PROJECT_MOVE', docId, url: tab?.url ?? library[docId]?.urls[0] ?? null, from, to, keep: false,
+    });
+    if (!response?.success) continue;
+    moved += 1;
+    pendingPins.delete(docId);
+    if (tab && tabs.includes(tab)) removeTab(tab);
+  }
+  render();
+  showToast(moved ? `${moved}개 문서를 ${projectName(to)}(으)로 옮겼습니다.` : '옮길 문서가 없습니다.', moved ? { label: '열기', run: () => { void openProject(to); } } : undefined);
+}
+
+function removeDocsFromProject(docIds: string[]): void {
+  const inside = docIds.filter((id) => projectId !== DEFAULT_PROJECT_ID && isDocInProject(projects, projectId, id));
+  for (const docId of inside) {
+    void sendProjectUpdate({ kind: 'member', id: projectId, docId, member: false });
+    registered.add(docId);
+    const tab = openTabFor(docId);
+    if (tab) { if (tab.pinned) { tab.pinned = false; tab.keepOnUnpin = false; } closeTab(tab.key, false); }
+  }
+  showToast(`${docsLabel(inside)}를 이 프로젝트에서 뺐습니다.`, {
+    label: '되돌리기',
+    run: () => { for (const docId of inside) void sendProjectUpdate({ kind: 'member', id: projectId, docId, member: true }); },
+  });
+}
+
+function showProjectPicker(docIds: string[], mode: 'add' | 'move', x: number, y: number): void {
+  const choices = projectChoices(docIds).filter((c) => mode === 'move' || c.project.id !== DEFAULT_PROJECT_ID);
+  showMenu([
+    { heading: mode === 'add' ? '다른 프로젝트에도 추가' : '다른 프로젝트로 옮기기' },
+    ...choices.map(({ project, holds }) => ({
+      label: holds ? `${project.name} — 이미 있음` : project.name,
+      disabled: holds,
+      run: () => {
+        if (mode === 'add') addDocsToProject(docIds, project.id);
+        else void moveDocsToProject(docIds, project.id);
+        selected.clear();
+        scheduleHomeRender();
+      },
+    })),
+    ...(choices.length === 0 ? [{ label: '다른 프로젝트가 없습니다', disabled: true, run: () => undefined }] : []),
+  ], x, y);
+}
+
+function showDocMenu(docIds: string[], x: number, y: number): void {
+  const one = docIds.length === 1 ? library[docIds[0]] : undefined;
+  const allPinned = docIds.every(isPinnedDoc);
+  const inHere = projectId !== DEFAULT_PROJECT_ID && docIds.some((id) => isDocInProject(projects, projectId, id));
+  const entries: MenuEntry[] = [];
+  if (one) entries.push({ label: '열기', run: () => openEntry(one) });
+  entries.push(
+    { label: allPinned ? '고정 해제' : '고정', run: () => { for (const id of docIds) setPinnedById(id, !allPinned); } },
+    'sep',
+    { label: '다른 프로젝트에도 추가…', run: () => showProjectPicker(docIds, 'add', x, y) },
+    { label: '다른 프로젝트로 옮기기…', run: () => showProjectPicker(docIds, 'move', x, y) },
+  );
+  if (inHere) entries.push({ label: '이 프로젝트에서 빼기', run: () => { removeDocsFromProject(docIds); selected.clear(); scheduleHomeRender(); } });
+  if (one) {
+    entries.push('sep', { label: `문서 종류: ${KIND_LABEL[libraryEntryKind(one)]}…`, run: () => showKindMenu(one.docId, x, y) });
+    const url = one.urls[0];
+    if (url) entries.push({ label: '주소 복사', run: () => { void navigator.clipboard.writeText(url).then(() => showToast('주소를 복사했습니다.'), () => showToast('주소를 복사하지 못했습니다.')); } });
+  }
+  showMenu(entries, x, y);
+}
+
+// The bar at the bottom of home while documents are selected.
+const selectionBar = el('div', { className: 'rpdf-selbar', hidden: true });
+selectionBar.setAttribute('role', 'toolbar');
+selectionBar.setAttribute('aria-label', '선택한 문서');
+home.append(selectionBar);
+
+function renderSelectionBar(): void {
+  for (const id of [...selected]) if (!library[id]) selected.delete(id);
+  selectionBar.hidden = selected.size === 0;
+  home.classList.toggle('has-selection', selected.size > 0);
+  if (selected.size === 0) { selectionBar.replaceChildren(); return; }
+  const ids = [...selected];
+  const button = (label: string, run: (b: HTMLButtonElement) => void) => {
+    const b = el('button', { type: 'button', className: 'rpdf-selbar-btn', textContent: label });
+    b.addEventListener('click', () => run(b));
+    return b;
+  };
+  const at = (b: HTMLButtonElement) => { const r = b.getBoundingClientRect(); return { x: r.left, y: r.top - 8 - Math.min(320, 34 * (projectChoices(ids).length + 1)) }; };
+  const allPinned = ids.every(isPinnedDoc);
+  const inHere = projectId !== DEFAULT_PROJECT_ID && ids.some((id) => isDocInProject(projects, projectId, id));
+  selectionBar.replaceChildren(
+    el('span', { className: 'rpdf-selbar-count', textContent: `${selected.size}개 선택` }),
+    el('span', { className: 'rpdf-selbar-gap' }),
+    button('다른 프로젝트에도 추가', (b) => { const p = at(b); showProjectPicker(ids, 'add', p.x, p.y); }),
+    button('옮기기', (b) => { const p = at(b); showProjectPicker(ids, 'move', p.x, p.y); }),
+    button(allPinned ? '고정 해제' : '고정', () => { for (const id of ids) setPinnedById(id, !allPinned); selected.clear(); renderSelectionBar(); scheduleHomeRender(); }),
+    ...(inHere ? [button('이 프로젝트에서 빼기', () => { removeDocsFromProject(ids); selected.clear(); renderSelectionBar(); scheduleHomeRender(); })] : []),
+    button('선택 해제', () => { selected.clear(); renderSelectionBar(); scheduleHomeRender(); }),
+  );
+}
+
+function homeSection(title: string, rows: HTMLElement[], extra?: HTMLElement, tools?: HTMLElement): HTMLElement {
   const section = el('section', { className: 'rpdf-home-section' });
-  section.append(el('h2', { textContent: title }));
+  const head = el('div', { className: 'rpdf-home-section-head' });
+  head.append(el('h2', { textContent: title }));
+  if (tools) head.append(tools);
+  section.append(head);
   const list = el('ul', { className: 'rpdf-items' });
   list.append(...rows);
   section.append(list);
@@ -1257,6 +1511,31 @@ function moreButton(total: number, onMore: () => void): HTMLElement | undefined 
   return more;
 }
 
+/** Filter chips (with counts over `entries`) and the sort menu. */
+function homeTools(entries: PdfLibraryEntry[]): HTMLElement {
+  const bar = el('div', { className: 'rpdf-home-tools' });
+  const chips = el('div', { className: 'rpdf-chips', role: 'group' });
+  chips.setAttribute('aria-label', '거르기');
+  // Kind chips only when there is more than one kind to tell apart.
+  const kinds = KIND_ORDER.filter((k) => entries.some((e) => libraryEntryKind(e) === k));
+  const filters: HomeFilter[] = ['all', ...(kinds.length > 1 ? kinds : []), 'annotated', 'reading', 'unread'];
+  for (const filter of filters) {
+    const count = entries.filter((e) => matchesFilter(e, filter)).length;
+    if (count === 0 && filter !== 'all' && filter !== homeView.filter) continue;
+    const label = filter in HOME_FILTER_LABEL ? HOME_FILTER_LABEL[filter as keyof typeof HOME_FILTER_LABEL] : KIND_LABEL[filter as PdfDocKind];
+    const chip = el('button', { type: 'button', className: 'rpdf-chip', textContent: `${label} ${count}` });
+    chip.setAttribute('aria-pressed', String(homeView.filter === filter));
+    chip.addEventListener('click', () => setHomeView({ filter: homeView.filter === filter ? 'all' : filter }));
+    chips.append(chip);
+  }
+  const sort = el('select', { className: 'rpdf-sort' });
+  sort.setAttribute('aria-label', '정렬');
+  for (const [value, label] of Object.entries(HOME_SORT_LABEL)) sort.append(el('option', { value, textContent: label, selected: homeView.sort === value }));
+  sort.addEventListener('change', () => setHomeView({ sort: sort.value as HomeSort }));
+  bar.append(chips, sort);
+  return bar;
+}
+
 function renderHome(): void {
   const project = currentProject();
   homeTitle.replaceChildren(projectBadge(project), document.createTextNode(project.name));
@@ -1266,6 +1545,7 @@ function renderHome(): void {
   const otherNames = (docId: string) => (index.get(docId) ?? []).filter((id) => id !== projectId).map(projectName);
   const query = homeSearch.value.trim();
   const sections: HTMLElement[] = [];
+  renderSelectionBar();
   if (query) {
     const found = searchPdfLibrary(entries, query);
     sections.push(found.length
@@ -1276,7 +1556,10 @@ function renderHome(): void {
   }
   const pinnedIds = pinnedDocIds();
   const pinned = pinnedIds.map((id) => library[id]).filter((e): e is PdfLibraryEntry => !!e);
-  if (pinned.length) sections.push(homeSection('고정됨', pinned.map((e) => homeRow(e))));
+  if (pinned.length) {
+    const hint = el('span', { className: 'rpdf-home-hint-inline', textContent: pinned.length > 1 ? '끌어서 순서 변경 · 탭 줄 순서와 같음' : '' });
+    sections.push(homeSection('고정', pinned.map((e) => homeRow(e, { pinnedList: true })), undefined, hint));
+  }
   if (closed.length) {
     const rows = closed.slice(0, 6).map((entry) => {
       const row = el('li', { className: 'rpdf-item' });
@@ -1294,10 +1577,15 @@ function renderHome(): void {
     sections.push(homeSection('최근 닫은 탭', rows));
   }
   const pinnedSet = new Set(pinnedIds);
-  const mine = searchPdfLibrary(entries.filter((e) => !pinnedSet.has(e.docId) && inThisProject(e.docId, index)), '');
+  const mine = entries.filter((e) => !pinnedSet.has(e.docId) && inThisProject(e.docId, index));
+  const others = isDefault ? [] : entries.filter((e) => !pinnedSet.has(e.docId) && !inThisProject(e.docId, index));
+  const tools = homeTools([...mine, ...others]);
+  const shown = (list: PdfLibraryEntry[]) => sortEntries(list.filter((e) => matchesFilter(e, homeView.filter)), homeView.sort);
+  const mineShown = shown(mine);
   if (isDefault) {
     if (mine.length) {
-      sections.push(homeSection('이어 읽기', mine.slice(0, homeLimit).map((e) => homeRow(e)), moreButton(mine.length, () => { homeLimit += HOME_PAGE_SIZE; renderHome(); })));
+      sections.push(homeSection('문서', mineShown.slice(0, homeLimit).map((e) => homeRow(e)), moreButton(mineShown.length, () => { homeLimit += HOME_PAGE_SIZE; renderHome(); }), tools));
+      if (mineShown.length === 0) sections[sections.length - 1].append(el('p', { className: 'rpdf-home-hint', textContent: '이 조건에 맞는 문서가 없습니다.' }));
     }
     if (sections.length === 0) {
       sections.push(el('p', {
@@ -1308,20 +1596,22 @@ function renderHome(): void {
     homeSections.replaceChildren(...sections);
     return;
   }
-  const own = homeSection('이 프로젝트의 문서', mine.map((e) => homeRow(e, { remove: true })));
+  const own = homeSection('이 프로젝트의 문서', mineShown.map((e) => homeRow(e)), undefined, tools);
   if (mine.length === 0) {
     own.append(el('p', {
       className: 'rpdf-home-hint',
       textContent: '아직 문서가 없습니다. 아래 목록에서 열거나 +로 추가하고, 다른 프로젝트의 탭에서는 ‘프로젝트로 이동’을 쓰세요. 이 프로젝트에서 연 PDF는 자동으로 추가됩니다.',
     }));
+  } else if (mineShown.length === 0) {
+    own.append(el('p', { className: 'rpdf-home-hint', textContent: '이 조건에 맞는 문서가 없습니다.' }));
   }
   sections.push(own);
-  const others = searchPdfLibrary(entries.filter((e) => !pinnedSet.has(e.docId) && !inThisProject(e.docId, index)), '');
-  if (others.length) {
+  const othersShown = shown(others);
+  if (othersShown.length) {
     sections.push(homeSection(
       '다른 PDF',
-      others.slice(0, homeLimit).map((e) => homeRow(e, { add: true, elsewhere: otherNames(e.docId) })),
-      moreButton(others.length, () => { homeLimit += HOME_PAGE_SIZE; renderHome(); }),
+      othersShown.slice(0, homeLimit).map((e) => homeRow(e, { add: true, elsewhere: otherNames(e.docId) })),
+      moreButton(othersShown.length, () => { homeLimit += HOME_PAGE_SIZE; renderHome(); }),
     ));
   }
   homeSections.replaceChildren(...sections);
@@ -1525,7 +1815,7 @@ function updateFavicon(): void {
   if (!faviconLink) return;
   const project = currentProject();
   const look = pdfProjectLook(project);
-  const plain = project.id === DEFAULT_PROJECT_ID && !project.icon && !project.color;
+  const plain = !display.projectFavicon || (project.id === DEFAULT_PROJECT_ID && !project.icon && !project.color);
   const key = plain ? 'app' : `${look.kind}|${look.value}|${look.color}`;
   if (key === faviconKey) return;
   faviconKey = key;
@@ -2399,6 +2689,7 @@ async function boot(): Promise<void> {
   await loadLibraryState();
   if (projects[projectId]?.deletedAt !== 0) projectId = DEFAULT_PROJECT_ID;
   closed = loadClosed();
+  homeView = loadHomeView();
   updateProjectLabel();
   reconcilePinned();
   addDocs(docs.map((doc) => ({ ...doc, file: null })), false, false);
