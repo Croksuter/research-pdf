@@ -12,7 +12,7 @@ import {
   parsePdfLibrary,
   parsePdfLibraryUpdate,
   pinnedLibraryEntries,
-  relativeTimeKo,
+  relativeTime,
   searchPdfLibrary,
   type PdfLibrary,
   type PdfLibraryEntry,
@@ -136,11 +136,11 @@ describe('library display', () => {
   });
 
   it('says how long ago in Korean', () => {
-    expect(relativeTimeKo(NOW - 5_000, NOW)).toBe('방금');
-    expect(relativeTimeKo(NOW - 5 * 60_000, NOW)).toBe('5분 전');
-    expect(relativeTimeKo(NOW - 3 * 3_600_000, NOW)).toBe('3시간 전');
-    expect(relativeTimeKo(NOW - 2 * 86_400_000, NOW)).toBe('2일 전');
-    expect(relativeTimeKo(NOW - 30 * 86_400_000, NOW)).toMatch(/^\d+월 \d+일$/u);
+    expect(relativeTime(NOW - 5_000, NOW)).toBe('방금');
+    expect(relativeTime(NOW - 5 * 60_000, NOW)).toBe('5분 전');
+    expect(relativeTime(NOW - 3 * 3_600_000, NOW)).toBe('3시간 전');
+    expect(relativeTime(NOW - 2 * 86_400_000, NOW)).toBe('2일 전');
+    expect(relativeTime(NOW - 30 * 86_400_000, NOW)).toMatch(/^\d+월 \d+일$/u);
   });
 });
 
