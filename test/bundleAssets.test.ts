@@ -6,11 +6,12 @@ const dist = resolve(__dirname, '../dist');
 
 // Artifact test: `npm run test:bundle` builds first. Ordinary runs skip it.
 describe.skipIf(!existsSync(resolve(dist, 'pdfViewer.js')))('production package', () => {
-  it('contains only the viewer, its popup, the sync background, the upkeep page, PDF.js assets and the layout model', () => {
+  it('contains only the viewer, its popup and settings page, the sync background, the upkeep page, PDF.js assets and the layout model', () => {
     const files = readdirSync(dist).filter((name) => !name.endsWith('.map')).sort();
     expect(files).toEqual([
       'background.js', 'icons', 'manifest.json', 'models', 'ort', 'ort.js', 'pdf-hub.html', 'pdf-upkeep.html', 'pdf-viewer.html', 'pdfHub.css', 'pdfHub.js',
-      'pdfUpkeep.js', 'pdfViewer.css', 'pdfViewer.js', 'pdfjs', 'popup.css', 'popup.html', 'popup.js', 'tokens.css',
+      'pdfUpkeep.js', 'pdfViewer.css', 'pdfViewer.js', 'pdfjs', 'popup.css', 'popup.html', 'popup.js', 'settings.css', 'settings.html',
+      'settings.js', 'tokens.css',
     ]);
     // Figure auto-detect: the model with its license, and ONNX Runtime's wasm (loaded on first use).
     for (const file of ['models/pp-doclayout-s.onnx', 'models/LICENSE-Apache-2.0.txt', 'models/NOTICE.md', 'ort/ort-wasm-simd-threaded.wasm', 'ort/ort-wasm-simd-threaded.mjs']) {

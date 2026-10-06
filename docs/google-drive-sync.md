@@ -96,7 +96,7 @@ Only the project owner does this, once. End users never see it.
    scope no verification review is required, and consent does not expire weekly
    the way it does in Testing mode. Data access: add `drive.appdata`.
 3. Clients → Create client → **Web application**. Authorized redirect URI:
-   `https://<extension-id>.chromiumapp.org/` (the popup prints the exact value).
+   `https://<extension-id>.chromiumapp.org/` (the settings page prints the exact value under "로그인이 안 될 때").
    No JavaScript origins. Do not download or commit the client secret; the
    implicit flow never uses it.
 4. Put the client ID in `GOOGLE_OAUTH_CLIENT_ID` (`src/shared/constants.ts`).

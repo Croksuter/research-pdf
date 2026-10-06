@@ -8,6 +8,7 @@ module.exports = {
   entry: {
     background: './src/background.ts',
     popup: './src/ui/popup.ts',
+    settings: './src/ui/settings.ts',
     pdfViewer: './src/ui/pdfViewer.ts',
     pdfHub: './src/ui/pdfHub.ts',
     pdfUpkeep: './src/ui/pdfUpkeep.ts',
@@ -47,6 +48,8 @@ module.exports = {
         { from: 'manifest.json', to: '.' },
         { from: 'src/ui/popup.html', to: '.' },
         { from: 'src/ui/popup.css', to: '.' },
+        { from: 'src/ui/settings.html', to: '.' },
+        { from: 'src/ui/settings.css', to: '.' },
         { from: 'src/ui/pdf-viewer.html', to: '.' },
         { from: 'src/ui/pdfViewer.css', to: '.' },
         { from: 'src/ui/pdf-hub.html', to: '.' },

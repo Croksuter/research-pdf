@@ -62,9 +62,9 @@ ResearchPDF는 논문을 읽는 사람을 위한 Chrome PDF 뷰어입니다. 웹
 
 ■ 시작하기
 1. 웹의 PDF 링크를 열거나, 컴퓨터의 PDF를 Chrome 창에 끌어다 놓으세요.
-2. 웹 PDF를 이 뷰어로 열려면 확장 아이콘에서 "웹 PDF도 ResearchPDF로 열기"를 켜고 권한을 허용합니다.
-3. 컴퓨터의 PDF는 "로컬 PDF를 ResearchPDF로 열기"를 켜고, 확장 프로그램 세부정보에서 "파일 URL에 대한 액세스 허용"을 켜면 열립니다.
-4. 기기 간 동기화는 확장 아이콘에서 Google 계정을 연결하면 시작됩니다.
+2. 웹 PDF를 이 뷰어로 열려면 확장 아이콘 → 설정에서 "웹 PDF도 ResearchPDF로 열기"를 켜고 권한을 허용합니다.
+3. 컴퓨터의 PDF는 설정에서 "컴퓨터의 PDF를 ResearchPDF로 열기"를 켜고, 확장 프로그램 세부정보에서 "파일 URL에 대한 액세스 허용"을 켜면 열립니다.
+4. 기기 간 동기화는 확장 아이콘이나 설정에서 Google 계정을 연결하면 시작됩니다.
 
 문의와 버그 제보: https://github.com/Croksuter/research-pdf/issues
 ```

@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>설정 · ResearchPDF</title>
+  <link rel="icon" href="icons/icon-32.png">
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <header class="st-top">
+    <div class="st-top-inner">
+      <div class="st-brand">
+        <img src="icons/icon-48.png" width="32" height="32" alt="">
+        <div>
+          <h1>설정</h1>
+          <p id="st-version">ResearchPDF</p>
+        </div>
+      </div>
+      <label class="st-search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>
+        <input id="st-search" type="search" placeholder="설정 찾기" autocomplete="off" spellcheck="false" aria-label="설정 찾기">
+      </label>
+    </div>
+    <nav class="st-chips" aria-label="설정 섹션">
+      <a href="#sync">동기화</a>
+      <a href="#open">PDF 열기</a>
+      <a href="#paper">논문 정보</a>
+      <a href="#storage">저장 공간</a>
+      <a href="#keys">단축키</a>
+      <a href="#about">정보</a>
+    </nav>
+  </header>
+
+  <main class="st-main">
+    <p id="st-empty" class="st-empty" hidden>일치하는 설정이 없습니다.</p>
+
+    <section id="sync" class="st-card" aria-labelledby="sync-title">
+      <h2 id="sync-title">Google Drive 동기화 <span class="st-optional">선택</span></h2>
+      <p class="st-desc">필기와 읽던 위치, 열어 본 PDF 목록, 프로젝트를 내 Google Drive의 앱 전용 숨김 폴더에 저장해 모든 Chrome 프로필과 기기에서 이어 봅니다. 이 폴더 밖의 Drive 파일은 볼 수 없고, PDF 파일 자체는 올리지 않습니다.</p>
+      <div class="st-account">
+        <div id="sync-avatar" class="st-avatar" aria-hidden="true">G</div>
+        <div class="st-account-text">
+          <p id="sync-account" class="st-row-title">연결된 Google 계정이 없습니다.</p>
+          <p id="sync-status" class="st-row-sub" aria-live="polite"></p>
+        </div>
+        <button type="button" id="sync-now" class="st-btn">지금 동기화</button>
+      </div>
+      <div class="st-row" data-search="동기화 사용 끄기 drive">
+        <div class="st-row-text">
+          <p class="st-row-title">동기화 사용</p>
+          <p class="st-row-sub">끄면 이 기기는 Drive와 주고받지 않습니다. 계정 연결은 유지됩니다.</p>
+        </div>
+        <input type="checkbox" id="sync-enabled" class="st-switch" aria-label="동기화 사용">
+      </div>
+      <div class="st-actions">
+        <button type="button" id="sync-connect" class="st-btn st-btn-primary">Google 계정 연결</button>
+        <button type="button" id="sync-disconnect" class="st-btn">연결 해제</button>
+      </div>
+      <details class="st-details">
+        <summary>로그인이 안 될 때</summary>
+        <p id="sync-setup" class="st-row-sub"></p>
+      </details>
+    </section>
+
+    <section id="open" class="st-card" aria-labelledby="open-title">
+      <h2 id="open-title">PDF 열기</h2>
+      <div class="st-row" data-search="웹 pdf 사이트 접근 권한 https">
+        <div class="st-row-text">
+          <p class="st-row-title">웹 PDF도 ResearchPDF로 열기 <span id="web-access" class="st-badge"></span></p>
+          <p class="st-row-sub">주소로 연 PDF(https://…)를 내장 뷰어로 엽니다. 켜면 사이트 접근 권한을 요청하며, PDF를 가져와 뷰어로 돌리는 데만 씁니다.</p>
+        </div>
+        <input type="checkbox" id="web-pdf-viewer-enabled" class="st-switch" aria-label="웹 PDF도 ResearchPDF로 열기">
+      </div>
+      <div class="st-row" data-search="로컬 pdf 파일 url 접근 file">
+        <div class="st-row-text">
+          <p class="st-row-title">컴퓨터의 PDF를 ResearchPDF로 열기 <span id="file-access" class="st-badge"></span></p>
+          <p class="st-row-sub">file:// 로 연 PDF를 Chrome 기본 뷰어 대신 내장 뷰어로 엽니다. Chrome의 확장 프로그램 세부정보에서 "파일 URL에 대한 액세스 허용"이 켜져 있어야 합니다. <button type="button" id="file-access-open" class="st-link" hidden>Chrome에서 켜기</button></p>
+        </div>
+        <input type="checkbox" id="local-pdf-viewer-enabled" class="st-switch" aria-label="컴퓨터의 PDF를 ResearchPDF로 열기">
+      </div>
+      <div class="st-row" data-search="닫힌 탭 복구 업데이트 리로드">
+        <div class="st-row-text">
+          <p class="st-row-title">닫힌 PDF 탭 복구</p>
+          <p class="st-row-sub">확장 프로그램이 업데이트되면 Chrome이 PDF 탭을 닫습니다. 보통 자동으로 다시 열리며, 안 됐을 때 씁니다.</p>
+        </div>
+        <button type="button" id="restore-viewer-tabs" class="st-btn">복구</button>
+      </div>
+      <p id="open-status" class="st-status" aria-live="polite"></p>
+    </section>
+
+    <section id="paper" class="st-card" aria-labelledby="paper-title">
+      <h2 id="paper-title">논문 정보</h2>
+      <div class="st-row" data-search="논문 정보 표시 게재처 인용 참고문헌">
+        <div class="st-row-text">
+          <p class="st-row-title">논문 정보 표시</p>
+          <p class="st-row-sub">논문(DOI·arXiv·제목)을 알아보면 게재처, 인용 수와 추이, 참고문헌, 링크를 보여줍니다. 식별자만 OpenAlex·Crossref·arXiv·Semantic Scholar에 보냅니다.</p>
+        </div>
+        <input type="checkbox" id="paper-info-enabled" class="st-switch" aria-label="논문 정보 표시">
+      </div>
+      <div class="st-field" data-search="openalex api 키 한도">
+        <label for="openalex-api-key-input" class="st-row-title">OpenAlex API 키 <span id="openalex-key-state" class="st-badge"></span></label>
+        <p class="st-row-sub">키 없이 쓰면 같은 네트워크(IP)의 모든 사용자가 하루 한도를 나눠 씁니다. 무료 키는 <a href="https://openalex.org/" target="_blank" rel="noopener">openalex.org</a>에 가입하면 받습니다.</p>
+        <div class="st-inline">
+          <input type="password" id="openalex-api-key-input" class="st-input" autocomplete="off" spellcheck="false">
+          <button type="button" id="openalex-api-key-save" class="st-btn">저장</button>
+          <button type="button" id="openalex-check" class="st-btn">확인</button>
+        </div>
+        <p id="openalex-check-result" class="st-check" aria-live="polite"></p>
+      </div>
+      <div class="st-field" data-search="semantic scholar api 키 한도">
+        <label for="s2-api-key-input" class="st-row-title">Semantic Scholar API 키 <span id="s2-key-state" class="st-badge"></span></label>
+        <p class="st-row-sub">키가 없으면 공용 익명 한도를 써서 붐빌 때 인용 수가 빠질 수 있습니다. 키는 <a href="https://www.semanticscholar.org/product/api#api-key-form" target="_blank" rel="noopener">semanticscholar.org</a>에서 신청합니다.</p>
+        <div class="st-inline">
+          <input type="password" id="s2-api-key-input" class="st-input" autocomplete="off" spellcheck="false">
+          <button type="button" id="s2-api-key-save" class="st-btn">저장</button>
+          <button type="button" id="s2-check" class="st-btn">확인</button>
+        </div>
+        <p id="s2-check-result" class="st-check" aria-live="polite"></p>
+      </div>
+    </section>
+
+    <section id="storage" class="st-card" aria-labelledby="storage-title">
+      <h2 id="storage-title">저장 공간</h2>
+      <div class="st-row" data-search="pdf 보관 캐시 저장">
+        <div class="st-row-text">
+          <p class="st-row-title">연 PDF를 이 기기에 보관</p>
+          <p class="st-row-sub">한 번 연 웹 PDF를 이 기기에 두어, 다시 열 때 네트워크를 기다리지 않습니다. 가끔 서버와 비교해 새 버전이면 알려줍니다. 오래 안 쓴 것부터 지우며 Drive로는 보내지 않습니다.</p>
+        </div>
+        <input type="checkbox" id="pdf-file-cache-enabled" class="st-switch" aria-label="연 PDF를 이 기기에 보관">
+      </div>
+      <div class="st-meter" data-search="보관 용량 비우기">
+        <div class="st-meter-head">
+          <span id="cache-usage" class="st-row-title">보관한 PDF</span>
+          <button type="button" id="pdf-file-cache-clear" class="st-btn">보관한 PDF 비우기</button>
+        </div>
+        <div class="st-bar" role="progressbar" aria-label="보관한 PDF 용량" aria-valuemin="0" aria-valuemax="100"><span id="cache-bar"></span></div>
+      </div>
+      <dl class="st-stats">
+        <div><dt>열어 본 PDF</dt><dd id="stat-library">–</dd></div>
+        <div><dt>필기가 있는 문서</dt><dd id="stat-annotated">–</dd></div>
+        <div><dt>프로젝트</dt><dd id="stat-projects">–</dd></div>
+      </dl>
+      <p id="storage-status" class="st-status" aria-live="polite"></p>
+    </section>
+
+    <section id="keys" class="st-card" aria-labelledby="keys-title">
+      <h2 id="keys-title">단축키</h2>
+      <div id="shortcuts" class="st-keys"></div>
+    </section>
+
+    <section id="about" class="st-card" aria-labelledby="about-title">
+      <h2 id="about-title">정보</h2>
+      <ul class="st-links">
+        <li><a href="https://research-pdf.croksuter.com/" target="_blank" rel="noopener">홈페이지</a></li>
+        <li><a href="https://research-pdf.croksuter.com/privacy.html" target="_blank" rel="noopener">개인정보처리방침</a></li>
+        <li><a href="https://github.com/Croksuter/research-pdf/issues" target="_blank" rel="noopener">문의·버그 제보</a></li>
+        <li><a href="https://chromewebstore.google.com/detail/obbepklelbbaaiomhjngdnkneffgmkog" target="_blank" rel="noopener">Chrome 웹 스토어</a></li>
+      </ul>
+    </section>
+  </main>
+  <script src="settings.js"></script>
+</body>
+</html>

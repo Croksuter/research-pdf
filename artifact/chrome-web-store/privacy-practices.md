@@ -19,7 +19,7 @@
 | `declarativeNetRequestWithHostAccess` | 주소에 `.pdf`가 없어도 응답의 Content-Type이 PDF인 최상위 문서를 내장 뷰어로 보내는 규칙 하나를 둡니다. 사용자가 웹 PDF 열기를 켜고 사이트 접근을 허용한 경우에만 적용됩니다. | `src/background/pdfRouting.ts` |
 | `identity` | 사용자가 "Google 계정 연결"을 누를 때 OAuth 로그인 창을 띄워, Drive의 앱 전용 폴더(`drive.appdata` 범위)에만 접근하는 토큰을 받습니다. | `src/background/googleAuth.ts` |
 | 호스트 권한 `file:///*` | 사용자가 로컬 PDF 열기를 켜고 Chrome에서 파일 URL 접근을 허용한 경우, 컴퓨터의 PDF 파일을 뷰어로 읽습니다. | `src/ui/pdfViewer.ts` |
-| 선택 호스트 권한 `https://*/*`, `http://*/*` | 설치 시 요청하지 않습니다. 사용자가 "웹 PDF도 ResearchPDF로 열기"를 켜거나 뷰어에서 웹 PDF 열기를 허용할 때만 요청하며, 웹 PDF 파일을 내려받아 뷰어에 표시하고 PDF 응답을 뷰어로 돌리는 데만 씁니다. | `src/ui/popup.ts`, `src/ui/pdfViewer.ts`, `src/ui/pdfFileFetch.ts` |
+| 선택 호스트 권한 `https://*/*`, `http://*/*` | 설치 시 요청하지 않습니다. 사용자가 "웹 PDF도 ResearchPDF로 열기"를 켜거나 뷰어에서 웹 PDF 열기를 허용할 때만 요청하며, 웹 PDF 파일을 내려받아 뷰어에 표시하고 PDF 응답을 뷰어로 돌리는 데만 씁니다. | `src/ui/settings.ts`, `src/ui/pdfViewer.ts`, `src/ui/pdfFileFetch.ts` |
 
 ### 원격 코드 (Remote code)
 
@@ -35,7 +35,7 @@
 
 | 항목 | 체크 | 이유 |
 |---|---|---|
-| 개인 식별 정보 | ☑ | 연결한 Google 계정의 이메일 주소를 Drive API에서 받아, 어떤 계정이 연결됐는지 팝업에 보여줍니다. 기기에만 저장하며 개발자에게 보내지 않습니다. |
+| 개인 식별 정보 | ☑ | 연결한 Google 계정의 이메일 주소를 Drive API에서 받아, 어떤 계정이 연결됐는지 팝업과 설정 페이지에 보여줍니다. 기기에만 저장하며 개발자에게 보내지 않습니다. |
 | 건강 정보 | ☐ | |
 | 금융 및 결제 정보 | ☐ | |
 | 인증 정보 | ☐ | 비밀번호를 다루지 않습니다. OAuth 토큰은 Google이 발급해 Drive 호출에만 쓰고 기기에만 둡니다. |

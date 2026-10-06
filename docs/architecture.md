@@ -11,7 +11,8 @@ library and projects. No content script, no server, no account of its own.
 |---|---|
 | build | `npm run build` → `dist/`, `npm run zip` for the store |
 | background | `src/background.ts` + `src/background/*` |
-| popup | `src/ui/popup.*` |
+| popup | `src/ui/popup.*`: open the PDF tab, sync at a glance, a nudge when web PDFs are off |
+| settings page | `src/ui/settings.*` (`options_ui`): every setting on one page of cards, with Chrome's site / file-URL access shown next to the switches that need it, API key checks (OpenAlex's remaining daily budget from its `X-RateLimit-*` headers, `shared/apiStatus.ts`), storage use and the shortcuts |
 | hub | `src/ui/pdf-hub.html`, `pdfHub.ts` + `src/background/pdfHub.ts` |
 | viewer | `src/ui/pdf-viewer.html`, `pdfViewer.ts`, `pdfViewer/*` |
 | sync engine | `src/background/pdfSyncService.ts`, `src/shared/pdfSync.ts` |
@@ -188,7 +189,7 @@ of ten colors) and its place in the list (folder + order key). Folders are
 - **Limits**: OpenAlex without a key counts against a daily budget shared by
   the network; once spent (429 "budget") the strip says so and stops asking
   OpenAlex until reload, and nothing is cached. Semantic Scholar without a key
-  is often 429. Both keys are optional settings (popup).
+  is often 429. Both keys are optional settings (settings page, which can check them).
 
 ## Selectable text
 

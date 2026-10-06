@@ -1,199 +1,64 @@
 /* ─── ResearchPDF popup ───
- * Palette comes from tokens.css (shared with the viewer). Only the handful of
- * control styles the settings page needs are defined here; nothing from the
- * other stylesheet is loaded. */
-
-:root {
-  --accent-hover-top: #1d4ed8;
-  --accent-hover-bottom: #1e40af;
-  --accent-hover-border: #93c5fd;
-}
+ * Palette from tokens.css. The settings themselves live on the settings
+ * page (settings.css); this is the quick panel. */
 
 * { box-sizing: border-box; }
 
 body {
-  width: 380px;
+  width: 340px;
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
   font-size: 13px;
   color: var(--text-default);
   background: var(--surface-strong);
 }
+[hidden] { display: none !important; }
 
-.rp-shell {
-  display: grid;
-  gap: 16px;
-  padding: 16px;
-}
+.rp-shell { display: grid; gap: 12px; padding: 16px; }
+.rp-header { display: flex; align-items: center; gap: 10px; }
+.rp-header h1 { margin: 0; font-size: 16px; color: var(--text-strong); }
+.rp-header p { margin: 2px 0 0; font-size: 12px; color: var(--text-muted); }
 
-.rp-header {
+.rp-card {
   display: flex;
   align-items: center;
-  gap: 10px;
-}
-
-.rp-header h1 {
-  margin: 0;
-  font-size: 16px;
-  color: var(--text-strong);
-}
-
-.rp-header p {
-  margin: 2px 0 0;
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
-.rp-section {
-  display: grid;
-  gap: 10px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-}
-
-.rp-section h2 {
-  margin: 0;
-  font-size: 14px;
-  color: var(--text-strong);
-}
-
-.rp-heading {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.rp-badge {
-  padding: 1px 7px;
-  border-radius: 99px;
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.rp-account {
-  margin: 0;
-  font-size: 13px;
-  color: var(--text-strong);
-  overflow-wrap: anywhere;
-}
-
-#sync-setup {
-  overflow-wrap: anywhere;
-}
-
-.settings-toggle {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 11px;
+  gap: 12px;
+  padding: 12px;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: 12px;
   background: var(--surface-soft);
-  cursor: pointer;
 }
-
-.settings-toggle input { margin-top: 3px; }
-
-.settings-toggle span {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.settings-toggle strong {
-  font-size: 13px;
-  color: var(--text-strong);
-}
-
-.settings-toggle small,
-.settings-privacy-note {
-  margin: 0;
-  font-size: 11.5px;
-  line-height: 1.5;
-  color: var(--text-muted);
-}
-
-.status-bar {
-  margin: 0;
-  font-size: 12.5px;
-  line-height: 1.45;
-  color: var(--text-muted);
-  min-height: 20px;
-}
-
-.field-group {
-  display: grid;
-  gap: 6px;
-}
-
-.field-group label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-strong);
-}
-
-.settings-input {
-  width: 100%;
-  padding: 10px 12px;
-  border: 1.5px solid var(--border);
-  border-radius: 8px;
-  font-size: 13.5px;
-  font-family: monospace;
-  color: var(--text-strong);
-  background: var(--surface-strong);
-  outline: none;
-}
-
-.settings-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
+.rp-card-text { flex: 1; min-width: 0; }
+.rp-card h2 { margin: 0; font-size: 13px; color: var(--text-strong); }
+.rp-sub { margin: 2px 0 0; color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
+.rp-hint { margin: 0; color: var(--text-muted); font-size: 12px; }
+.rp-link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
 
 .btn-primary,
 .btn-secondary {
-  width: 100%;
-  padding: 11px 12px;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 650;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 9px;
+  font: inherit;
+  font-weight: 600;
   cursor: pointer;
 }
-
 .btn-primary {
+  border: 1px solid transparent;
   background: linear-gradient(180deg, var(--accent-top), var(--accent-bottom));
   color: #fff;
-  border: none;
 }
-
-.btn-primary:hover { background: linear-gradient(180deg, var(--accent-hover-top), var(--accent-hover-bottom)); }
-
+.btn-primary:hover { filter: brightness(1.08); }
 .btn-secondary {
-  background: var(--surface);
-  color: var(--text-default);
+  flex: none;
   border: 1px solid var(--border-strong);
-  font-weight: 600;
+  background: var(--surface-strong);
+  color: var(--text-strong);
 }
+.btn-secondary:hover:not(:disabled) { background: var(--surface-hover); }
+.btn-secondary:disabled { opacity: 0.5; cursor: default; }
+.btn-primary:focus-visible,
+.btn-secondary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-.btn-secondary:hover {
-  background: var(--surface-soft);
-  border-color: var(--accent-hover-border);
-}
-
-.btn-primary:disabled,
-.btn-secondary:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-.settings-actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.settings-actions .btn-primary,
-.settings-actions .btn-secondary {
-  flex: 1 1 100px;
-}
+.rp-settings { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.rp-settings svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
