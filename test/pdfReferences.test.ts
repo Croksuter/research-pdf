@@ -117,4 +117,24 @@ describe('PDF reference list, more layouts', () => {
     ]);
     expect(refs[0].authors).toEqual(['O. Sporns', 'G. Tononi', 'R. Kötter']);
   });
+  describe('ends at an appendix heading the size of the text', () => {
+    const list = (heading: string, h = 9) => [
+      { page: 9, column: 0, x: 72, y: 760, h: 12, text: 'References' },
+      ...column(9, [
+        '[1] K. He, X. Zhang, S. Ren, and J. Sun. Deep residual learning for image recognition. In CVPR, 2016.',
+        '[2] A. Vaswani et al. Attention is all you need. In NeurIPS, 2017.',
+      ]),
+      { page: 10, column: 0, x: 72, y: 760, h, text: heading },
+      ...column(10, ['[3] Appendix text that happens to start with the next number.']),
+    ];
+    it.each(['부록', '부록 A', '부록. 증명', 'Appendix A', 'Appendix', 'APPENDIX: Proofs'])('%s', (heading) => {
+      expect(extractPdfReferences(list(heading)).map((r) => r.index)).toEqual([1, 2]);
+    });
+    it('a larger Hangul heading ends it too', () => {
+      expect(extractPdfReferences(list('감사의 글', 12)).map((r) => r.index)).toEqual([1, 2]);
+    });
+    it('a word that only starts like one does not', () => {
+      expect(extractPdfReferences(list('[3] Appendixes of the world. Some Journal, 2019.')).map((r) => r.index)).toEqual([1, 2, 3]);
+    });
+  });
 });

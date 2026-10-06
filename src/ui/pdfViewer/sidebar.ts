@@ -6,6 +6,9 @@ import { byId, el, formatBytes } from './dom';
 import { S } from './viewerParts.strings';
 
 const THUMB_WIDTH = 132;
+// Thumbnails this far outside the pane are dropped (and drawn again on the
+// way back), so a long document never holds every page's canvas.
+const KEEP_MARGIN = '2400px 0px';
 
 type SidebarView = 'thumbs' | 'outline' | 'attachments';
 
@@ -34,6 +37,7 @@ export class Sidebar {
   private doc: PDFDocumentProxy | null = null;
   private view: SidebarView = 'thumbs';
   private observer: IntersectionObserver | null = null;
+  private keeper: IntersectionObserver | null = null;
   private rendered = new Set<number>();
   private thumbEls: HTMLElement[] = [];
   private rotation = 0;
@@ -89,6 +93,8 @@ export class Sidebar {
 
   private buildThumbnails(doc: PDFDocumentProxy): void {
     this.observer?.disconnect();
+    this.keeper?.disconnect();
+    for (const n of this.rendered) this.releaseThumb(n);
     this.rendered.clear();
     this.thumbEls = [];
     this.thumbsPane.replaceChildren();
@@ -109,6 +115,11 @@ export class Sidebar {
         if (entry.isIntersecting) void this.renderThumb(Number((entry.target as HTMLElement).dataset.page));
       }
     }, { root: this.thumbsPane, rootMargin: '300px 0px' });
+    this.keeper = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) this.releaseThumb(Number((entry.target as HTMLElement).dataset.page));
+      }
+    }, { root: this.thumbsPane, rootMargin: KEEP_MARGIN });
     for (const item of this.thumbEls) this.observer.observe(item);
     this.markCurrent(this.deps.pdfViewer.currentPageNumber);
   }
@@ -139,10 +150,24 @@ export class Sidebar {
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       await page.render({ canvasContext: ctx, viewport } as Parameters<typeof page.render>[0]).promise;
+      if (this.doc !== doc || !this.rendered.has(pageNumber)) { canvas.width = 0; canvas.height = 0; return; }
       holder.replaceChildren(canvas);
+      holder.style.height = canvas.style.height; // keeps the slot's size once released
+      this.keeper?.observe(this.thumbEls[pageNumber - 1]);
     } catch {
       this.rendered.delete(pageNumber);
     }
+  }
+
+  private releaseThumb(pageNumber: number): void {
+    const item = this.thumbEls[pageNumber - 1];
+    const canvas = item?.querySelector<HTMLCanvasElement>('.vt-thumb-canvas canvas');
+    if (item) this.keeper?.unobserve(item);
+    this.rendered.delete(pageNumber);
+    if (!canvas) return;
+    canvas.width = 0;
+    canvas.height = 0;
+    canvas.remove();
   }
 
   private markCurrent(pageNumber: number): void {

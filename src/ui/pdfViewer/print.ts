@@ -1,7 +1,10 @@
 // Printing: PDF.js has no print service in the components build, so pages are
 // rasterized into <img> elements inside a print-only container and the page is
 // printed with `window.print()`. Annotations (including freshly drawn ones and
-// form values) are included via the print annotation storage.
+// form values) are included via the print annotation storage. Each page goes
+// through one canvas at a time into a PNG blob (an object URL, revoked after
+// printing), so a long document never holds every page as pixels or as a
+// data-URL string at once.
 
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { AnnotationMode } from 'pdfjs-dist';
@@ -33,6 +36,8 @@ export async function printDocument(doc: PDFDocumentProxy): Promise<void> {
   const onCancel = () => { cancelled = true; };
   cancelBtn.addEventListener('click', onCancel, { once: true });
 
+  const urls: string[] = [];
+  const loads: Array<Promise<unknown>> = [];
   try {
     const scale = PRINT_DPI / CSS_DPI;
     for (let n = 1; n <= doc.numPages; n += 1) {
@@ -54,9 +59,17 @@ export async function printDocument(doc: PDFDocumentProxy): Promise<void> {
         annotationMode: AnnotationMode.ENABLE_STORAGE,
         printAnnotationStorage: doc.annotationStorage.print,
       } as Parameters<typeof page.render>[0]).promise;
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+      // Release the pixels now rather than whenever the canvas is collected.
+      canvas.width = 0;
+      canvas.height = 0;
+      if (!blob) throw new Error('page image could not be encoded');
+      const url = URL.createObjectURL(blob);
+      urls.push(url);
       const img = el('img', { alt: S.pageN(n) });
+      loads.push(new Promise((resolve) => { img.onload = resolve; img.onerror = resolve; }));
       // Portrait vs landscape sheets are sized by CSS; the image scales to fit.
-      img.src = canvas.toDataURL('image/png');
+      img.src = url;
       const sheet = el('div', { className: viewport.width > viewport.height ? 'vt-print-page is-landscape' : 'vt-print-page' }, [img]);
       container.append(sheet);
       progressBar.value = n;
@@ -64,6 +77,7 @@ export async function printDocument(doc: PDFDocumentProxy): Promise<void> {
     }
     if (!cancelled) {
       progress.hidden = true;
+      await Promise.all(loads);
       await new Promise((r) => requestAnimationFrame(() => r(null)));
       window.print();
     }
@@ -71,7 +85,11 @@ export async function printDocument(doc: PDFDocumentProxy): Promise<void> {
     cancelBtn.removeEventListener('click', onCancel);
     progress.hidden = true;
     // Leave the images until the print dialog closes; afterprint clears them.
-    const clear = () => { container.replaceChildren(); window.removeEventListener('afterprint', clear); };
+    const clear = () => {
+      container.replaceChildren();
+      for (const url of urls.splice(0)) URL.revokeObjectURL(url);
+      window.removeEventListener('afterprint', clear);
+    };
     window.addEventListener('afterprint', clear);
     setTimeout(clear, 60_000);
     printing = false;

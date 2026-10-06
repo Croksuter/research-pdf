@@ -106,7 +106,7 @@ export class PresentationMode {
   private onClick(e: MouseEvent): void {
     if (!this.active) return;
     const target = e.target as HTMLElement;
-    if (target.closest('a, button, input, .annotationLayer, .vocab-t-hl')) return;
+    if (target.closest('a, button, input, .annotationLayer')) return;
     if (window.getSelection()?.toString()) return;
     this.pdfViewer.currentPageNumber += e.shiftKey ? -1 : 1;
   }
