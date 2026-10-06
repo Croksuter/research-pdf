@@ -139,8 +139,8 @@ h3 { margin: 28px 0 10px; font-size: 15px; color: var(--text-muted); }
 .wl-feature svg { width: 34px; height: 34px; margin-bottom: 6px; padding: 7px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); }
 .wl-feature span { color: var(--text-muted); font-size: 13.5px; }
 .wl-keys { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 24px; margin: 0; }
-.wl-keys div { display: flex; align-items: center; gap: 12px; }
-.wl-keys dt { display: flex; gap: 3px; min-width: 120px; }
+.wl-keys div { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; }
+.wl-keys dt { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; color: var(--text-muted); }
 .wl-keys dd { margin: 0; color: var(--text-muted); font-size: 14px; }
 kbd { min-width: 24px; padding: 1px 7px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 6px; background: var(--surface-strong); font: 600 12.5px/1.6 inherit; font-family: inherit; text-align: center; }
 
