@@ -93,7 +93,7 @@ export const S = messages({
     justNow: 'just now',
     minutesAgo: (n: number) => `${n} min ago`,
     hoursAgo: (n: number) => `${n} h ago`,
-    daysAgo: (n: number) => `${n} days ago`,
+    daysAgo: (n: number) => `${n} ${n === 1 ? 'day' : 'days'} ago`,
     dateThisYear: (month: number, day: number) => `${EN_MONTHS[month - 1]} ${day}`,
     dateOtherYear: (year: number, month: number, day: number) => `${EN_MONTHS[month - 1]} ${day}, ${year}`,
     latestVersion: 'latest',

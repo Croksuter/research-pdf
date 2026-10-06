@@ -6,7 +6,7 @@ ResearchPDF(`obbepklelbbaaiomhjngdnkneffgmkog`)의 스토어 등록에 쓰는 �
 | 파일 | 대시보드 위치 |
 |---|---|
 | [`listing.ko.md`](listing.ko.md) | 스토어 등록정보: 요약, 설명, 카테고리, 언어, 그래픽, URL |
-| [`listing.en.md`](listing.en.md) | (다국어화 후) 영어 등록정보 |
+| [`listing.en.md`](listing.en.md) | 영어 등록정보 (요약은 `_locales/en`) |
 | [`privacy-practices.md`](privacy-practices.md) | 개인정보 보호: 단일 목적, 권한 사용 이유, 원격 코드, 데이터 사용 |
 | `icon/store-icon-128.png` | 스토어 아이콘 |
 | `screenshots/01…05-*.png` | 캡처화면 (1280×800, 순서대로) |
@@ -57,6 +57,6 @@ PLAYWRIGHT_CORE=/path/to/node_modules/playwright-core CHROMIUM=/path/to/chrome n
 ## 등록 전 확인
 
 - [ ] 스크린샷 1·3에 ⚠ 표시가 없는지 (OpenAlex 한도)
-- [ ] 패키지 요약이 한국어 목록과 맞는지 (`listing.ko.md`의 요약 제안 참고, manifest 변경 필요)
+- [ ] 패키지 요약이 등록정보와 맞는지 (`src/_locales/ko|en/messages.json`의 `appDescription`)
 - [ ] 홈페이지(`docs/index.html`)에 프로젝트·그림 캡처 등 최신 기능이 반영됐는지
 - [ ] 개인정보처리방침 URL이 열리는지

@@ -1,4 +1,5 @@
 import { debugError, debugLog, redactForDebugLog } from '../shared/debugLog';
+import { languageReady } from '../shared/i18n';
 
 export type BackgroundMessage = { type: string; [key: string]: unknown };
 export type MessageHandler = (
@@ -30,7 +31,9 @@ export function registerMessageDispatcher(handlers: Record<string, MessageHandle
       url: sender.tab?.url,
       message: redactForDebugLog(message),
     }));
-    Promise.resolve(handler(message, sender))
+    // Answers may carry text: word them in the stored language, read at start-up.
+    languageReady()
+      .then(() => handler(message, sender))
       .then((response) => {
         debugLog('bg:msg', `${message.type} responded (${Math.round(performance.now() - startedAt)}ms)`,
           () => redactForDebugLog(response));

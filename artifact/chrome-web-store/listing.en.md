@@ -1,11 +1,10 @@
 # Store listing (English)
 
-For an English listing later. The dashboard offers per-language descriptions
-once the package is localized (`_locales/en`, `_locales/ko` with
-`default_locale`); until then the listing language is Korean
-(`listing.ko.md`) and the summary is the manifest's English `description`.
+The English listing. The package is localized (`_locales/en`,
+`_locales/ko`, `default_locale: en`), so the dashboard takes a description
+per language; the summary is each locale's `appDescription`.
 
-## Summary (manifest `description`, ≤ 132 characters)
+## Summary (`_locales/en/messages.json` `appDescription`, ≤ 132 characters)
 
 ```
 PDF viewer for papers. Drawings and reading position follow you across Chrome profiles and devices via your own Google Drive.
@@ -42,7 +41,7 @@ ResearchPDF is a Chrome PDF viewer for people who read papers. PDFs you open on 
 ■ Privacy
 • PDFs are read only in your browser. To look a paper up, only identifiers (DOI, arXiv id, title) go to the scholarly databases.
 • Synced data lives only in your own Google Drive (app-only folder), never on a developer server. No ads, no analytics, no tracking.
-• Privacy policy: https://research-pdf.croksuter.com/privacy.html
+• Privacy policy: https://research-pdf.croksuter.com/privacy.html#en
 
 Questions and bug reports: https://github.com/Croksuter/research-pdf/issues
 ```

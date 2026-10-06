@@ -11,3 +11,7 @@ ul { padding-left: 20px; }
 li { margin: 6px 0; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.95em; }
 footer { margin-top: 48px; color: var(--muted); font-size: 14px; }
+/* Each page carries English and Korean, one after the other. */
+.nav { display: flex; justify-content: space-between; gap: 16px; margin: 0 0 24px; }
+.langs { color: var(--muted); font-size: 14px; }
+article + article { margin-top: 64px; padding-top: 40px; border-top: 1px solid color-mix(in srgb, var(--muted) 30%, transparent); }

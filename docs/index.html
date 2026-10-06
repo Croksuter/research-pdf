@@ -1,43 +1,83 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ResearchPDF</title>
-  <meta name="description" content="논문 PDF 뷰어 Chrome 확장. 그림과 읽던 위치가 내 Google Drive를 통해 모든 Chrome 프로필과 기기를 따라다닙니다.">
+  <meta name="description" content="A Chrome PDF viewer for papers. Your drawings and reading position follow you across every Chrome profile and device through your own Google Drive.">
   <link rel="stylesheet" href="site.css">
 </head>
 <body>
   <main>
-    <header>
-      <h1>ResearchPDF</h1>
-      <p class="lead">논문 PDF를 위한 Chrome 뷰어. 그림과 읽던 위치가 내 Google Drive를 통해 모든 Chrome 프로필과 기기를 따라다닙니다.</p>
-    </header>
+    <p class="nav"><span></span><span class="langs"><a href="#en" lang="en">English</a> · <a href="#ko" lang="ko">한국어</a></span></p>
 
-    <section>
-      <h2>기능</h2>
-      <ul>
-        <li>로컬 파일과 웹 PDF를 내장 PDF.js 뷰어로 엽니다. 펜, 하이라이트, 텍스트, 스탬프 주석을 지원합니다.</li>
-        <li>같은 논문을 어디서 열든 그림과 읽던 페이지·확대 상태가 그대로 돌아옵니다. 파일 내용으로 문서를 식별하므로 파일 이름이나 경로가 달라도 됩니다.</li>
-        <li>DOI·arXiv를 인식하면 게재처, 인용 수 추이, 참고문헌, 외부 링크를 보여줍니다.</li>
-        <li>Google 계정을 연결하면 Drive의 앱 전용 숨김 폴더로 그림과 읽던 위치를 동기화합니다. PDF 파일 자체는 업로드하지 않습니다.</li>
-        <li>확장 프로그램 업데이트로 닫힌 뷰어 탭을 자동으로 복구합니다.</li>
-      </ul>
-    </section>
+    <article id="en" lang="en">
+      <header>
+        <h1>ResearchPDF</h1>
+        <p class="lead">A Chrome PDF viewer for papers. Your drawings and reading position follow you across every Chrome profile and device through your own Google Drive.</p>
+      </header>
 
-    <section>
-      <h2>개인정보</h2>
-      <p>PDF는 브라우저 안에서만 읽고 어디에도 보내지 않습니다. 자세한 내용은 <a href="privacy.html">개인정보처리방침</a>을 보세요.</p>
-    </section>
+      <section>
+        <h2>Features</h2>
+        <ul>
+          <li>Opens local files and web PDFs in the built-in PDF.js viewer, with pen, highlight, text and stamp annotations.</li>
+          <li>PDFs gather in one tab per project, with their own tab strip; PDFs already open in Chrome's own viewer can be gathered there too.</li>
+          <li>Wherever you open the same paper, your drawings, last page and zoom come back. Documents are recognised by their content, so file names and paths don't matter.</li>
+          <li>Recognises papers by DOI, arXiv ID or title and shows the venue, citation trend, references and links.</li>
+          <li>Copies a figure or table as a sharp image, with its source line; detection runs on your device.</li>
+          <li>Connect a Google account to sync drawings, reading positions, the PDFs you opened and your projects through a hidden app-only folder in your Drive. The PDF files themselves are never uploaded.</li>
+          <li>In English and Korean.</li>
+        </ul>
+      </section>
 
-    <section>
-      <h2>문의</h2>
-      <p><a href="mailto:croksuter@gmail.com">croksuter@gmail.com</a></p>
-    </section>
+      <section>
+        <h2>Privacy</h2>
+        <p>PDFs are read only inside your browser and sent nowhere. See the <a href="privacy.html#en">privacy policy</a> for details.</p>
+      </section>
 
-    <footer>
-      <p><a href="privacy.html">개인정보처리방침</a> · <a href="terms.html">서비스 약관</a></p>
-    </footer>
+      <section>
+        <h2>Contact</h2>
+        <p><a href="mailto:croksuter@gmail.com">croksuter@gmail.com</a> · <a href="https://github.com/Croksuter/research-pdf/issues">bug reports</a></p>
+      </section>
+
+      <footer>
+        <p><a href="privacy.html#en">Privacy policy</a> · <a href="terms.html#en">Terms of service</a></p>
+      </footer>
+    </article>
+
+    <article id="ko" lang="ko">
+      <header>
+        <h1>ResearchPDF</h1>
+        <p class="lead">논문 PDF를 위한 Chrome 뷰어. 그림과 읽던 위치가 내 Google Drive를 통해 모든 Chrome 프로필과 기기를 따라다닙니다.</p>
+      </header>
+
+      <section>
+        <h2>기능</h2>
+        <ul>
+          <li>로컬 파일과 웹 PDF를 내장 PDF.js 뷰어로 엽니다. 펜, 하이라이트, 텍스트, 스탬프 주석을 지원합니다.</li>
+          <li>PDF가 프로젝트마다 탭 하나에, 자체 탭 줄과 함께 모입니다. Chrome 기본 뷰어에 이미 열려 있는 PDF도 그리로 모을 수 있습니다.</li>
+          <li>같은 논문을 어디서 열든 그림과 읽던 페이지·확대 상태가 그대로 돌아옵니다. 파일 내용으로 문서를 식별하므로 파일 이름이나 경로가 달라도 됩니다.</li>
+          <li>DOI·arXiv ID·제목으로 논문을 알아보고 게재처, 인용 수 추이, 참고문헌, 외부 링크를 보여줍니다.</li>
+          <li>그림이나 표를 선명한 이미지로, 출처 문구와 함께 복사합니다. 인식은 기기 안에서 이루어집니다.</li>
+          <li>Google 계정을 연결하면 Drive의 앱 전용 숨김 폴더로 그림, 읽던 위치, 열어 본 PDF 목록, 프로젝트를 동기화합니다. PDF 파일 자체는 업로드하지 않습니다.</li>
+          <li>한국어와 영어로 쓸 수 있습니다.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>개인정보</h2>
+        <p>PDF는 브라우저 안에서만 읽고 어디에도 보내지 않습니다. 자세한 내용은 <a href="privacy.html#ko">개인정보처리방침</a>을 보세요.</p>
+      </section>
+
+      <section>
+        <h2>문의</h2>
+        <p><a href="mailto:croksuter@gmail.com">croksuter@gmail.com</a> · <a href="https://github.com/Croksuter/research-pdf/issues">버그 제보</a></p>
+      </section>
+
+      <footer>
+        <p><a href="privacy.html#ko">개인정보처리방침</a> · <a href="terms.html#ko">서비스 약관</a></p>
+      </footer>
+    </article>
   </main>
 </body>
 </html>

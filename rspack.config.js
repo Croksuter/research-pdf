@@ -2,9 +2,11 @@ const path = require('path');
 const { rspack } = require('@rspack/core');
 const { patchPdfWorker } = require('./scripts/pdfjs-worker-patch.cjs');
 
-module.exports = {
+// Source maps only for `npm run dev`: the store zip leaves *.map out, so a
+// production bundle pointing at them (sourceMappingURL) would point at nothing.
+module.exports = (_env, argv = {}) => ({
   mode: 'development',
-  devtool: 'cheap-module-source-map',
+  devtool: argv.mode === 'production' ? false : 'cheap-module-source-map',
   entry: {
     background: './src/background.ts',
     popup: './src/ui/popup.ts',
@@ -84,4 +86,4 @@ module.exports = {
       ],
     }),
   ],
-};
+});

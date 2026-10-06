@@ -11,7 +11,7 @@ Google Drive.
   close one, Alt+Shift+T to reopen it). The same paper opened again goes to
   its existing tab; tabs you have not looked at for a while are unloaded.
 - Projects: every new PDF starts in the default project; move it to a named
-  one ("프로젝트로 이동"). Close a project's tab and reopen it later with the
+  one ("Move to project" / "프로젝트로 이동"). Close a project's tab and reopen it later with the
   same tabs; its other papers stay one click away. A paper open in two
   projects shows drawings made in either one live. Give a project an icon,
   an emoji or a color (its tab in Chrome shows it), and order projects or
@@ -37,9 +37,44 @@ Google Drive.
   graphics. The region is rendered again at 150–600 dpi, with
   or without your drawings, next to a ready source line (`Source: Hao et al.
   (2024). Title. arXiv. Fig. 2.`) read from the caption beside it.
+- Gathers the PDFs already open in Chrome's own viewer into the PDF tab
+  (from home, the settings page or the welcome guide), with their zoom; an
+  original tab closes only once its PDF is there.
 - Optional Google Drive sync (`drive.appdata` only): one gzip document in the
   app's hidden folder, merged per document and per drawing. PDFs themselves are
   never uploaded. No server, no account, no telemetry.
+- In Korean and English: the settings page has a language choice (automatic
+  follows the browser).
+- A welcome guide on install walks through opening PDFs here (web and file
+  access), gathering open PDFs, sync and a demo paper; settings → About shows
+  it again.
+- One settings page, inside the PDF tab (⚙, or the popup's Settings): sync,
+  opening PDFs with the Chrome access each switch needs, display, paper-info
+  API keys with a check of what they allow, storage and shortcuts.
+
+## Keyboard shortcuts
+
+On a Mac, Alt is ⌥, Shift ⇧ and Ctrl ⌘. The settings page lists the same
+table (`src/shared/shortcuts.ts`; `test/shortcuts.test.ts` keeps the two in
+step).
+
+| Keys | Action |
+|---|---|
+| Alt+Shift+← / Alt+Shift+→ | Previous / next PDF tab |
+| Alt+W | Close this PDF tab |
+| Alt+Shift+T | Reopen closed tab |
+| Alt+↑ / Alt+↓ | Reorder in the project list |
+| Ctrl+F | Find in document |
+| Ctrl+G / Ctrl+Shift+G | Next / previous match |
+| Ctrl++ / Ctrl+- | Zoom in / out |
+| Ctrl+0 | Fit automatically |
+| Ctrl+[ / Ctrl+] | Rotate left / right |
+| Home / End | First / last page |
+| Ctrl+P | Print |
+| Ctrl+S | Download (with annotations) |
+| Ctrl+Z / Ctrl+Y | Undo / redo |
+| S / Ctrl+Shift+X | Capture an area → again: auto-detect figures and tables → again: turn off |
+| Esc | Close capture, find, and annotation tools |
 
 Site and privacy policy: https://research-pdf.croksuter.com/
 
