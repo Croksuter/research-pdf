@@ -16,7 +16,7 @@ library and projects. No content script, no server, no account of its own.
 | hub | `src/ui/pdf-hub.html`, `pdfHub.ts` + `src/background/pdfHub.ts` |
 | viewer | `src/ui/pdf-viewer.html`, `pdfViewer.ts`, `pdfViewer/*` |
 | sync engine | `src/background/pdfSyncService.ts`, `src/shared/pdfSync.ts` |
-| storage | IndexedDB `ResearchPDF` (settings, pdf_annotations, pdf_files / pdf_file_bytes / pdf_urls) + `chrome.storage.local` (reading positions, library, projects, hub tabs) + `chrome.storage.session` (hub registry) |
+| storage | IndexedDB `ResearchPDF` (settings, pdf_annotations, pdf_files / pdf_file_bytes / pdf_urls) + IndexedDB `ResearchPDF-papers` (paper-lookup cache, `pdfViewer/paperCache.ts`: a week, 600 entries LRU) + `chrome.storage.local` (reading positions, library, projects, hub tabs) + `chrome.storage.session` (hub registry) |
 
 ## Modules
 
@@ -210,7 +210,9 @@ of ten colors) and its place in the list (folder + order key). Folders are
   found by id must be this document — its title matches the PDF's, or its
   words are on the first page — and not a whole volume (a proceedings DOI);
   OpenAlex's arXiv records are dated by the arXiv id and their non-arXiv DOI
-  is only a candidate.
+  is only a candidate. A record found by title alone needs its first author's
+  surname on the first page; the strip marks it "matched by title", and it
+  neither names the document nor fills its library row.
 - **Published version**: DOI candidates (from that record, Semantic Scholar,
   a Crossref title search) are adopted only when the record is an article
   with the same title and first author, dated from a year before to five
@@ -220,12 +222,14 @@ of ten colors) and its place in the list (folder + order key). Folders are
   the total).
 - **References**: OpenAlex's list, Semantic Scholar's, else the list printed
   in the PDF (section after the last References heading, numbered or
-  author–year, margin line numbers dropped), linked to OpenAlex by DOI, arXiv
-  id or title. A database list under 60 % of the paper's count is replaced by
-  a longer PDF list. Count: Crossref's (the publisher's) when present.
+  author–year, margin line numbers dropped), linked to OpenAlex by DOI or arXiv
+  id in batches, and by title (one search each) only while the list is open,
+  20 per opening; what was linked is cached, also partway. A database list
+  under 60 % of the paper's count is replaced by a longer PDF list. Count: Crossref's (the publisher's) when present.
 - **Limits**: OpenAlex without a key counts against a daily budget shared by
   the network; once spent (429 "budget") the strip says so and stops asking
-  OpenAlex until reload, and nothing is cached. Semantic Scholar without a key
+  OpenAlex until reload, and the paper record is not cached. A 429 is
+  reported against the source that sent it. Semantic Scholar without a key
   is often 429. Both keys are optional settings (settings page, which can check them).
 
 ## Selectable text

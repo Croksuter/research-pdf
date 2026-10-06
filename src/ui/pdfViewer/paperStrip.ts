@@ -5,10 +5,12 @@
 //
 // Detection: DOI or arXiv id from the source URL, the PDF metadata, or the
 // first page's text; otherwise the largest-font text on page 1 is title-
-// searched and accepted only above TITLE_MATCH_THRESHOLD. Data comes from
-// OpenAlex and Crossref, both of which answer with `Access-Control-Allow-
-// Origin: *`, so no extra host permission is needed. Google Scholar has no API
-// and is linked, not scraped. Results are cached for a week.
+// searched and accepted only above TITLE_MATCH_THRESHOLD and with the
+// record's first author named on page 1 (shown as "matched by title"). Data
+// comes from OpenAlex and Crossref, both of which answer with `Access-Control-
+// Allow-Origin: *`, so no extra host permission is needed. Google Scholar has
+// no API and is linked, not scraped. Results are cached for a week
+// (paperCache.ts).
 
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { getSetting } from '../../db/settingsRepository';
@@ -40,9 +42,11 @@ import {
   recordMatchesDocument,
   splitAuthor,
   tidyPaperMeta,
+  titleMatchConfirmed,
   titleSimilarity,
   type WorkSummary,
 } from '../../shared/paperIdentifiers';
+import { dropPaperCache, readPaperCache, writePaperCache } from './paperCache';
 import { byId, el } from './dom';
 import { buildCitationChart } from './paperChart';
 import { ReferenceList } from './paperRefs';
@@ -56,8 +60,7 @@ const SEMANTIC_SCHOLAR = 'https://api.semanticscholar.org/graph/v1';
 const WORK_SELECT = 'id,display_name,publication_year,cited_by_count,referenced_works_count,referenced_works,type,doi,ids,biblio,counts_by_year,primary_location,authorships';
 // Bumped whenever PaperMeta gains fields: an entry from an older build must
 // not be rendered with a newer renderer.
-const CACHE_PREFIX = 'vtPaperMeta:v2:';
-const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const CACHE_PREFIX = 'meta:v2:';
 const FETCH_TIMEOUT_MS = 12_000;
 // Whole first page: the arXiv margin stamp is rotated text and comes last in
 // the item order, so a short cap used to miss it.
@@ -66,7 +69,30 @@ const FIRST_PAGE_TEXT_LIMIT = 20_000;
 // ~20 s (observed in fresh profiles); a lookup that failed only because of
 // aborted/errored fetches is retried once after this delay.
 const NETWORK_RETRY_DELAY_MS = 15_000;
-let networkFailures = 0;
+
+/** Where a request went, for saying who rate-limited a lookup. */
+type PaperSource = 'OpenAlex' | 'Crossref' | 'Semantic Scholar' | 'arXiv';
+
+/**
+ * One lookup's record of the network: requests that failed outright, and
+ * the sources that answered 429 after every retry. Each lookup has its own,
+ * so overlapping lookups (two documents, the upkeep frame) never mix them.
+ */
+export interface LookupContext {
+  networkFailures: number;
+  limited: Set<PaperSource>;
+}
+
+export function newLookup(): LookupContext {
+  return { networkFailures: 0, limited: new Set() };
+}
+
+function sourceOf(url: string): PaperSource {
+  if (isOpenAlexUrl(url)) return 'OpenAlex';
+  if (url.startsWith(CROSSREF)) return 'Crossref';
+  if (url.startsWith(SEMANTIC_SCHOLAR)) return 'Semantic Scholar';
+  return 'arXiv';
+}
 
 const kindTitles = (): Record<string, string> => ({
   survey: S.kindSurvey,
@@ -76,11 +102,9 @@ const kindTitles = (): Record<string, string> => ({
   preprint: S.kindPreprint,
 });
 
-interface CacheEntry { fetchedAt: number; meta: PaperMeta }
+interface CacheEntry { meta: PaperMeta }
 
-let lastRateLimited = false;
-
-async function fetchJson<T>(url: string, timeoutMs = FETCH_TIMEOUT_MS, retry: boolean | number[] = true, headers?: Record<string, string>): Promise<T | null> {
+async function fetchJson<T>(ctx: LookupContext, url: string, timeoutMs = FETCH_TIMEOUT_MS, retry: boolean | number[] = true, headers?: Record<string, string>): Promise<T | null> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   const startedAt = performance.now();
@@ -98,14 +122,14 @@ async function fetchJson<T>(url: string, timeoutMs = FETCH_TIMEOUT_MS, retry: bo
     if (res.status === 429 && backoff.length > 0) {
       debugLog('paper', `fetch 429, retrying in ${backoff[0]}ms: ${label}`);
       await new Promise((r) => setTimeout(r, backoff[0]));
-      return fetchJson<T>(url, timeoutMs, backoff.slice(1), headers);
+      return fetchJson<T>(ctx, url, timeoutMs, backoff.slice(1), headers);
     }
-    if (res.status === 429) lastRateLimited = true;
+    if (res.status === 429) ctx.limited.add(sourceOf(url));
     debugLog('paper', `fetch ${res.status} in ${Math.round(performance.now() - startedAt)}ms: ${label}`);
     if (!res.ok) return null;
     return await res.json() as T;
   } catch (error) {
-    networkFailures += 1;
+    ctx.networkFailures += 1;
     debugLog('paper', `fetch failed after ${Math.round(performance.now() - startedAt)}ms (${error instanceof Error ? error.name : 'error'}): ${label}`);
     return null;
   } finally {
@@ -141,16 +165,24 @@ interface OpenAlexWork {
 
 const OPENALEX_TIMEOUT_MS = 8_000;
 
-async function openAlexByDoi(doi: string): Promise<OpenAlexWork | null> {
+async function openAlexByDoi(ctx: LookupContext, doi: string): Promise<OpenAlexWork | null> {
   const url = `${OPENALEX}/works?filter=doi:${encodeURIComponent(doi)}&per-page=1&select=${encodeURIComponent(WORK_SELECT)}`;
-  const page = await fetchJson<{ results?: OpenAlexWork[] }>(url, OPENALEX_TIMEOUT_MS);
+  const page = await fetchJson<{ results?: OpenAlexWork[] }>(ctx, url, OPENALEX_TIMEOUT_MS);
   return page?.results?.[0] ?? null;
 }
 
-async function openAlexByTitle(title: string): Promise<OpenAlexWork | null> {
+/** Only candidates `accept` passes (whose first author the PDF names, for a title-only match). */
+type AuthorCheck = (authors: string[], families?: Array<string | null>) => boolean;
+
+async function openAlexByTitle(ctx: LookupContext, title: string, accept?: AuthorCheck): Promise<OpenAlexWork | null> {
   const url = `${OPENALEX}/works?search=${encodeURIComponent(title)}&per-page=5&select=${encodeURIComponent(WORK_SELECT)}`;
-  const page = await fetchJson<{ results?: OpenAlexWork[] }>(url, OPENALEX_TIMEOUT_MS, false);
-  return pickByTitle(title, page?.results ?? [], (w) => w.display_name ?? '', (w) => w.cited_by_count ?? 0);
+  const page = await fetchJson<{ results?: OpenAlexWork[] }>(ctx, url, OPENALEX_TIMEOUT_MS, false);
+  const results = (page?.results ?? []).filter((w) => !accept || accept(openAlexAuthors(w)));
+  return pickByTitle(title, results, (w) => w.display_name ?? '', (w) => w.cited_by_count ?? 0);
+}
+
+function openAlexAuthors(work: OpenAlexWork): string[] {
+  return (work.authorships ?? []).map((a) => a.author?.display_name ?? '').filter(Boolean);
 }
 
 // Same-title hits are common (reprints, translations, preprint + published);
@@ -182,7 +214,7 @@ function metaFromOpenAlex(work: OpenAlexWork, ids: PaperIdentifiers): PaperMeta 
   return {
     title: work.display_name ?? '',
     year: work.publication_year ?? null,
-    authors: (work.authorships ?? []).map((a) => a.author?.display_name ?? '').filter(Boolean),
+    authors: openAlexAuthors(work),
     venue: repository ? (arxivId || /arxiv/iu.test(source?.display_name ?? '') ? 'arXiv' : null) : source?.display_name ?? null,
     venueType: source?.type ?? null,
     workType: work.type ?? null,
@@ -222,11 +254,11 @@ function enrichWithOpenAlex(meta: PaperMeta, work: OpenAlexWork): PaperMeta {
   };
 }
 
-async function openAlexSourceStats(sourceId: string): Promise<number | null> {
+async function openAlexSourceStats(ctx: LookupContext, sourceId: string): Promise<number | null> {
   const id = sourceId.split('/').pop();
   if (!id) return null;
   const src = await fetchJson<{ summary_stats?: { '2yr_mean_citedness'?: number } }>(
-    `${OPENALEX}/sources/${id}?select=summary_stats`, OPENALEX_TIMEOUT_MS,
+    ctx, `${OPENALEX}/sources/${id}?select=summary_stats`, OPENALEX_TIMEOUT_MS,
   );
   const value = src?.summary_stats?.['2yr_mean_citedness'];
   return typeof value === 'number' ? value : null;
@@ -295,15 +327,20 @@ function metaFromCrossref(work: CrossrefWork, ids: PaperIdentifiers): PaperMeta 
   };
 }
 
-async function crossrefByDoi(doi: string): Promise<CrossrefWork | null> {
-  const res = await fetchJson<{ message?: CrossrefWork }>(`${CROSSREF}/works/${encodeURIComponent(doi)}`);
+async function crossrefByDoi(ctx: LookupContext, doi: string): Promise<CrossrefWork | null> {
+  const res = await fetchJson<{ message?: CrossrefWork }>(ctx, `${CROSSREF}/works/${encodeURIComponent(doi)}`);
   return res?.message ?? null;
 }
 
-async function crossrefByTitle(title: string): Promise<CrossrefWork | null> {
+async function crossrefByTitle(ctx: LookupContext, title: string, accept?: AuthorCheck): Promise<CrossrefWork | null> {
   const url = `${CROSSREF}/works?query.bibliographic=${encodeURIComponent(title)}&rows=5`;
-  const res = await fetchJson<{ message?: { items?: CrossrefWork[] } }>(url);
-  return pickByTitle(title, res?.message?.items ?? [], (w) => w.title?.[0] ?? '', (w) => w['is-referenced-by-count'] ?? 0);
+  const res = await fetchJson<{ message?: { items?: CrossrefWork[] } }>(ctx, url);
+  const items = (res?.message?.items ?? []).filter((w) => {
+    if (!accept) return true;
+    const meta = metaFromCrossref(w, {});
+    return accept(meta.authors, meta.authorFamilies);
+  });
+  return pickByTitle(title, items, (w) => w.title?.[0] ?? '', (w) => w['is-referenced-by-count'] ?? 0);
 }
 
 async function crossrefBibtex(doi: string): Promise<string | null> {
@@ -346,12 +383,12 @@ export function s2Headers(): Record<string, string> | undefined {
   return s2ApiKey ? { 'x-api-key': s2ApiKey } : undefined;
 }
 
-/** null = not found or (after all retries) still rate-limited; check `lastRateLimited`. */
-async function semanticScholarByIds(ids: PaperIdentifiers, backoff: number[] = S2_BACKOFF_MS): Promise<S2Paper | null> {
+/** null = not found or (after all retries) still rate-limited: then `ctx.limited` has Semantic Scholar. */
+async function semanticScholarByIds(ctx: LookupContext, ids: PaperIdentifiers, backoff: number[] = S2_BACKOFF_MS): Promise<S2Paper | null> {
   const key = ids.arxivId ? `arXiv:${ids.arxivId}` : ids.doi ? `DOI:${ids.doi}` : null;
   if (!key) return null;
-  lastRateLimited = false;
-  return fetchJson<S2Paper>(`${SEMANTIC_SCHOLAR}/paper/${encodeURIComponent(key)}?fields=${S2_FIELDS}`, 10_000, backoff, s2Headers());
+  ctx.limited.delete('Semantic Scholar'); // this answer's verdict, not an earlier one's
+  return fetchJson<S2Paper>(ctx, `${SEMANTIC_SCHOLAR}/paper/${encodeURIComponent(key)}?fields=${S2_FIELDS}`, 10_000, backoff, s2Headers());
 }
 
 /**
@@ -359,11 +396,12 @@ async function semanticScholarByIds(ids: PaperIdentifiers, backoff: number[] = S
  * workshop papers without DOIs). Its match endpoint answers with the single
  * closest title, which must still clear the usual similarity threshold.
  */
-async function semanticScholarByTitle(title: string, backoff: number[] = [2_000, 5_000]): Promise<S2Paper | null> {
-  lastRateLimited = false;
+async function semanticScholarByTitle(ctx: LookupContext, title: string, accept?: AuthorCheck, backoff: number[] = [2_000, 5_000]): Promise<S2Paper | null> {
+  ctx.limited.delete('Semantic Scholar');
   const url = `${SEMANTIC_SCHOLAR}/paper/search/match?query=${encodeURIComponent(title)}&fields=${S2_FIELDS}`;
-  const page = await fetchJson<{ data?: S2Paper[] }>(url, 10_000, backoff, s2Headers());
-  return pickByTitle(title, page?.data ?? [], (p) => p.title ?? '', (p) => p.citationCount ?? 0);
+  const page = await fetchJson<{ data?: S2Paper[] }>(ctx, url, 10_000, backoff, s2Headers());
+  const data = (page?.data ?? []).filter((p) => !accept || accept((p.authors ?? []).map((a) => a.name ?? '').filter(Boolean)));
+  return pickByTitle(title, data, (p) => p.title ?? '', (p) => p.citationCount ?? 0);
 }
 
 // Semantic Scholar's DOI for a paper is only a candidate: enrich() adopts it
@@ -422,7 +460,7 @@ function enrichWithS2(meta: PaperMeta, paper: S2Paper): PaperMeta {
 
 const ARXIV_API = 'https://export.arxiv.org/api/query';
 
-async function arxivById(id: string): Promise<PaperMeta | null> {
+async function arxivById(ctx: LookupContext, id: string): Promise<PaperMeta | null> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
   try {
@@ -460,7 +498,7 @@ async function arxivById(id: string): Promise<PaperMeta | null> {
       landingUrl: `https://arxiv.org/abs/${id}`,
     };
   } catch {
-    networkFailures += 1;
+    ctx.networkFailures += 1;
     return null;
   } finally {
     clearTimeout(timer);
@@ -543,9 +581,9 @@ function isThisDocument(title: string, evidence: DocumentEvidence): boolean {
   return recordMatchesDocument(title, evidence.titles, evidence.pageText);
 }
 
-async function resolvePrimary(ids: PaperIdentifiers, titles: string[], evidence: DocumentEvidence): Promise<Resolved | null> {
+async function resolvePrimary(ctx: LookupContext, ids: PaperIdentifiers, titles: string[], evidence: DocumentEvidence): Promise<Resolved | null> {
   if (ids.doi) {
-    const [cr, oa] = await Promise.all([crossrefByDoi(ids.doi), openAlexByDoi(ids.doi)]);
+    const [cr, oa] = await Promise.all([crossrefByDoi(ctx, ids.doi), openAlexByDoi(ctx, ids.doi)]);
     const title = cr?.title?.[0] ?? oa?.display_name ?? '';
     if ((cr || oa) && (CONTAINER_TYPES.test(cr?.type ?? '') || !isThisDocument(title, evidence))) {
       debugLog('paper', 'ignored a DOI whose record is not this document', () => ({ doi: ids.doi, title, type: cr?.type }));
@@ -555,32 +593,35 @@ async function resolvePrimary(ids: PaperIdentifiers, titles: string[], evidence:
     }
   }
   if (ids.arxivId) {
-    const oa = await openAlexByDoi(`10.48550/arXiv.${ids.arxivId}`);
+    const oa = await openAlexByDoi(ctx, `10.48550/arXiv.${ids.arxivId}`);
     if (oa && isThisDocument(oa.display_name ?? '', evidence)) return arxivRecord(metaFromOpenAlex(oa, ids), oa);
     if (oa) debugLog('paper', 'ignored an OpenAlex arXiv record that is not this document', () => ({ title: oa.display_name }));
     // arXiv itself: always there for an arXiv id, no daily budget, and it
     // carries the DOI the authors gave for the published version.
-    const ax = await arxivById(ids.arxivId);
+    const ax = await arxivById(ctx, ids.arxivId);
     if (ax) return { meta: ax, openAlexWork: null };
   }
   if (ids.doi || ids.arxivId) {
     // As a last-resort primary source (Crossref and OpenAlex both missed the
     // id) retry only briefly: an unknown id is the likely reason, and a long
     // backoff would just delay the "not found" verdict.
-    const s2 = await semanticScholarByIds(ids, [2_000]);
+    const s2 = await semanticScholarByIds(ctx, ids, [2_000]);
     if (s2 && isThisDocument(s2.title ?? '', evidence)) return { meta: metaFromS2(s2, ids), openAlexWork: null, s2 };
   }
+  // By title alone: a hit counts only if its first author is on page 1.
+  const accept: AuthorCheck = (authors, authorFamilies) => titleMatchConfirmed({ authors, authorFamilies }, evidence.pageText);
+  const byTitle = (resolved: Resolved): Resolved => ({ ...resolved, meta: { ...resolved.meta, matchedBy: 'title' } });
   for (const title of titles) {
-    const oa = await openAlexByTitle(title);
-    if (oa) return { meta: metaFromOpenAlex(oa, ids), openAlexWork: oa };
-    const cr = await crossrefByTitle(title);
-    if (cr && !CONTAINER_TYPES.test(cr.type ?? '')) return { meta: metaFromCrossref(cr, ids), openAlexWork: null };
+    const oa = await openAlexByTitle(ctx, title, accept);
+    if (oa) return byTitle({ meta: metaFromOpenAlex(oa, ids), openAlexWork: oa });
+    const cr = await crossrefByTitle(ctx, title, accept);
+    if (cr && !CONTAINER_TYPES.test(cr.type ?? '')) return byTitle({ meta: metaFromCrossref(cr, ids), openAlexWork: null });
   }
   // Last resort, after every title missed the open databases: Semantic
   // Scholar's pool is rate-limited, so it is asked once per title only here.
   for (const title of titles) {
-    const s2 = await semanticScholarByTitle(title);
-    if (s2) return { meta: metaFromS2(s2, ids), openAlexWork: null, s2 };
+    const s2 = await semanticScholarByTitle(ctx, title, accept);
+    if (s2) return byTitle({ meta: metaFromS2(s2, ids), openAlexWork: null, s2 });
   }
   return null;
 }
@@ -603,8 +644,8 @@ function arxivRecord(meta: PaperMeta, work: OpenAlexWork): Resolved {
 }
 
 /** The record a candidate DOI points to, in the form the published-version check reads. */
-async function workSummary(doi: string): Promise<{ summary: WorkSummary | null; openAlex: OpenAlexWork | null; firstAuthor: string | null }> {
-  const published = await openAlexByDoi(doi);
+async function workSummary(ctx: LookupContext, doi: string): Promise<{ summary: WorkSummary | null; openAlex: OpenAlexWork | null; firstAuthor: string | null }> {
+  const published = await openAlexByDoi(ctx, doi);
   if (published) {
     return {
       summary: { title: published.display_name ?? '', year: published.publication_year ?? null, type: published.type ?? null, repository: published.primary_location?.source?.type === 'repository' },
@@ -612,7 +653,7 @@ async function workSummary(doi: string): Promise<{ summary: WorkSummary | null; 
       firstAuthor: published.authorships?.[0]?.author?.display_name ?? null,
     };
   }
-  const record = await crossrefByDoi(doi);
+  const record = await crossrefByDoi(ctx, doi);
   if (!record) return { summary: null, openAlex: null, firstAuthor: null };
   return {
     summary: { title: record.title?.[0] ?? '', year: record.issued?.['date-parts']?.[0]?.[0] ?? null, type: record.type ?? null, repository: false },
@@ -629,7 +670,7 @@ function sameFirstAuthor(authors: readonly string[], other: string | null): bool
   return !!a && (b.includes(a) || a.includes(b.split(' ').pop() ?? b));
 }
 
-async function enrich(resolved: Resolved): Promise<PaperMeta> {
+async function enrich(ctx: LookupContext, resolved: Resolved): Promise<PaperMeta> {
   let { meta } = resolved;
   let work = resolved.openAlexWork;
   // Semantic Scholar merges preprint and published versions (like Google
@@ -638,22 +679,22 @@ async function enrich(resolved: Resolved): Promise<PaperMeta> {
   // records of that version (per-year citations, venue, references).
   let s2Failed = false;
   const s2 = resolved.s2 ?? (meta.citations.semanticScholar === null
-    ? await semanticScholarByIds({ doi: meta.doi ?? undefined, arxivId: meta.arxivId ?? undefined })
+    ? await semanticScholarByIds(ctx, { doi: meta.doi ?? undefined, arxivId: meta.arxivId ?? undefined })
     : null);
   if (s2) meta = enrichWithS2(meta, s2);
-  else if (!resolved.s2 && meta.citations.semanticScholar === null && lastRateLimited) s2Failed = true;
+  else if (!resolved.s2 && meta.citations.semanticScholar === null && ctx.limited.has('Semantic Scholar')) s2Failed = true;
   // A preprint's published version: a DOI the records name, or Crossref's
   // best title match — each adopted only if it checks out.
   let published = false;
   if (!meta.doi) {
     const candidates = [resolved.candidateDoi ?? null, s2 ? s2Doi(s2) : null].filter((d): d is string => !!d);
     if (meta.arxivId || meta.workType === 'preprint') {
-      const byTitle = meta.title ? await crossrefByTitle(meta.title) : null;
+      const byTitle = meta.title ? await crossrefByTitle(ctx, meta.title) : null;
       const doi = byTitle?.DOI ? normalizeDoi(byTitle.DOI) : null;
       if (doi && !arxivIdFromDoi(doi) && /^(?:journal-article|proceedings-article|book-chapter)$/u.test(byTitle?.type ?? '')) candidates.push(doi);
     }
     for (const candidate of [...new Set(candidates)]) {
-      const found = await workSummary(candidate);
+      const found = await workSummary(ctx, candidate);
       if (found.summary && isPublishedVersion({ title: meta.title, year: meta.year }, found.summary) && sameFirstAuthor(meta.authors, found.firstAuthor)) {
         meta = { ...meta, doi: candidate, landingUrl: `https://doi.org/${candidate}` };
         published = true;
@@ -665,13 +706,13 @@ async function enrich(resolved: Resolved): Promise<PaperMeta> {
   }
   const isPreprintWork = !work || work.type === 'preprint' || /arxiv/iu.test(work.primary_location?.source?.display_name ?? '');
   if (meta.doi && (!work || (isPreprintWork && (work.doi ?? '').toLowerCase().includes('arxiv')))) {
-    const record = await openAlexByDoi(meta.doi);
+    const record = await openAlexByDoi(ctx, meta.doi);
     if (record) { work = record; meta = enrichWithOpenAlex(meta, record); }
   }
   const sourceId = work?.primary_location?.source?.type === 'repository' ? null : work?.primary_location?.source?.id;
   const [twoYear, crossref] = await Promise.all([
-    sourceId ? openAlexSourceStats(sourceId) : Promise.resolve(null),
-    meta.doi && meta.citations.crossref === null ? crossrefByDoi(meta.doi) : Promise.resolve(null),
+    sourceId ? openAlexSourceStats(ctx, sourceId) : Promise.resolve(null),
+    meta.doi && meta.citations.crossref === null ? crossrefByDoi(ctx, meta.doi) : Promise.resolve(null),
   ]);
   if (twoYear !== null) meta = { ...meta, venueTwoYearMeanCitedness: twoYear };
   if (crossref) {
@@ -699,7 +740,7 @@ async function enrich(resolved: Resolved): Promise<PaperMeta> {
 }
 
 /** Fills fields a cached meta from an older schema may lack, so renderers never see `undefined`. */
-function normalizeMeta(raw: Partial<PaperMeta> & Record<string, unknown>): PaperMeta {
+export function normalizeMeta(raw: Partial<PaperMeta> & Record<string, unknown>): PaperMeta {
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
   const str = (v: unknown) => (typeof v === 'string' ? v : null);
   const cit = (raw.citations ?? {}) as Record<string, unknown>;
@@ -727,34 +768,23 @@ function normalizeMeta(raw: Partial<PaperMeta> & Record<string, unknown>): Paper
     landingUrl: str(raw.landingUrl),
     referencedWorks: Array.isArray(raw.referencedWorks) ? raw.referencedWorks.filter((w): w is string => typeof w === 'string') : [],
     s2PaperId: str(raw.s2PaperId),
+    // Aligned with `authors`; without it APA would split "Chue Hong" wrongly.
+    ...(Array.isArray(raw.authorFamilies) ? { authorFamilies: raw.authorFamilies.map((f) => (typeof f === 'string' ? f : null)) } : {}),
+    ...(raw.matchedBy === 'title' ? { matchedBy: 'title' as const } : {}),
   };
 }
 
 async function readCache(key: string): Promise<PaperMeta | null> {
-  try {
-    const stored = await chrome.storage.local.get(CACHE_PREFIX + key);
-    const entry = stored[CACHE_PREFIX + key] as CacheEntry | undefined;
-    if (!entry || Date.now() - entry.fetchedAt > CACHE_TTL_MS || !entry.meta) return null;
-    return normalizeMeta(entry.meta as Partial<PaperMeta> & Record<string, unknown>);
-  } catch {
-    return null;
-  }
+  const entry = await readPaperCache<CacheEntry>(CACHE_PREFIX + key);
+  return entry?.meta ? normalizeMeta(entry.meta as Partial<PaperMeta> & Record<string, unknown>) : null;
 }
 
-async function dropCache(key: string): Promise<void> {
-  try {
-    await chrome.storage.local.remove(CACHE_PREFIX + key);
-  } catch {
-    /* cache is best-effort */
-  }
+function dropCache(key: string): Promise<void> {
+  return dropPaperCache(CACHE_PREFIX + key);
 }
 
-async function writeCache(key: string, meta: PaperMeta): Promise<void> {
-  try {
-    await chrome.storage.local.set({ [CACHE_PREFIX + key]: { fetchedAt: Date.now(), meta } satisfies CacheEntry });
-  } catch {
-    /* cache is best-effort */
-  }
+function writeCache(key: string, meta: PaperMeta): Promise<void> {
+  return writePaperCache(CACHE_PREFIX + key, { meta } satisfies CacheEntry);
 }
 
 // ─── Without the strip (background upkeep, ui/pdfUpkeep.ts) ───
@@ -788,24 +818,28 @@ export async function loadPaperSettings(): Promise<boolean> {
   return getSetting(PAPER_INFO_ENABLED_SETTING_KEY, DEFAULT_PAPER_INFO_ENABLED);
 }
 
+/**
+ * A cached paper good enough to describe a library row: found by an
+ * identifier, not by its title alone (that one only shows in the strip).
+ */
 export function cachedPaperMeta(key: string): Promise<PaperMeta | null> {
-  return readCache(key).then((meta) => (meta ? tidyPaperMeta(meta) : null));
+  return readCache(key).then((meta) => (meta && meta.matchedBy !== 'title' ? tidyPaperMeta(meta) : null));
 }
 
 /**
  * Resolves and enriches like the strip, shows nothing, and caches the result
- * as the strip would. `limited`: no answer because of a rate limit, a spent
+ * as the strip would. `meta` only for a paper found by an identifier (as
+ * cachedPaperMeta). `limited`: no answer because of a rate limit, a spent
  * budget or a network failure — worth trying again later, not now.
  */
 export async function lookupPaperQuietly(found: PaperEvidence): Promise<{ meta: PaperMeta | null; limited: boolean }> {
-  networkFailures = 0;
-  lastRateLimited = false;
-  const primary = await resolvePrimary(found.ids, found.titles, found.evidence);
-  if (!primary) return { meta: null, limited: networkFailures > 0 || openAlexBudgetSpent() || lastRateLimited };
-  const raw = await enrich(primary);
+  const ctx = newLookup();
+  const primary = await resolvePrimary(ctx, found.ids, found.titles, found.evidence);
+  if (!primary) return { meta: null, limited: ctx.networkFailures > 0 || openAlexBudgetSpent() || ctx.limited.size > 0 };
+  const raw = await enrich(ctx, primary);
   const meta = tidyPaperMeta(raw);
   if (found.key && !s2Unavailable.has(raw) && !openAlexBudgetSpent()) await writeCache(found.key, meta);
-  return { meta, limited: false };
+  return { meta: meta.matchedBy === 'title' ? null : meta, limited: false };
 }
 
 // ─── UI ───
@@ -817,6 +851,8 @@ export class PaperStrip {
   private readonly reparseBtn = byId<HTMLButtonElement>('vt-paper-reparse');
   private generation = 0;
   private current: { doc: PDFDocumentProxy; sourceUrl: string | null } | null = null;
+  /** Documents (by fingerprint) whose strip the reader closed in this page. */
+  private readonly dismissed = new Set<string>();
   private meta: PaperMeta | null = null;
   private bibtexCache: string | null = null;
   private readonly refs = new ReferenceList();
@@ -829,7 +865,7 @@ export class PaperStrip {
    *   document better than a file name like `2401.12345`).
    */
   constructor(private readonly onLayoutChange: () => void, private readonly onPaperMeta?: (meta: PaperMeta) => void) {
-    this.closeBtn.addEventListener('click', () => this.hide());
+    this.closeBtn.addEventListener('click', () => this.dismiss());
     this.reparseBtn.addEventListener('click', () => {
       if (this.current) void this.show(this.current.doc, this.current.sourceUrl, { fresh: true });
     });
@@ -838,6 +874,14 @@ export class PaperStrip {
   /** The resolved paper of the open document, if any. */
   get paperMeta(): PaperMeta | null {
     return this.meta;
+  }
+
+  /** × : the strip stays closed for this document, and a lookup still running stops. */
+  dismiss(): void {
+    this.generation += 1;
+    const fingerprint = this.current?.doc.fingerprints[0];
+    if (fingerprint) this.dismissed.add(fingerprint);
+    this.hide();
   }
 
   hide(): void {
@@ -897,6 +941,7 @@ export class PaperStrip {
     this.hide();
     this.meta = null;
     this.bibtexCache = null;
+    if (this.dismissed.has(doc.fingerprints[0] ?? '')) return;
     try {
       if (!(await loadPaperSettings())) {
         debugLog('paper', 'paper info disabled by setting');
@@ -914,7 +959,10 @@ export class PaperStrip {
 
       const key = paperCacheKey(ids, titles) as string;
       if (fresh) await dropCache(key);
-      const cached = fresh ? null : await readCache(key);
+      // A title-only match is checked against this document again: another
+      // document with the same title shares the key.
+      const hit = fresh ? null : await readCache(key);
+      const cached = hit && (hit.matchedBy !== 'title' || titleMatchConfirmed(hit, evidence.pageText)) ? hit : null;
       if (cached) {
         debugLog('paper', 'resolved (cache)', () => ({ key, meta: cached }));
         if (gen !== this.generation) return;
@@ -923,13 +971,13 @@ export class PaperStrip {
         this.startReferences(this.meta, key);
         return;
       }
-      networkFailures = 0;
-      let primary = await resolvePrimary(ids, titles, evidence);
-      if (!primary && networkFailures > 0) {
-        debugLog('paper', `lookup hit ${networkFailures} network failure(s); retrying in ${NETWORK_RETRY_DELAY_MS}ms`);
+      const ctx = newLookup();
+      let primary = await resolvePrimary(ctx, ids, titles, evidence);
+      if (!primary && ctx.networkFailures > 0 && gen === this.generation) {
+        debugLog('paper', `lookup hit ${ctx.networkFailures} network failure(s); retrying in ${NETWORK_RETRY_DELAY_MS}ms`);
         await new Promise((r) => setTimeout(r, NETWORK_RETRY_DELAY_MS));
         if (gen !== this.generation) return;
-        primary = await resolvePrimary(ids, titles, evidence);
+        primary = await resolvePrimary(ctx, ids, titles, evidence);
       }
       debugLog('paper', primary ? 'resolved (primary)' : 'no match', () => ({ key, meta: primary?.meta }));
       if (gen !== this.generation) return;
@@ -938,10 +986,12 @@ export class PaperStrip {
         // warning; a title nobody knows most likely just isn't a paper.
         if (openAlexBudgetSpent()) {
           this.renderStatus('failed', `${what}: ${OPENALEX_BUDGET_REASON}`);
-        } else if (networkFailures > 0) {
+        } else if (ctx.networkFailures > 0) {
           this.renderStatus('failed', S.lookupFailedNetwork(what));
-        } else if (lastRateLimited) {
+        } else if (ctx.limited.has('Semantic Scholar')) {
           this.renderStatus('failed', S.lookupFailedS2Limited(what));
+        } else if (ctx.limited.size > 0) {
+          this.renderStatus('failed', S.lookupFailedLimited(what, [...ctx.limited].join('·')));
         } else if (ids.doi || ids.arxivId) {
           this.renderStatus('failed', S.lookupFailedNotFound(what));
         } else {
@@ -951,7 +1001,7 @@ export class PaperStrip {
       }
       this.meta = tidyPaperMeta(primary.meta);
       this.render(this.meta);
-      const raw = await enrich(primary);
+      const raw = await enrich(ctx, primary);
       const enriched = tidyPaperMeta(raw);
       if (s2Unavailable.has(raw)) s2Unavailable.add(enriched);
       if (gen !== this.generation) return;
@@ -1024,6 +1074,9 @@ export class PaperStrip {
     info.classList.add('vt-paper-info');
     info.setAttribute('tabindex', '0');
     info.append(this.buildPopover(meta));
+    if (meta.matchedBy === 'title') {
+      info.querySelector('.vt-paper-value')?.append(' ', el('span', { className: 'vt-paper-matched', textContent: S.matchedByTitle }));
+    }
     this.body.append(info);
 
     // ── 2년/전체 인용수 + sparkline (hover → detailed chart)
@@ -1081,6 +1134,11 @@ export class PaperStrip {
     refs.classList.add('vt-paper-refs');
     refs.setAttribute('tabindex', '0');
     refs.append(this.refs.element);
+    // Linking the PDF's own list by title costs a search per entry: done
+    // when the reader looks at the list, a few at a time.
+    const opened = () => this.refs.opened();
+    refs.addEventListener('mouseenter', opened);
+    refs.addEventListener('focusin', opened);
     this.body.append(refs);
 
     // ── right-aligned copy buttons
@@ -1102,6 +1160,7 @@ export class PaperStrip {
   private buildPopover(meta: PaperMeta): HTMLElement {
     const pop = el('div', { className: 'vt-paper-pop', role: 'tooltip' });
     pop.append(el('div', { className: 'vt-paper-pop-title', textContent: meta.title }));
+    if (meta.matchedBy === 'title') pop.append(el('div', { className: 'vt-paper-pop-fact vt-paper-matched-detail', textContent: S.matchedByTitleDetail }));
     if (meta.authors.length) {
       const shown = meta.authors.slice(0, 6).join(', ') + (meta.authors.length > 6 ? S.authorsMore(meta.authors.length - 6) : '');
       pop.append(el('div', { className: 'vt-paper-pop-authors', textContent: shown }));

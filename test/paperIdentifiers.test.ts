@@ -24,6 +24,7 @@ import {
   recentCitationSeries,
   recentTwoYearCitations,
   scholarLinks,
+  titleMatchConfirmed,
   titleSimilarity,
 } from '../src/shared/paperIdentifiers';
 
@@ -268,5 +269,39 @@ describe('paper strip audit fixes', () => {
   it('prefers the publisher\'s reference count', () => {
     expect(bestReferenceCount({ ...meta(), references: { crossref: 46, openalex: 50, semanticScholar: 61 } })).toBe(46);
     expect(bestReferenceCount({ ...meta(), references: { crossref: null, openalex: 2, semanticScholar: 46 } })).toBe(46);
+  });
+});
+
+describe('title-only matches', () => {
+  const lecun = { authors: ['Yann LeCun', 'Yoshua Bengio', 'Geoffrey Hinton'] };
+
+  it('a talk called "Deep Learning" is not LeCun et al.\'s review, though the titles are equal', () => {
+    expect(titleSimilarity('Deep Learning', 'Deep learning')).toBe(1);
+    const slides = 'Deep Learning Lecture 1: Introduction Prof. Minsu Kim Department of Computer Science Spring 2024';
+    expect(titleMatchConfirmed(lecun, slides)).toBe(false);
+  });
+
+  it('the review itself names its first author on page 1', () => {
+    const page = 'REVIEW doi:10.1038/nature14539 Deep learning Yann LeCun 1,2 , Yoshua Bengio 3 & Geoffrey Hinton 4,5 Deep learning allows';
+    expect(titleMatchConfirmed(lecun, page)).toBe(true);
+    expect(titleMatchConfirmed(lecun, page.toUpperCase())).toBe(true);
+  });
+
+  it('the surname must be a whole word, and the source\'s own surname is used', () => {
+    expect(titleMatchConfirmed({ authors: ['A. Li'] }, 'Linear models for lists')).toBe(false);
+    expect(titleMatchConfirmed({ authors: ['A. Li'] }, 'Anna Li, MIT')).toBe(true);
+    expect(titleMatchConfirmed({ authors: ['Neil P. Chue Hong'], authorFamilies: ['Chue Hong'] }, 'by Neil Chue Hong and others')).toBe(true);
+    expect(titleMatchConfirmed({ authors: ['Neil P. Chue Hong'], authorFamilies: ['Chue Hong'] }, 'Hong Kong University')).toBe(false);
+  });
+
+  it('CJK names match as a whole name, spaces or not', () => {
+    expect(titleMatchConfirmed({ authors: ['홍길동'] }, '딥러닝 개론 홍길동, 김철수 한국대학교')).toBe(true);
+    expect(titleMatchConfirmed({ authors: ['홍 길동'] }, '딥러닝 개론 홍길동')).toBe(true);
+    expect(titleMatchConfirmed({ authors: ['홍길동'] }, '딥러닝 개론 김철수')).toBe(false);
+  });
+
+  it('cannot confirm without a first author or page text', () => {
+    expect(titleMatchConfirmed({ authors: [] }, 'anything at all')).toBe(false);
+    expect(titleMatchConfirmed(lecun, '')).toBe(false);
   });
 });

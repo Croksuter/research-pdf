@@ -196,6 +196,27 @@ export function titleSimilarity(a: string, b: string): number {
 
 export const TITLE_MATCH_THRESHOLD = 0.85;
 
+const CJK = /[\p{Script=Hangul}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
+
+/**
+ * Whether a record found only by its title is this document: titles alone
+ * collide ("Deep Learning", the talk, against LeCun et al.'s review), so the
+ * record's first author must be named on the first page too — the surname
+ * as a whole word, or for a CJK name the whole name. No first author, or no
+ * page text, cannot confirm it.
+ */
+export function titleMatchConfirmed(record: { authors: readonly string[]; authorFamilies?: ReadonlyArray<string | null> }, firstPageText: string): boolean {
+  const first = record.authors[0]?.trim();
+  if (!first || !firstPageText.trim()) return false;
+  if (CJK.test(first)) {
+    const squeeze = (text: string) => normalizeTitle(text).replace(/\s+/gu, '');
+    const name = squeeze(first.includes(',') ? first.split(',').reverse().join('') : first);
+    return name.length >= 2 && squeeze(firstPageText).includes(name);
+  }
+  const family = normalizeTitle(record.authorFamilies?.[0] ?? splitAuthor(first).last);
+  return family.length >= 2 && ` ${normalizeTitle(firstPageText)} `.includes(` ${family} `);
+}
+
 // ─── Normalized metadata ───
 
 export interface PaperMeta {
@@ -223,6 +244,11 @@ export interface PaperMeta {
   referencedWorks?: string[];
   /** Surnames aligned with `authors`, when the source splits names (Crossref). */
   authorFamilies?: Array<string | null>;
+  /**
+   * 'title': found by a title search alone (the PDF named no DOI or arXiv id
+   * that led to it). Shown as such, and never names the document.
+   */
+  matchedBy?: 'title';
 }
 
 /** Titles, venue and names cleaned of markup and entities; authors as people write them, once each. */

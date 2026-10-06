@@ -25,6 +25,9 @@ export const S = messages({
     lookupFailedNetwork: (what: string) => `${what}: OpenAlex·Crossref·Semantic Scholar 조회가 실패했습니다 (네트워크 지연 또는 요청 제한).`,
     lookupFailedS2Limited: (what: string) => `${what}: OpenAlex·Crossref에 없고, Semantic Scholar는 요청 제한(429)으로 확인하지 못했습니다. 설정에 Semantic Scholar API 키를 넣으면 안정적으로 조회됩니다.`,
     lookupFailedNotFound: (what: string) => `${what}: 어느 데이터베이스(OpenAlex·Crossref·Semantic Scholar)에도 없습니다.`,
+    lookupFailedLimited: (what: string, sources: string) => `${what}: ${sources}의 요청 제한(429)으로 확인하지 못했습니다. 잠시 뒤 다시 파싱해 보세요.`,
+    matchedByTitle: '제목으로 찾음',
+    matchedByTitleDetail: '이 PDF에 DOI·arXiv ID가 없어 제목과 첫 저자 이름으로 찾은 논문입니다. 다른 논문일 수 있어 문서 이름과 라이브러리에는 쓰지 않습니다.',
     notRecognizedSearched: (what: string) => `${what}(으)로 OpenAlex·Crossref·Semantic Scholar를 찾아봤지만 일치하는 논문이 없습니다.`,
     processingError: (message: string) => `논문 정보를 처리하는 중 오류: ${message}`,
     // Strip
@@ -67,6 +70,7 @@ export const S = messages({
     venueMeanCitednessShort: '게재처 2년 평균 피인용 (OpenAlex)',
     pdfNote: (linked: number, total: number) => `PDF 본문의 목록 기준 · OpenAlex 연결 ${linked}/${total}`,
     budgetSpentNote: ' (OpenAlex 일일 한도 소진 — 설정에 API 키를 넣으면 연결됩니다)',
+    titlesLeftNote: (n: number) => ` · 제목 연결 남음 ${n}편 (목록을 열 때마다 조금씩)`,
   },
   en: {
     kindSurvey: 'Survey / review paper (judged from title and type)',
@@ -88,6 +92,9 @@ export const S = messages({
     lookupFailedNetwork: (what: string) => `${what}: lookup in OpenAlex, Crossref and Semantic Scholar failed (network delay or rate limit).`,
     lookupFailedS2Limited: (what: string) => `${what}: not in OpenAlex or Crossref, and Semantic Scholar is rate-limited (429). Adding a Semantic Scholar API key in settings makes lookups reliable.`,
     lookupFailedNotFound: (what: string) => `${what}: not in any database (OpenAlex, Crossref, Semantic Scholar).`,
+    lookupFailedLimited: (what: string, sources: string) => `${what}: ${sources} rate-limited the lookup (429). Try reparsing in a moment.`,
+    matchedByTitle: 'matched by title',
+    matchedByTitleDetail: 'This PDF names no DOI or arXiv ID, so the paper was found by its title and first author. It may be a different paper, so it does not rename the document or its library entry.',
     notRecognizedSearched: (what: string) => `Searched OpenAlex, Crossref and Semantic Scholar for ${what}, but found no matching paper.`,
     processingError: (message: string) => `Error while processing paper info: ${message}`,
     paperInfo: 'Paper info',
@@ -128,5 +135,6 @@ export const S = messages({
     venueMeanCitednessShort: 'Venue 2-year mean citedness (OpenAlex)',
     pdfNote: (linked: number, total: number) => `based on the list in the PDF · ${linked}/${total} matched in OpenAlex`,
     budgetSpentNote: ' (OpenAlex’s daily limit is used up — add an API key in settings to connect)',
+    titlesLeftNote: (n: number) => ` · ${n} left to match by title (a few each time the list opens)`,
   },
 });

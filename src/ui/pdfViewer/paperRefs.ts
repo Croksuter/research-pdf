@@ -1,16 +1,18 @@
 // Reference list for the paper strip: the works this paper cites, resolved
 // in the background from OpenAlex (batches of ids), each with its link,
 // citation count, venue and the venue's 2-year mean citedness. Rendered into
-// the 참고문헌 hover panel as batches arrive; cached for a week. Without an
-// OpenAlex list: Semantic Scholar's, and failing that the list printed in the
-// PDF itself (shared/pdfReferences.ts), linked to OpenAlex by DOI, arXiv id
-// or title where it can be.
+// the 참고문헌 hover panel as batches arrive; cached for a week (paperCache.ts).
+// Without an OpenAlex list: Semantic Scholar's, and failing that the list
+// printed in the PDF itself (shared/pdfReferences.ts), linked to OpenAlex by
+// DOI or arXiv id in batches, and by title — one search each — only while
+// the reader has the list open, a few per opening, each kept as it is found.
 
 import { debugLog } from '../../shared/debugLog';
 import { formatCount, titleSimilarity } from '../../shared/paperIdentifiers';
 import type { PdfReference } from '../../shared/pdfReferences';
 import { isOpenAlexUrl, noteOpenAlex429, openAlexBudgetSpent, openAlexUrl } from './openAlexAccess';
 import { el } from './dom';
+import { readPaperCache, writePaperCache } from './paperCache';
 import { S } from './paper.strings';
 
 const OPENALEX = 'https://api.openalex.org';
@@ -20,12 +22,13 @@ const S2_MAX = 1_000;
 const BATCH = 50;
 const BATCH_GAP_MS = 350;
 const MAX_REFS = 400;
-const CACHE_PREFIX = 'vtPaperRefs:v2:';
-const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const CACHE_PREFIX = 'refs:v2:';
 const FETCH_TIMEOUT_MS = 12_000;
 const WORK_SELECT = 'id,display_name,publication_year,cited_by_count,doi,primary_location,authorships';
-// Linking the PDF's own list: titles are searched one by one, politely.
-const TITLE_LOOKUPS_MAX = 120;
+// Linking the PDF's own list: titles are searched one by one, politely, and
+// at most this many each time the list is opened (OpenAlex's free daily
+// budget is shared by everyone behind the same address).
+const TITLE_LOOKUPS_PER_OPEN = 20;
 const TITLE_GAP_MS = 150;
 const TITLE_MATCH = 0.9;
 
@@ -41,6 +44,14 @@ export interface RefEntry {
   url: string;
   /** From the PDF's own list and not found in OpenAlex. */
   unlinked?: boolean;
+  /** Searched by title already (and not found). */
+  titleTried?: boolean;
+}
+
+interface CachedRefs {
+  entries: RefEntry[];
+  /** The PDF list's DOI / arXiv batches all answered. */
+  idsLinked?: boolean;
 }
 
 interface RefWork {
@@ -89,6 +100,9 @@ export class ReferenceList {
   private expected = 0;
   private generation = 0;
   private sourceNote: string | null = null;
+  /** The PDF's own list being shown (what title linking works on). */
+  private pdf: { refs: PdfReference[]; cacheKey: string; idsLinked: boolean } | null = null;
+  private linkingTitles = false;
   /** Told how many references the PDF itself lists, when that is the source. */
   onPdfCount: ((count: number) => void) | null = null;
 
@@ -115,6 +129,8 @@ export class ReferenceList {
     this.expected = 0;
     this.status = 'idle';
     this.sourceNote = null;
+    this.pdf = null;
+    this.linkingTitles = false;
     this.list.replaceChildren();
     this.renderHeader();
   }
@@ -143,7 +159,7 @@ export class ReferenceList {
       this.nextSource();
       return false;
     }
-    const cached = await this.readCache(cacheKey);
+    const cached = (await this.readCache(cacheKey))?.entries;
     if (gen !== this.generation) return true;
     if (cached) {
       this.entries = cached;
@@ -174,7 +190,7 @@ export class ReferenceList {
     if (!(await this.fillImpact(gen))) return true;
     this.status = 'done';
     this.renderAll();
-    void this.writeCache(cacheKey, this.entries);
+    void this.writeCache(cacheKey, { entries: this.entries });
     debugLog('paper', `references loaded: ${this.entries.length}/${this.expected}`);
     return true;
   }
@@ -201,60 +217,112 @@ export class ReferenceList {
 
   /**
    * The list printed in the PDF, shown at once and then linked to OpenAlex
-   * (citations, venue) by DOI or arXiv id in batches, then by title.
+   * (citations, venue) by DOI or arXiv id in batches. Titles are linked later,
+   * while the list is open (opened()). Whatever was linked is cached, also
+   * when OpenAlex's budget ran out partway.
    */
   async loadFromPdf(refs: PdfReference[], cacheKey: string, reason: string): Promise<boolean> {
     this.reset();
     const gen = this.generation;
     if (refs.length === 0) { this.unavailable(reason); return false; }
     this.onPdfCount?.(refs.length);
-    const cached = await this.readCache(`${cacheKey}:pdf`);
+    const pdfKey = `${cacheKey}:pdf`;
+    const cached = await this.readCache(pdfKey);
     if (gen !== this.generation) return true;
-    if (cached && cached.length === refs.length) {
-      this.entries = cached; this.expected = cached.length; this.status = 'done'; this.sourceNote = pdfNote(cached); this.renderAll();
+    const reuse = cached && cached.entries.length === refs.length ? cached : null;
+    this.entries = reuse ? reuse.entries : refs.map(entryFromPdf);
+    this.expected = refs.length;
+    this.pdf = { refs, cacheKey: pdfKey, idsLinked: !!reuse?.idsLinked };
+    if (reuse?.idsLinked) {
+      this.status = 'done';
+      this.sourceNote = this.pdfSourceNote();
+      this.renderAll();
       return true;
     }
-    this.entries = refs.map(entryFromPdf);
-    this.expected = refs.length;
     this.status = 'loading';
     this.sourceNote = S.pdfListBasis;
     this.renderAll();
     const arxivDoi = (id: string) => `10.48550/arxiv.${id.toLowerCase()}`;
     const keyOf = (r: PdfReference) => (r.doi ? r.doi.toLowerCase() : r.arxivId ? arxivDoi(r.arxivId) : null);
-    const withIds = refs.map((r, i) => ({ i, key: keyOf(r) })).filter((x): x is { i: number; key: string } => !!x.key);
+    const withIds = refs.map((r, i) => ({ i, key: keyOf(r) })).filter((x): x is { i: number; key: string } => !!x.key && !!this.entries[x.i].unlinked);
+    let answered = true;
     for (let at = 0; at < withIds.length; at += BATCH) {
       const chunk = withIds.slice(at, at + BATCH);
       const page = await fetchJson<{ results?: RefWork[] }>(
         `${OPENALEX}/works?filter=doi:${chunk.map((c) => encodeURIComponent(c.key)).join('|')}&per-page=${BATCH}&select=${encodeURIComponent(WORK_SELECT)}`,
       );
       if (gen !== this.generation) return true;
+      if (!page) answered = false;
       for (const work of page?.results ?? []) {
         const doi = (work.doi ?? '').replace(/^https?:\/\/doi\.org\//iu, '').toLowerCase();
         for (const c of chunk) if (c.key === doi) this.entries[c.i] = this.linked(this.entries[c.i], work);
       }
       this.renderAll();
     }
-    let lookups = 0;
-    for (const [i, ref] of refs.entries()) {
-      if (openAlexBudgetSpent()) break;
-      if (!this.entries[i].unlinked || !ref.title || lookups >= TITLE_LOOKUPS_MAX) continue;
-      lookups += 1;
-      const page = await fetchJson<{ results?: RefWork[] }>(
-        `${OPENALEX}/works?search=${encodeURIComponent(ref.title)}&per-page=3&select=${encodeURIComponent(WORK_SELECT)}`,
-      );
-      if (gen !== this.generation) return true;
-      const match = (page?.results ?? []).find((w) => titleSimilarity(ref.title ?? '', w.display_name ?? '') >= TITLE_MATCH
-        && (!ref.year || !w.publication_year || Math.abs(ref.year - w.publication_year) <= 1));
-      if (match) { this.entries[i] = this.linked(this.entries[i], match); this.renderAll(); }
-      await new Promise((r) => setTimeout(r, TITLE_GAP_MS));
-    }
     if (!(await this.fillImpact(gen))) return true;
+    this.pdf.idsLinked = answered;
     this.status = 'done';
-    this.sourceNote = pdfNote(this.entries);
+    this.sourceNote = this.pdfSourceNote();
     this.renderAll();
-    if (!openAlexBudgetSpent()) void this.writeCache(`${cacheKey}:pdf`, this.entries);
+    void this.writeCache(pdfKey, { entries: this.entries, idsLinked: answered });
     debugLog('paper', `references from the PDF: ${this.entries.length}, linked ${this.entries.filter((e) => !e.unlinked).length}`);
+    // The reader is already looking at it.
+    if (this.panel.parentElement?.matches(':hover, :focus-within')) this.opened();
     return true;
+  }
+
+  /** PDF entries with a title that no search has been tried for yet. */
+  private titlesLeft(): number[] {
+    const refs = this.pdf?.refs ?? [];
+    return this.entries.flatMap((e, i) => (e.unlinked && !e.titleTried && refs[i]?.title ? [i] : []));
+  }
+
+  private pdfSourceNote(): string {
+    const left = openAlexBudgetSpent() ? 0 : this.titlesLeft().length;
+    return pdfNote(this.entries) + (left > 0 ? S.titlesLeftNote(left) : '');
+  }
+
+  /**
+   * The reader opened the list: link a few more of the PDF's entries by
+   * title (TITLE_LOOKUPS_PER_OPEN), then cache what was found.
+   */
+  opened(): void {
+    void this.linkTitles();
+  }
+
+  private async linkTitles(): Promise<void> {
+    const pdf = this.pdf;
+    if (!pdf || this.status !== 'done' || this.linkingTitles || openAlexBudgetSpent()) return;
+    const todo = this.titlesLeft().slice(0, TITLE_LOOKUPS_PER_OPEN);
+    if (todo.length === 0) return;
+    const gen = this.generation;
+    this.linkingTitles = true;
+    let found = 0;
+    try {
+      for (const i of todo) {
+        if (openAlexBudgetSpent()) break;
+        const ref = pdf.refs[i];
+        const title = ref.title ?? '';
+        const page = await fetchJson<{ results?: RefWork[] }>(
+          `${OPENALEX}/works?search=${encodeURIComponent(title)}&per-page=3&select=${encodeURIComponent(WORK_SELECT)}`,
+        );
+        if (gen !== this.generation) return;
+        const match = (page?.results ?? []).find((w) => titleSimilarity(title, w.display_name ?? '') >= TITLE_MATCH
+          && (!ref.year || !w.publication_year || Math.abs(ref.year - w.publication_year) <= 1));
+        if (match) { this.entries[i] = this.linked(this.entries[i], match); found += 1; }
+        else if (page) this.entries[i] = { ...this.entries[i], titleTried: true };
+        this.renderAll();
+        await new Promise((r) => setTimeout(r, TITLE_GAP_MS));
+      }
+      if (found > 0 && !(await this.fillImpact(gen))) return;
+      if (gen !== this.generation) return;
+      this.sourceNote = this.pdfSourceNote();
+      this.renderAll();
+      void this.writeCache(pdf.cacheKey, { entries: this.entries, idsLinked: pdf.idsLinked });
+      debugLog('paper', `references linked by title: ${found}/${todo.length}`);
+    } finally {
+      if (gen === this.generation) this.linkingTitles = false;
+    }
   }
 
   /** A PDF entry with what OpenAlex knows about it; the PDF keeps its link if it had a DOI or arXiv id. */
@@ -277,7 +345,7 @@ export class ReferenceList {
   async loadFromSemanticScholar(paperId: string, cacheKey: string, headers?: Record<string, string>): Promise<boolean> {
     this.reset();
     const gen = this.generation;
-    const cached = await this.readCache(`${cacheKey}:s2`);
+    const cached = (await this.readCache(`${cacheKey}:s2`))?.entries;
     if (gen !== this.generation) return true;
     if (cached) { this.entries = cached; this.expected = cached.length; this.status = 'done'; this.renderAll(); return true; }
     this.status = 'loading';
@@ -320,7 +388,7 @@ export class ReferenceList {
     this.status = 'done';
     this.sourceNote = S.s2Basis;
     this.renderAll();
-    void this.writeCache(`${cacheKey}:s2`, entries);
+    void this.writeCache(`${cacheKey}:s2`, { entries });
     return true;
   }
 
@@ -383,23 +451,13 @@ export class ReferenceList {
     }
   }
 
-  private async readCache(key: string): Promise<RefEntry[] | null> {
-    try {
-      const stored = await chrome.storage.local.get(CACHE_PREFIX + key);
-      const entry = stored[CACHE_PREFIX + key] as { fetchedAt: number; entries: RefEntry[] } | undefined;
-      if (!entry || Date.now() - entry.fetchedAt > CACHE_TTL_MS || !Array.isArray(entry.entries)) return null;
-      return entry.entries;
-    } catch {
-      return null;
-    }
+  private async readCache(key: string): Promise<CachedRefs | null> {
+    const cached = await readPaperCache<CachedRefs>(CACHE_PREFIX + key);
+    return cached && Array.isArray(cached.entries) ? cached : null;
   }
 
-  private async writeCache(key: string, entries: RefEntry[]): Promise<void> {
-    try {
-      await chrome.storage.local.set({ [CACHE_PREFIX + key]: { fetchedAt: Date.now(), entries } });
-    } catch {
-      /* best effort */
-    }
+  private writeCache(key: string, value: CachedRefs): Promise<void> {
+    return writePaperCache(CACHE_PREFIX + key, value);
   }
 }
 
