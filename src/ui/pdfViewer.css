@@ -25,10 +25,6 @@
   --vt-dialog-fg: #1f2937;
 }
 
-@media (prefers-color-scheme: light) {
-  :root { --vt-dialog-bg: #ffffff; --vt-dialog-fg: #1f2937; }
-}
-
 html, body {
   margin: 0;
   height: 100%;
@@ -56,7 +52,7 @@ html, body {
 }
 .vt-group { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .vt-center { justify-content: center; }
-.vt-right { justify-content: flex-end; }
+.vt-right { justify-content: flex-end; min-width: max-content; } /* never squeezed out of view */
 .vt-sep { width: 1px; height: 22px; background: var(--vt-toolbar-border); margin: 0 4px; }
 
 .vt-btn {
@@ -154,7 +150,8 @@ html, body {
   cursor: pointer;
   position: relative;
 }
-.vt-menu-item:hover, .vt-menu-item:focus-visible { background: var(--vt-hover); outline: none; }
+.vt-menu-item:hover:not(:disabled), .vt-menu-item:focus-visible { background: var(--vt-hover); outline: none; }
+.vt-menu-item:disabled { opacity: 0.4; cursor: default; }
 .vt-menu-item[role="menuitemcheckbox"][aria-checked="true"]::before {
   content: '✓';
   position: absolute;
@@ -163,6 +160,8 @@ html, body {
 }
 .vt-menu-item kbd { font: 11px/1 ui-monospace, monospace; color: var(--vt-toolbar-muted); }
 .vt-menu-sep { border: 0; border-top: 1px solid var(--vt-toolbar-border); margin: 6px 0; }
+/* Toolbar buttons that move into the menu on a narrow viewer (see below). */
+.vt-menu-compact, .vt-menu-narrow { display: none; }
 
 /* ── Paper strip ── */
 .vt-paper {
@@ -179,7 +178,10 @@ html, body {
   background: var(--vt-panel-bg);
   border-bottom: 1px solid var(--vt-toolbar-border);
   font-size: 12px;
-  z-index: 17;
+  /* Above the find and annotation bars (which sit below it): its popovers
+     live in this stacking context and must cover them. The toolbar (20),
+     whose More menu drops over the strip, stays above. */
+  z-index: 19;
 }
 .vt-paper[hidden] { display: none; }
 .vt-paper-body { flex: 1; min-width: 0; display: flex; align-items: center; gap: 18px; overflow: visible; white-space: nowrap; }
@@ -252,6 +254,9 @@ html, body {
 .vt-kind-survey { background: #fdd663; }
 .vt-kind-technical { background: #c58af9; }
 .vt-kind-preprint { background: #f28b82; }
+/* "matched by title": found by a title search, not by an identifier. */
+.vt-paper-matched { padding: 0 6px; border: 1px dashed var(--vt-toolbar-muted); border-radius: 999px; color: var(--vt-toolbar-muted); font-size: 11px; }
+.vt-paper-matched-detail { margin-bottom: 6px; }
 .vt-paper-status { color: var(--vt-toolbar-muted); display: inline-flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; }
 .vt-paper-spinner { width: 12px; height: 12px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.25); border-top-color: var(--vt-accent); animation: vt-spin 0.9s linear infinite; flex: none; }
 @keyframes vt-spin { to { transform: rotate(360deg); } }
@@ -342,7 +347,7 @@ body.vt-has-paper.vt-annotating .vt-sidebar,
 body.vt-has-paper.vt-annotating .vt-findbar { top: calc(var(--vt-toolbar-height) + var(--vt-paper-height) + var(--vt-annotate-height)); }
 body.vt-presenting .vt-paper { display: none; }
 
-/* ── Find bar ── 
+/* ── Find bar ── */
 .vt-findbar {
   position: fixed;
   top: var(--vt-toolbar-height);
@@ -357,7 +362,7 @@ body.vt-presenting .vt-paper { display: none; }
   border-top: 0;
   border-radius: 0 0 10px 10px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
-  z-index: 19;
+  z-index: 18;
 }
 .vt-findbar[hidden] { display: none; }
 body.vt-annotating .vt-findbar { top: calc(var(--vt-toolbar-height) + var(--vt-annotate-height)); border-top: 1px solid var(--vt-toolbar-border); }
@@ -381,7 +386,7 @@ body.vt-annotating .vt-findbar { top: calc(var(--vt-toolbar-height) + var(--vt-a
   padding: 0 12px;
   background: var(--vt-panel-bg);
   border-bottom: 1px solid var(--vt-toolbar-border);
-  z-index: 18;
+  z-index: 17;
 }
 .vt-annotate-bar[hidden] { display: none; }
 .vt-tool span { font-size: 12px; }
@@ -622,6 +627,20 @@ body.vt-presenting .vt-sidebar { display: none; }
   .vt-title { display: none; }
   .vt-find-opt { display: none; }
   .vt-annotate-hint { display: none; }
+}
+/* Narrow viewer (a hub split, a small window): fit, rotate, undo/redo and
+   figure copy move into the More menu; narrower still, zoom ± (the zoom list
+   and Ctrl± remain), download and print follow. */
+@media (max-width: 720px) {
+  .vt-toolbar { gap: 6px; padding: 0 6px; }
+  #vt-fit-toggle, #vt-rotate, #vt-undo, #vt-redo, #vt-capture, .vt-sep-compact { display: none; }
+  .vt-menu-item.vt-menu-compact { display: flex; }
+  hr.vt-menu-compact { display: block; }
+}
+@media (max-width: 520px) {
+  #vt-zoom-out, #vt-zoom-in, #vt-download, #vt-print { display: none; }
+  .vt-menu-item.vt-menu-narrow { display: flex; }
+  .vt-select { min-width: 0; }
 }
 
 /* ─── Annotation conflict dialog + preview flash ─── */

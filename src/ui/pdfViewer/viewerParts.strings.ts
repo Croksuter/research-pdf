@@ -127,8 +127,8 @@ export const S = messages({
     captureSaveFailed: (message: string) => `Couldn’t save: ${message}`,
     swatch: (color: string) => `Color ${color}`,
     conflictSummary: (fileOnly: number, cacheOnly: number) =>
-      `This PDF file has ${fileOnly} ${fileOnly === 1 ? 'annotation' : 'annotations'} that aren’t in the browser, `
-      + `and the browser has ${cacheOnly} ${cacheOnly === 1 ? 'annotation' : 'annotations'} that aren’t in the file. Which would you like to keep?`,
+      `This PDF file has ${fileOnly} ${fileOnly === 1 ? 'annotation that isn’t' : 'annotations that aren’t'} in the browser, `
+      + `and the browser has ${cacheOnly} ${cacheOnly === 1 ? 'annotation that isn’t' : 'annotations that aren’t'} in the file. Which would you like to keep?`,
     pageN: (n: number) => `Page ${n}`,
     noOutline: 'No outline.',
     toggleChildren: 'Expand or collapse child items',
