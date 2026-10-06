@@ -11,6 +11,7 @@ import { formatCount, titleSimilarity } from '../../shared/paperIdentifiers';
 import type { PdfReference } from '../../shared/pdfReferences';
 import { isOpenAlexUrl, noteOpenAlex429, openAlexBudgetSpent, openAlexUrl } from './openAlexAccess';
 import { el } from './dom';
+import { S } from './paper.strings';
 
 const OPENALEX = 'https://api.openalex.org';
 const SEMANTIC_SCHOLAR = 'https://api.semanticscholar.org/graph/v1';
@@ -216,7 +217,7 @@ export class ReferenceList {
     this.entries = refs.map(entryFromPdf);
     this.expected = refs.length;
     this.status = 'loading';
-    this.sourceNote = 'PDF 본문의 목록 기준';
+    this.sourceNote = S.pdfListBasis;
     this.renderAll();
     const arxivDoi = (id: string) => `10.48550/arxiv.${id.toLowerCase()}`;
     const keyOf = (r: PdfReference) => (r.doi ? r.doi.toLowerCase() : r.arxivId ? arxivDoi(r.arxivId) : null);
@@ -300,7 +301,7 @@ export class ReferenceList {
         const doi = c.externalIds?.DOI ?? null;
         entries.push({
           id: c.paperId,
-          title: c.title ?? '(제목 없음)',
+          title: c.title ?? S.untitled,
           year: c.year ?? null,
           authors: (c.authors ?? []).map((a) => a.name ?? '').filter(Boolean),
           venue: c.venue || null,
@@ -317,7 +318,7 @@ export class ReferenceList {
     }
     if (entries.length === 0) { this.nextSource(); return false; }
     this.status = 'done';
-    this.sourceNote = 'Semantic Scholar 기준 · 게재처 IF 지표는 OpenAlex 전용';
+    this.sourceNote = S.s2Basis;
     this.renderAll();
     void this.writeCache(`${cacheKey}:s2`, entries);
     return true;
@@ -329,7 +330,7 @@ export class ReferenceList {
     const doi = w.doi ? w.doi.replace(/^https?:\/\/doi\.org\//iu, '') : null;
     return {
       id,
-      title: w.display_name ?? '(제목 없음)',
+      title: w.display_name ?? S.untitled,
       year: w.publication_year ?? null,
       authors: (w.authorships ?? []).map((a) => a.author?.display_name ?? '').filter(Boolean),
       venue: source?.display_name ?? null,
@@ -344,17 +345,17 @@ export class ReferenceList {
     this.header.replaceChildren();
     const n = this.entries.length;
     if (this.status === 'failed') {
-      this.header.append(el('span', { className: 'vt-warn-inline', textContent: '⚠︎ ' }), el('span', { textContent: reason ?? '참고문헌 목록을 못 찾았습니다.' }));
+      this.header.append(el('span', { className: 'vt-warn-inline', textContent: '⚠︎ ' }), el('span', { textContent: reason ?? S.refsNotFound }));
       return;
     }
     if (this.status === 'idle' || (this.status === 'loading' && n === 0 && this.expected === 0)) {
-      this.header.append(el('span', { textContent: this.status === 'idle' ? '참고문헌 목록 준비 중…' : '참고문헌 목록 찾는 중…' }));
+      this.header.append(el('span', { textContent: this.status === 'idle' ? S.refsPreparing : S.refsSearching }));
       return;
     }
-    const label = this.status === 'loading' ? `불러오는 중 ${n}/${this.expected}` : `${n}편 · 인용 많은 순`;
-    this.header.append(el('span', { textContent: `참고문헌 ${label}` }));
+    const label = this.status === 'loading' ? S.refsLoadingLabel(n, this.expected) : S.refsDoneLabel(n);
+    this.header.append(el('span', { textContent: S.refsHeader(label) }));
     if (this.status === 'done' && n < this.expected) {
-      this.header.append(el('span', { className: 'vt-refs-note', textContent: ` · ${this.expected - n}편은 OpenAlex에 없음` }));
+      this.header.append(el('span', { className: 'vt-refs-note', textContent: S.refsMissingInOpenAlex(this.expected - n) }));
     }
     if (this.sourceNote) this.header.append(el('span', { className: 'vt-refs-note', textContent: ` · ${this.sourceNote}` }));
   }
@@ -365,13 +366,13 @@ export class ReferenceList {
     const sorted = [...this.entries].sort((a, b) => (b.citations ?? -1) - (a.citations ?? -1));
     for (const e of sorted) {
       const meta = [
-        e.authors.length ? (e.authors.length > 3 ? `${e.authors.slice(0, 3).join(', ')} 외` : e.authors.join(', ')) : null,
+        e.authors.length ? (e.authors.length > 3 ? S.authorsEtAl(e.authors.slice(0, 3).join(', ')) : e.authors.join(', ')) : null,
         e.year ? String(e.year) : null,
         e.venue,
       ].filter(Boolean).join(' · ');
       const stats = el('span', { className: 'vt-ref-stats' }, [
-        el('span', { textContent: typeof e.citations === 'number' ? `인용 ${formatCount(e.citations)}` : e.unlinked ? 'OpenAlex에서 못 찾음' : '⚠︎ 인용 수 없음' }),
-        el('span', { textContent: typeof e.impact === 'number' ? ` · IF≈${e.impact.toFixed(1)}` : '', title: typeof e.impact === 'number' ? '게재처 2년 평균 피인용 (OpenAlex)' : '' }),
+        el('span', { textContent: typeof e.citations === 'number' ? S.citedCount(formatCount(e.citations)) : e.unlinked ? S.notFoundInOpenAlex : S.noCitationCountShort }),
+        el('span', { textContent: typeof e.impact === 'number' ? ` · IF≈${e.impact.toFixed(1)}` : '', title: typeof e.impact === 'number' ? S.venueMeanCitednessShort : '' }),
       ]);
       const link = el('a', { className: 'vt-ref', href: e.url, target: '_blank', rel: 'noopener noreferrer' }, [
         el('span', { className: 'vt-ref-title', textContent: e.title }),
@@ -423,6 +424,6 @@ function entryFromPdf(ref: PdfReference): RefEntry {
 
 function pdfNote(entries: readonly RefEntry[]): string {
   const linked = entries.filter((e) => !e.unlinked).length;
-  const spent = openAlexBudgetSpent() ? ' (OpenAlex 일일 한도 소진 — 설정에 API 키를 넣으면 연결됩니다)' : '';
-  return `PDF 본문의 목록 기준 · OpenAlex 연결 ${linked}/${entries.length}${spent}`;
+  const spent = openAlexBudgetSpent() ? S.budgetSpentNote : '';
+  return `${S.pdfNote(linked, entries.length)}${spent}`;
 }

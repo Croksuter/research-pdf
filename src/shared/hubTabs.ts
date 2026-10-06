@@ -6,6 +6,7 @@
 // the recently-closed stack.
 
 import { pdfCacheAliases } from './pdfCachePolicy';
+import { S } from './shared.strings';
 
 export interface HubDocKey {
   /** The URL without fragment. */
@@ -73,7 +74,7 @@ export function arxivVersionBadges(urls: ReadonlyArray<string | null>): Array<st
     set.add(k.version ?? '');
     versions.set(k.paper, set);
   }
-  return keys.map((k) => (k?.paper && (versions.get(k.paper)?.size ?? 0) > 1 ? k.version ?? '최신' : null));
+  return keys.map((k) => (k?.paper && (versions.get(k.paper)?.size ?? 0) > 1 ? k.version ?? S.latestVersion : null));
 }
 
 // ─── Sleeping frames ───

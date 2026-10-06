@@ -3,6 +3,7 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { EventBus, PDFLinkService, PDFViewer } from 'pdfjs-dist/web/pdf_viewer.mjs';
 import { byId, el, formatBytes } from './dom';
+import { S } from './viewerParts.strings';
 
 const THUMB_WIDTH = 132;
 
@@ -97,7 +98,7 @@ export class Sidebar {
         type: 'button',
         className: 'vt-thumb',
         'data-page': String(n),
-        'aria-label': `페이지 ${n}`,
+        'aria-label': S.pageN(n),
       }, [canvasHolder, el('span', { className: 'vt-thumb-label', textContent: String(n) })]);
       item.addEventListener('click', () => { this.deps.pdfViewer.currentPageNumber = n; });
       this.thumbsPane.append(item);
@@ -158,7 +159,7 @@ export class Sidebar {
   private buildOutline(outline: OutlineItem[] | null): void {
     this.outlinePane.replaceChildren();
     if (!outline?.length) {
-      this.outlinePane.append(el('p', { className: 'vt-sidebar-empty', textContent: '목차가 없습니다.' }));
+      this.outlinePane.append(el('p', { className: 'vt-sidebar-empty', textContent: S.noOutline }));
       return;
     }
     const build = (items: OutlineItem[], depth: number): HTMLUListElement => {
@@ -169,10 +170,10 @@ export class Sidebar {
         const toggle = el('button', {
           type: 'button',
           className: 'vt-outline-toggle',
-          'aria-label': '하위 항목 접기/펼치기',
+          'aria-label': S.toggleChildren,
           hidden: !hasChildren,
         }, ['▸']);
-        const link = el('button', { type: 'button', className: 'vt-outline-link' }, [item.title || '(제목 없음)']);
+        const link = el('button', { type: 'button', className: 'vt-outline-link' }, [item.title || S.untitled]);
         if (item.bold) link.style.fontWeight = '600';
         if (item.italic) link.style.fontStyle = 'italic';
         link.addEventListener('click', () => {
@@ -204,7 +205,7 @@ export class Sidebar {
     this.attachmentsPane.replaceChildren();
     const entries = attachments ? Object.values(attachments) : [];
     if (entries.length === 0) {
-      this.attachmentsPane.append(el('p', { className: 'vt-sidebar-empty', textContent: '첨부파일이 없습니다.' }));
+      this.attachmentsPane.append(el('p', { className: 'vt-sidebar-empty', textContent: S.noAttachments }));
       return;
     }
     const list = el('ul', { className: 'vt-attachment-list' });

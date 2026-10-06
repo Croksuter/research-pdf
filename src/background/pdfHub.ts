@@ -30,6 +30,7 @@ import type { PdfLibrary } from '../shared/pdfLibrary';
 import { debugError, debugLog } from '../shared/debugLog';
 import { readPdfLibrary } from './pdfLibraryStore';
 import { mutatePdfProjects, readPdfProjects } from './pdfProjectStore';
+import { S } from './background.strings';
 
 export interface HubRegistryEntry {
   tabId: number;
@@ -263,7 +264,7 @@ export function claimPdfHub(
 ): Promise<HubClaimResult> {
   const tab = sender.tab;
   if (!tab || typeof tab.id !== 'number' || sender.frameId !== 0) {
-    return Promise.resolve({ success: false, error: '탭 정보를 찾을 수 없습니다.' });
+    return Promise.resolve({ success: false, error: S.tabNotFound });
   }
   const claimer = { id: tab.id, windowId: tab.windowId, index: tab.index, active: tab.active };
   const dispose = request.canGoBack ? 'back' as const : 'close' as const;
@@ -383,7 +384,7 @@ export function openPdfProject(project: string, sender: chrome.runtime.MessageSe
   return serialized(async () => {
     const projects = await readPdfProjects();
     const target = projects[project];
-    if (!target || target.deletedAt !== 0) return { success: false, error: '없는 프로젝트입니다.' };
+    if (!target || target.deletedAt !== 0) return { success: false, error: S.noSuchProject };
     const registry = await readRegistry();
     const entry = await liveEntry(registry, project);
     if (entry) {
@@ -419,7 +420,7 @@ export function openPdfProject(project: string, sender: chrome.runtime.MessageSe
 export function movePdfToProject(request: { docId: string; url: string | null; from: string; to: string; keep: boolean }): Promise<{ success: boolean; open?: boolean; error?: string }> {
   return serialized(async () => {
     const projects = await readPdfProjects();
-    if (projects[request.to]?.deletedAt !== 0) return { success: false, error: '없는 프로젝트입니다.' };
+    if (projects[request.to]?.deletedAt !== 0) return { success: false, error: S.noSuchProject };
     const registry = await readRegistry();
     const entry = await liveEntry(registry, request.to);
     await mutatePdfProjects((current) => {

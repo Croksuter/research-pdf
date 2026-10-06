@@ -19,7 +19,7 @@ Chrome 웹 스토어 개발자 대시보드 → **스토어 등록정보** 탭�
 PDF viewer for papers. Drawings and reading position follow you across Chrome profiles and devices via your own Google Drive.
 ```
 
-한국어 목록에 맞춘 제안(64자). 바꾸려면 manifest를 고쳐 새 버전을 올려야 합니다(또는 `_locales/ko`로 다국어화):
+한국어 요약(64자). 이제 `src/_locales/ko/messages.json`의 `appDescription`으로 들어가 있어, 다음 버전부터 한국어 Chrome에는 이 요약이 보입니다(영어는 `_locales/en`):
 
 ```
 논문 PDF 뷰어. 게재처·인용·참고문헌을 바로 보여주고, 필기와 읽던 위치를 내 Google Drive로 모든 기기에 동기화합니다.

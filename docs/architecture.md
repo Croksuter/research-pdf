@@ -100,6 +100,18 @@ no longer scatter across tabs that look like web pages.
 - A top-level `pdf-viewer.html` (old tabs, bookmarks) redirects into the hub;
   a hub framed by a web page acts as the plain viewer.
 
+## Languages
+
+Korean and English (`src/shared/i18n.ts`). Each module keeps its strings in a
+sibling `*.strings.ts` (`messages({ ko, en })`, same keys enforced by the
+types; functions for interpolation); static HTML carries `data-i18n*`
+attributes filled by `localizeDocument`. The language is the user's choice on
+the settings page (auto = the browser's), kept in localStorage for pages and
+mirrored to `chrome.storage.local` for the service worker; open PDF tabs
+reload when it changes. The manifest description comes from `_locales/`
+(`default_locale: en`). Stored data stays as written — the default project's
+stored name is shown in the page's language until the user renames it.
+
 ## Projects
 
 `shared/pdfProjects.ts`, `chrome.storage.local` key `rpdfProjects`, written by

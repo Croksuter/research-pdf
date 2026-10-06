@@ -6,6 +6,7 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { AnnotationMode } from 'pdfjs-dist';
 import { byId, el } from './dom';
+import { S } from './viewerParts.strings';
 
 const PRINT_DPI = 150;
 const CSS_DPI = 96;
@@ -36,7 +37,7 @@ export async function printDocument(doc: PDFDocumentProxy): Promise<void> {
     const scale = PRINT_DPI / CSS_DPI;
     for (let n = 1; n <= doc.numPages; n += 1) {
       if (cancelled) break;
-      progressText.textContent = `인쇄 준비 중… ${n} / ${doc.numPages}`;
+      progressText.textContent = S.printPreparing(n, doc.numPages);
       const page = await doc.getPage(n);
       const viewport = page.getViewport({ scale });
       const canvas = document.createElement('canvas');
@@ -53,7 +54,7 @@ export async function printDocument(doc: PDFDocumentProxy): Promise<void> {
         annotationMode: AnnotationMode.ENABLE_STORAGE,
         printAnnotationStorage: doc.annotationStorage.print,
       } as Parameters<typeof page.render>[0]).promise;
-      const img = el('img', { alt: `페이지 ${n}` });
+      const img = el('img', { alt: S.pageN(n) });
       // Portrait vs landscape sheets are sized by CSS; the image scales to fit.
       img.src = canvas.toDataURL('image/png');
       const sheet = el('div', { className: viewport.width > viewport.height ? 'vt-print-page is-landscape' : 'vt-print-page' }, [img]);

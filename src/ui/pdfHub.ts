@@ -105,6 +105,11 @@ import {
 import { openDB } from '../db/database';
 import { byId } from './pdfViewer/dom';
 import { prefetchPdf } from './pdfFileFetch';
+import { S as SHARED } from '../shared/shared.strings';
+import { LANGUAGE_STORAGE_KEY, currentLanguage, localizeDocument, parseLanguagePref, resolveLanguage } from '../shared/i18n';
+import { S } from './pdfHub.strings';
+
+localizeDocument(S);
 
 initDebugLogging();
 
@@ -277,6 +282,9 @@ function setLibrary(next: PdfLibrary): void {
 function setProjects(raw: unknown): void {
   storedProjects = raw;
   projects = raw === undefined ? seedPdfProjects(Object.values(library)) : parsePdfProjects(raw);
+  // The default project's stored name is Korean data; never renamed, it is shown in this page's language.
+  const root = projects[DEFAULT_PROJECT_ID];
+  if (root && root.renamedAt === 0) projects = { ...projects, [DEFAULT_PROJECT_ID]: { ...root, name: SHARED.defaultProjectName } };
   const stored = new Set(projectPinnedDocIds(projects, projectId));
   for (const [docId, pinned] of pendingPins) {
     if (stored.has(docId) === pinned) pendingPins.delete(docId);
@@ -288,7 +296,7 @@ function currentProject(): PdfProject {
 }
 
 function projectName(id: string): string {
-  return projects[id]?.name ?? '프로젝트';
+  return projects[id]?.name ?? S.projectFallback;
 }
 
 /** Pinned documents of this project, with pin changes still in flight. */
@@ -411,6 +419,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
     docRecords = parsePdfDocRecords(changes[PDF_DOC_STATE_STORAGE_KEY].newValue);
     scheduleHomeRender();
   }
+  // A new language: reload in it (the viewers store everything first; the URL keeps the tabs).
+  if (changes[LANGUAGE_STORAGE_KEY] && resolveLanguage(parseLanguagePref(changes[LANGUAGE_STORAGE_KEY].newValue)) !== currentLanguage()) {
+    void storeFrames().then(() => location.reload());
+    return;
+  }
   if (changes[DISPLAY_PREFS_STORAGE_KEY]) {
     display = parseDisplayPrefs(changes[DISPLAY_PREFS_STORAGE_KEY].newValue);
     tabs.forEach(updateTabLabel);
@@ -433,9 +446,9 @@ function createTab(doc: { url: string | null; hash: string; file: File | null })
   const text = el('span', { className: 'rpdf-tab-text' });
   text.append(titleEl, paperEl);
   const verEl = el('span', { className: 'rpdf-tab-ver', hidden: true });
-  const closeEl = el('span', { className: 'rpdf-tab-close', title: '닫기 (Alt+W)' });
+  const closeEl = el('span', { className: 'rpdf-tab-close', title: S.closeShortcut });
   closeEl.setAttribute('role', 'button');
-  closeEl.setAttribute('aria-label', '이 PDF 닫기');
+  closeEl.setAttribute('aria-label', S.closePdf);
   closeEl.append(icon('i-close'));
   button.append(iconEl, text, verEl, closeEl);
   let fileId: number | null = null;
@@ -480,7 +493,7 @@ function updateTabLabel(tab: HubTab): void {
   const kind = docKind(tab.docId ?? tab.libraryId);
   tab.iconEl.replaceChildren(icon(tab.pinned ? 'i-pin' : kindIcon(display.kindIcons === 'off' ? 'document' : kind, isLocal(tab))));
   tab.iconEl.dataset.kind = tab.pinned || display.kindIcons !== 'color' ? '' : kind;
-  tab.button.title = [tab.paperTitle, tab.title, tab.url, kind !== 'document' ? KIND_LABEL[kind] : null, tab.pinned ? '고정됨 · 우클릭해 고정 해제' : null]
+  tab.button.title = [tab.paperTitle, tab.title, tab.url, kind !== 'document' ? KIND_LABEL[kind] : null, tab.pinned ? S.pinnedTip : null]
     .filter(Boolean).filter((v, i, all) => all.indexOf(v) === i).join('\n');
   if (tab.frame) tab.frame.title = tab.paperTitle ?? tab.title;
 }
@@ -510,7 +523,7 @@ function addDocs(docs: Array<{ url: string | null; hash: string; file: File | nu
       continue;
     }
     if (tabs.length - pinnedCount() >= PDF_HUB_MAX_DOCS) {
-      showToast(`한 프로젝트에는 PDF를 ${PDF_HUB_MAX_DOCS}개까지 열 수 있습니다.`);
+      showToast(S.tooManyDocs(PDF_HUB_MAX_DOCS));
       break;
     }
     const tab = createTab(doc);
@@ -656,7 +669,7 @@ function showSettings(): void {
   settingsBtn.setAttribute('aria-pressed', 'true');
   let frame = settingsView.querySelector('iframe');
   if (!frame) {
-    frame = el('iframe', { src: 'settings.html', title: '설정' });
+    frame = el('iframe', { src: 'settings.html', title: S.settings });
     // Shown once it has styled itself for the hub, without a light flash.
     frame.style.visibility = 'hidden';
     frame.addEventListener('load', () => { frame?.style.removeProperty('visibility'); frame?.focus(); }, { once: true });
@@ -671,7 +684,7 @@ function closeTab(key: number, remember = true): void {
   const tab = tabs.find((t) => t.key === key);
   if (!tab) return;
   if (tab.pinned) {
-    showToast('고정된 탭입니다. 우클릭해 고정을 해제하면 닫을 수 있습니다.');
+    showToast(S.pinnedCantClose);
     return;
   }
   const index = tabs.indexOf(tab);
@@ -686,7 +699,7 @@ function closeTab(key: number, remember = true): void {
       closedAt: Date.now(),
     };
     setClosed(pushClosedTab(closed, entry));
-    showToast('탭을 닫았습니다.', { label: '되돌리기 (Alt+Shift+T)', run: () => reopenClosed(entry) });
+    showToast(S.tabClosed, { label: S.undoShortcut, run: () => reopenClosed(entry) });
   }
   render();
 }
@@ -796,7 +809,7 @@ function setPinnedById(docId: string, pinned: boolean): void {
   if (pinned && !isDocInProject(projects, projectId, docId)) {
     if (projectId === DEFAULT_PROJECT_ID) {
       const elsewhere = projectsOfDoc(projects, docId).map(projectName).join(', ');
-      showToast(`‘${elsewhere}’ 프로젝트의 문서입니다. 기본 프로젝트로 옮긴 뒤 고정하세요.`);
+      showToast(S.inOtherProject(elsewhere));
       return;
     }
     registered.add(docId); // pinning registers it
@@ -812,7 +825,7 @@ function setPinned(tab: HubTab, pinned: boolean): void {
   if (pinned && !tab.url) {
     // A file opened from disk has no address to reopen it from in another hub.
     if (docId && library[docId]) setPinnedById(docId, true);
-    showToast('로컬 파일은 홈의 고정 목록에만 표시됩니다.');
+    showToast(S.localPinNote);
     return;
   }
   if (!docId || !library[docId]) {
@@ -820,7 +833,7 @@ function setPinned(tab: HubTab, pinned: boolean): void {
     // Not opened yet: load it (in the background) and pin once it is known.
     tab.pendingPin = true;
     ensureFrame(tab);
-    showToast('문서를 불러온 뒤 고정합니다.');
+    showToast(S.pinAfterLoad);
     return;
   }
   tab.libraryId = docId;
@@ -868,7 +881,7 @@ function setClosed(next: HubClosedTab[]): void {
 }
 
 function reopenClosed(entry: HubClosedTab | undefined = closed[0]): void {
-  if (!entry) { showToast('다시 열 탭이 없습니다.'); return; }
+  if (!entry) { showToast(S.nothingToReopen); return; }
   setClosed(closed.filter((e) => e !== entry));
   hideToast();
   if (entry.url) {
@@ -898,7 +911,7 @@ function hubState(): { urls: string[]; active: number; show: string | null } {
 
 function render(): void {
   const current = activeTab();
-  const name = activeKey === HOME ? '홈' : activeKey === SETTINGS ? '설정' : current?.paperTitle ?? current?.title ?? 'PDF';
+  const name = activeKey === HOME ? S.home : activeKey === SETTINGS ? S.settings : current?.paperTitle ?? current?.title ?? 'PDF';
   const appName = projectId === DEFAULT_PROJECT_ID ? APP_NAME : `${currentProject().name} · ${APP_NAME}`;
   document.title = hubDocumentTitle(name, tabs.length, appName);
   moveBtn.disabled = !current;
@@ -966,15 +979,15 @@ function renderList(): void {
     main.addEventListener('click', () => { hideList(); activate(tab.key); });
     row.append(main);
     if (!tab.pinned) {
-      const close = el('button', { type: 'button', className: 'rpdf-li-action', title: '닫기' });
-      close.setAttribute('aria-label', `${tabName(tab)} 닫기`);
+      const close = el('button', { type: 'button', className: 'rpdf-li-action', title: S.close });
+      close.setAttribute('aria-label', S.closeAria(tabName(tab)));
       close.append(icon('i-close'));
       close.addEventListener('click', () => { closeTab(tab.key); renderList(); });
       row.append(close);
     }
     listItems.append(row);
   }
-  if (open.length === 0) listItems.append(el('p', { className: 'rpdf-li-empty', textContent: words.length ? '일치하는 탭이 없습니다.' : '열린 탭이 없습니다.' }));
+  if (open.length === 0) listItems.append(el('p', { className: 'rpdf-li-empty', textContent: words.length ? S.noMatchingTab : S.noOpenTabs }));
   // The project's documents that are not open: one click away.
   const index = membershipIndex();
   const openIds = new Set(tabs.map((t) => t.docId ?? t.libraryId));
@@ -982,13 +995,13 @@ function renderList(): void {
     .filter((e) => e.urls.length > 0 && !openIds.has(e.docId) && inThisProject(e.docId, index) && matches(entryName(e), e.fileName, ...e.urls))
     .sort((a, b) => b.openedAt - a.openedAt);
   if (members.length) {
-    listItems.append(el('h3', { className: 'rpdf-li-head', textContent: `${currentProject().name}의 닫힌 문서` }));
+    listItems.append(el('h3', { className: 'rpdf-li-head', textContent: S.closedDocsOf(currentProject().name) }));
     for (const entry of members.slice(0, 10)) {
       const main = el('button', { type: 'button', className: 'rpdf-li-main' });
       const text = el('span', { className: 'rpdf-li-text' });
       text.append(
         el('span', { className: 'rpdf-li-title', textContent: entryName(entry) }),
-        el('span', { className: 'rpdf-li-sub', textContent: `${relativeTimeKo(entry.openedAt)} 열어 봄` }),
+        el('span', { className: 'rpdf-li-sub', textContent: S.openedAgo(relativeTimeKo(entry.openedAt)) }),
       );
       main.append(icon(entry.urls[0].startsWith('file:') ? 'i-file-local' : 'i-file'), text);
       main.addEventListener('click', () => { hideList(); openEntry(entry); });
@@ -999,13 +1012,13 @@ function renderList(): void {
   }
   const recent = closed.filter((e) => matches(e.title, e.paperTitle, e.url));
   if (recent.length) {
-    listItems.append(el('h3', { className: 'rpdf-li-head', textContent: '최근 닫은 탭' }));
+    listItems.append(el('h3', { className: 'rpdf-li-head', textContent: S.recentlyClosed }));
     for (const entry of recent.slice(0, 10)) {
       const main = el('button', { type: 'button', className: 'rpdf-li-main' });
       const text = el('span', { className: 'rpdf-li-text' });
       text.append(
         el('span', { className: 'rpdf-li-title', textContent: entry.paperTitle ?? entry.title }),
-        el('span', { className: 'rpdf-li-sub', textContent: `${relativeTimeKo(entry.closedAt)} 닫음` }),
+        el('span', { className: 'rpdf-li-sub', textContent: S.closedAgo(relativeTimeKo(entry.closedAt)) }),
       );
       main.append(icon('i-restore'), text);
       main.addEventListener('click', () => { hideList(); reopenClosed(entry); });
@@ -1058,26 +1071,26 @@ function showTabMenu(tab: HubTab, x: number, y: number): void {
     button.addEventListener('click', () => { hideMenu(); run(); });
     menu.append(button);
   };
-  item(tab.pinned ? '고정 해제' : '고정', () => setPinned(tab, !tab.pinned));
-  item('프로젝트로 이동…', () => showMove(tab));
+  item(tab.pinned ? S.unpin : S.pin, () => setPinned(tab, !tab.pinned));
+  item(S.moveToProjectDots, () => showMove(tab));
   const docId = tab.docId ?? tab.libraryId;
   if (docId && library[docId]) {
     const rect = tab.button.getBoundingClientRect();
-    item(`문서 종류: ${KIND_LABEL[docKind(docId)]}…`, () => showKindMenu(docId, Math.max(x, rect.left), y));
+    item(S.kindMenuItem(KIND_LABEL[docKind(docId)]), () => showKindMenu(docId, Math.max(x, rect.left), y));
   }
   if (projectId !== DEFAULT_PROJECT_ID && docId && isDocInProject(projects, projectId, docId)) {
-    item('프로젝트에서 빼기', () => removeFromProject(tab, docId));
+    item(S.removeFromProject, () => removeFromProject(tab, docId));
   }
   if (tab.url) {
     const url = tab.url;
-    item('주소 복사', () => {
-      void navigator.clipboard.writeText(url).then(() => showToast('주소를 복사했습니다.'), () => showToast('주소를 복사하지 못했습니다.'));
+    item(S.copyUrl, () => {
+      void navigator.clipboard.writeText(url).then(() => showToast(S.urlCopied), () => showToast(S.urlCopyFailed));
     });
   }
   menu.append(el('hr'));
-  item('닫기', () => closeTab(tab.key), tab.pinned);
+  item(S.close, () => closeTab(tab.key), tab.pinned);
   const others = tabs.filter((t) => t !== tab && !t.pinned);
-  item('다른 탭 모두 닫기', () => { for (const t of others) closeTab(t.key); }, others.length === 0);
+  item(S.closeOthers, () => { for (const t of others) closeTab(t.key); }, others.length === 0);
   menu.hidden = false;
   const { width, height } = menu.getBoundingClientRect();
   menu.style.left = `${Math.min(x, window.innerWidth - width - 8)}px`;
@@ -1156,7 +1169,7 @@ function entryName(entry: PdfLibraryEntry): string {
 
 function entrySource(entry: PdfLibraryEntry): string {
   const url = entry.urls[0];
-  if (!url || url.startsWith('file:')) return '로컬 파일';
+  if (!url || url.startsWith('file:')) return S.localFile;
   try {
     return new URL(url).hostname.replace(/^www\./u, '');
   } catch {
@@ -1173,7 +1186,7 @@ function openEntry(entry: PdfLibraryEntry): void {
   if (existing) { activate(existing.key); return; }
   const url = entry.urls[0];
   if (!url) {
-    showToast('컴퓨터의 파일에서 연 PDF입니다. 파일을 다시 선택하세요.');
+    showToast(S.localReselect);
     fileInput.click();
     return;
   }
@@ -1194,8 +1207,19 @@ interface HomeRowOptions {
 type HomeFilter = 'all' | PdfDocKind | 'annotated' | 'reading' | 'unread';
 type HomeSort = 'recent' | 'title' | 'year' | 'progress';
 const HOME_VIEW_KEY = 'rpdfHomeView';
-const HOME_FILTER_LABEL: Record<Exclude<HomeFilter, PdfDocKind>, string> = { all: '전체', annotated: '필기 있음', reading: '읽는 중', unread: '안 읽음' };
-const HOME_SORT_LABEL: Record<HomeSort, string> = { recent: '최근 연 순', title: '제목 순', year: '최신 연도 순', progress: '많이 읽은 순' };
+// Getters: the language is read when a label is shown, not when this module loads.
+const HOME_FILTER_LABEL: Record<Exclude<HomeFilter, PdfDocKind>, string> = {
+  get all() { return S.filterAll; },
+  get annotated() { return S.filterAnnotated; },
+  get reading() { return S.filterReading; },
+  get unread() { return S.filterUnread; },
+};
+const HOME_SORT_LABEL: Record<HomeSort, string> = {
+  get recent() { return S.sortRecent; },
+  get title() { return S.sortTitle; },
+  get year() { return S.sortYear; },
+  get progress() { return S.sortProgress; },
+};
 
 function loadHomeView(): { filter: HomeFilter; sort: HomeSort } {
   try {
@@ -1237,7 +1261,7 @@ function matchesFilter(entry: PdfLibraryEntry, filter: HomeFilter): boolean {
 function sortEntries(entries: PdfLibraryEntry[], sort: HomeSort): PdfLibraryEntry[] {
   const list = [...entries];
   switch (sort) {
-    case 'title': return list.sort((a, b) => entryName(a).localeCompare(entryName(b), 'ko'));
+    case 'title': return list.sort((a, b) => entryName(a).localeCompare(entryName(b), currentLanguage()));
     case 'year': return list.sort((a, b) => (b.year ?? -1) - (a.year ?? -1) || b.openedAt - a.openedAt);
     case 'progress': return list.sort((a, b) => (progressOf(b) ?? -1) - (progressOf(a) ?? -1) || b.openedAt - a.openedAt);
     default: return list.sort((a, b) => b.openedAt - a.openedAt);
@@ -1252,7 +1276,7 @@ function homeRow(entry: PdfLibraryEntry, options: HomeRowOptions = {}): HTMLElem
   row.classList.toggle('is-selected', isSelected);
   if (!options.pinnedList) {
     const check = el('input', { type: 'checkbox', className: 'rpdf-item-check', checked: isSelected });
-    check.setAttribute('aria-label', `${entryName(entry)} 선택`);
+    check.setAttribute('aria-label', S.selectAria(entryName(entry)));
     check.addEventListener('change', () => {
       if (check.checked) selected.add(entry.docId); else selected.delete(entry.docId);
       row.classList.toggle('is-selected', check.checked);
@@ -1271,7 +1295,7 @@ function homeRow(entry: PdfLibraryEntry, options: HomeRowOptions = {}): HTMLElem
     [entry.venue, entry.year].filter(Boolean).join(' '),
     entrySource(entry),
     relativeTimeKo(entry.openedAt),
-    page ? `${page} / ${entry.numPages}쪽` : `${entry.numPages}쪽`,
+    page ? S.pageOf(page, entry.numPages) : S.pages(entry.numPages),
   ].filter(Boolean).join(' · ');
   text.append(el('span', { className: 'rpdf-item-meta', textContent: meta }));
   const kind = libraryEntryKind(entry);
@@ -1281,33 +1305,33 @@ function homeRow(entry: PdfLibraryEntry, options: HomeRowOptions = {}): HTMLElem
   if (kind !== 'document') main.title = `${KIND_LABEL[kind]}\n${main.title}`;
   const badges = el('span', { className: 'rpdf-item-badges' });
   if (annotated.has(entry.docId)) {
-    const pen = el('span', { className: 'rpdf-badge', title: '필기 있음' });
+    const pen = el('span', { className: 'rpdf-badge', title: S.hasAnnotations });
     pen.append(icon('i-pen'));
     badges.append(pen);
   }
-  if (openTabFor(entry.docId)) badges.append(el('span', { className: 'rpdf-badge rpdf-badge-open', textContent: '열림' }));
+  if (openTabFor(entry.docId)) badges.append(el('span', { className: 'rpdf-badge rpdf-badge-open', textContent: S.badgeOpen }));
   main.append(badges);
   main.addEventListener('click', () => openEntry(entry));
   row.append(main);
   if (options.add) {
-    const add = el('button', { type: 'button', className: 'rpdf-item-act', title: `${currentProject().name}에 추가` });
-    add.setAttribute('aria-label', `${entryName(entry)}을(를) ${currentProject().name}에 추가`);
+    const add = el('button', { type: 'button', className: 'rpdf-item-act', title: S.addToProjectTitle(currentProject().name) });
+    add.setAttribute('aria-label', S.addToProjectAria(entryName(entry), currentProject().name));
     add.append(icon('i-plus'));
     add.addEventListener('click', () => {
       registered.add(entry.docId);
       void sendProjectUpdate({ kind: 'member', id: projectId, docId: entry.docId, member: true });
-      showToast(`${currentProject().name}에 추가했습니다.`);
+      showToast(S.addedTo(currentProject().name));
     });
     row.append(add);
   }
-  const pin = el('button', { type: 'button', className: 'rpdf-item-pin', title: pinned ? '고정 해제' : '고정 — 이 프로젝트의 탭 왼쪽에 둡니다' });
+  const pin = el('button', { type: 'button', className: 'rpdf-item-pin', title: pinned ? S.unpin : S.pinTitle });
   pin.setAttribute('aria-pressed', String(pinned));
-  pin.setAttribute('aria-label', pinned ? `${entryName(entry)} 고정 해제` : `${entryName(entry)} 고정`);
+  pin.setAttribute('aria-label', pinned ? S.unpinAria(entryName(entry)) : S.pinAria(entryName(entry)));
   pin.append(icon('i-pin'));
   pin.addEventListener('click', () => setPinnedById(entry.docId, !pinned));
   row.append(pin);
-  const more = el('button', { type: 'button', className: 'rpdf-item-act rpdf-item-more', title: '더 보기' });
-  more.setAttribute('aria-label', `${entryName(entry)} 더 보기`);
+  const more = el('button', { type: 'button', className: 'rpdf-item-act rpdf-item-more', title: S.more });
+  more.setAttribute('aria-label', S.moreFor(entryName(entry)));
   more.append(icon('i-more'));
   more.addEventListener('click', () => { const r = more.getBoundingClientRect(); showDocMenu([entry.docId], r.left - 160, r.bottom + 4); });
   row.append(more);
@@ -1378,13 +1402,13 @@ function projectChoices(docIds: string[]): Array<{ project: PdfProject; holds: b
 }
 
 function docsLabel(docIds: string[]): string {
-  return docIds.length === 1 ? `‘${entryName(library[docIds[0]])}’` : `${docIds.length}개 문서`;
+  return docIds.length === 1 ? S.docsOne(entryName(library[docIds[0]])) : S.docsMany(docIds.length);
 }
 
 /** Registers the documents to `to` too (they stay where they are). */
 function addDocsToProject(docIds: string[], to: string): void {
   for (const docId of docIds) void sendProjectUpdate({ kind: 'member', id: to, docId, member: true });
-  showToast(`${docsLabel(docIds)}를 ${projectName(to)}에도 추가했습니다.`, { label: '열기', run: () => { void openProject(to); } });
+  showToast(S.addedDocsTo(docsLabel(docIds), projectName(to)), { label: S.open, run: () => { void openProject(to); } });
 }
 
 /** Moves the documents to `to`: open tabs here go with them. */
@@ -1404,7 +1428,7 @@ async function moveDocsToProject(docIds: string[], to: string): Promise<void> {
     if (tab && tabs.includes(tab)) removeTab(tab);
   }
   render();
-  showToast(moved ? `${moved}개 문서를 ${projectName(to)}(으)로 옮겼습니다.` : '옮길 문서가 없습니다.', moved ? { label: '열기', run: () => { void openProject(to); } } : undefined);
+  showToast(moved ? S.movedDocs(moved, projectName(to)) : S.nothingToMove, moved ? { label: S.open, run: () => { void openProject(to); } } : undefined);
 }
 
 function removeDocsFromProject(docIds: string[]): void {
@@ -1415,8 +1439,8 @@ function removeDocsFromProject(docIds: string[]): void {
     const tab = openTabFor(docId);
     if (tab) { if (tab.pinned) { tab.pinned = false; tab.keepOnUnpin = false; } closeTab(tab.key, false); }
   }
-  showToast(`${docsLabel(inside)}를 이 프로젝트에서 뺐습니다.`, {
-    label: '되돌리기',
+  showToast(S.removedDocs(docsLabel(inside)), {
+    label: S.undo,
     run: () => { for (const docId of inside) void sendProjectUpdate({ kind: 'member', id: projectId, docId, member: true }); },
   });
 }
@@ -1424,9 +1448,9 @@ function removeDocsFromProject(docIds: string[]): void {
 function showProjectPicker(docIds: string[], mode: 'add' | 'move', x: number, y: number): void {
   const choices = projectChoices(docIds).filter((c) => mode === 'move' || c.project.id !== DEFAULT_PROJECT_ID);
   showMenu([
-    { heading: mode === 'add' ? '다른 프로젝트에도 추가' : '다른 프로젝트로 옮기기' },
+    { heading: mode === 'add' ? S.addToAnother : S.moveToAnother },
     ...choices.map(({ project, holds }) => ({
-      label: holds ? `${project.name} — 이미 있음` : project.name,
+      label: holds ? S.alreadyHas(project.name) : project.name,
       disabled: holds,
       run: () => {
         if (mode === 'add') addDocsToProject(docIds, project.id);
@@ -1435,7 +1459,7 @@ function showProjectPicker(docIds: string[], mode: 'add' | 'move', x: number, y:
         scheduleHomeRender();
       },
     })),
-    ...(choices.length === 0 ? [{ label: '다른 프로젝트가 없습니다', disabled: true, run: () => undefined }] : []),
+    ...(choices.length === 0 ? [{ label: S.noOtherProjects, disabled: true, run: () => undefined }] : []),
   ], x, y);
 }
 
@@ -1444,18 +1468,18 @@ function showDocMenu(docIds: string[], x: number, y: number): void {
   const allPinned = docIds.every(isPinnedDoc);
   const inHere = projectId !== DEFAULT_PROJECT_ID && docIds.some((id) => isDocInProject(projects, projectId, id));
   const entries: MenuEntry[] = [];
-  if (one) entries.push({ label: '열기', run: () => openEntry(one) });
+  if (one) entries.push({ label: S.open, run: () => openEntry(one) });
   entries.push(
-    { label: allPinned ? '고정 해제' : '고정', run: () => { for (const id of docIds) setPinnedById(id, !allPinned); } },
+    { label: allPinned ? S.unpin : S.pin, run: () => { for (const id of docIds) setPinnedById(id, !allPinned); } },
     'sep',
-    { label: '다른 프로젝트에도 추가…', run: () => showProjectPicker(docIds, 'add', x, y) },
-    { label: '다른 프로젝트로 옮기기…', run: () => showProjectPicker(docIds, 'move', x, y) },
+    { label: `${S.addToAnother}…`, run: () => showProjectPicker(docIds, 'add', x, y) },
+    { label: `${S.moveToAnother}…`, run: () => showProjectPicker(docIds, 'move', x, y) },
   );
-  if (inHere) entries.push({ label: '이 프로젝트에서 빼기', run: () => { removeDocsFromProject(docIds); selected.clear(); scheduleHomeRender(); } });
+  if (inHere) entries.push({ label: S.removeFromThisProject, run: () => { removeDocsFromProject(docIds); selected.clear(); scheduleHomeRender(); } });
   if (one) {
-    entries.push('sep', { label: `문서 종류: ${KIND_LABEL[libraryEntryKind(one)]}…`, run: () => showKindMenu(one.docId, x, y) });
+    entries.push('sep', { label: S.kindMenuItem(KIND_LABEL[libraryEntryKind(one)]), run: () => showKindMenu(one.docId, x, y) });
     const url = one.urls[0];
-    if (url) entries.push({ label: '주소 복사', run: () => { void navigator.clipboard.writeText(url).then(() => showToast('주소를 복사했습니다.'), () => showToast('주소를 복사하지 못했습니다.')); } });
+    if (url) entries.push({ label: S.copyUrl, run: () => { void navigator.clipboard.writeText(url).then(() => showToast(S.urlCopied), () => showToast(S.urlCopyFailed)); } });
   }
   showMenu(entries, x, y);
 }
@@ -1463,7 +1487,7 @@ function showDocMenu(docIds: string[], x: number, y: number): void {
 // The bar at the bottom of home while documents are selected.
 const selectionBar = el('div', { className: 'rpdf-selbar', hidden: true });
 selectionBar.setAttribute('role', 'toolbar');
-selectionBar.setAttribute('aria-label', '선택한 문서');
+selectionBar.setAttribute('aria-label', S.selectionAria);
 home.append(selectionBar);
 
 function renderSelectionBar(): void {
@@ -1481,13 +1505,13 @@ function renderSelectionBar(): void {
   const allPinned = ids.every(isPinnedDoc);
   const inHere = projectId !== DEFAULT_PROJECT_ID && ids.some((id) => isDocInProject(projects, projectId, id));
   selectionBar.replaceChildren(
-    el('span', { className: 'rpdf-selbar-count', textContent: `${selected.size}개 선택` }),
+    el('span', { className: 'rpdf-selbar-count', textContent: S.selectedCount(selected.size) }),
     el('span', { className: 'rpdf-selbar-gap' }),
-    button('다른 프로젝트에도 추가', (b) => { const p = at(b); showProjectPicker(ids, 'add', p.x, p.y); }),
-    button('옮기기', (b) => { const p = at(b); showProjectPicker(ids, 'move', p.x, p.y); }),
-    button(allPinned ? '고정 해제' : '고정', () => { for (const id of ids) setPinnedById(id, !allPinned); selected.clear(); renderSelectionBar(); scheduleHomeRender(); }),
-    ...(inHere ? [button('이 프로젝트에서 빼기', () => { removeDocsFromProject(ids); selected.clear(); renderSelectionBar(); scheduleHomeRender(); })] : []),
-    button('선택 해제', () => { selected.clear(); renderSelectionBar(); scheduleHomeRender(); }),
+    button(S.addToAnother, (b) => { const p = at(b); showProjectPicker(ids, 'add', p.x, p.y); }),
+    button(S.moveShort, (b) => { const p = at(b); showProjectPicker(ids, 'move', p.x, p.y); }),
+    button(allPinned ? S.unpin : S.pin, () => { for (const id of ids) setPinnedById(id, !allPinned); selected.clear(); renderSelectionBar(); scheduleHomeRender(); }),
+    ...(inHere ? [button(S.removeFromThisProject, () => { removeDocsFromProject(ids); selected.clear(); renderSelectionBar(); scheduleHomeRender(); })] : []),
+    button(S.clearSelection, () => { selected.clear(); renderSelectionBar(); scheduleHomeRender(); }),
   );
 }
 
@@ -1506,7 +1530,7 @@ function homeSection(title: string, rows: HTMLElement[], extra?: HTMLElement, to
 
 function moreButton(total: number, onMore: () => void): HTMLElement | undefined {
   if (total <= homeLimit) return undefined;
-  const more = el('button', { type: 'button', className: 'rpdf-more', textContent: `더 보기 (${total - homeLimit}개 더)` });
+  const more = el('button', { type: 'button', className: 'rpdf-more', textContent: S.showMore(total - homeLimit) });
   more.addEventListener('click', onMore);
   return more;
 }
@@ -1515,7 +1539,7 @@ function moreButton(total: number, onMore: () => void): HTMLElement | undefined 
 function homeTools(entries: PdfLibraryEntry[]): HTMLElement {
   const bar = el('div', { className: 'rpdf-home-tools' });
   const chips = el('div', { className: 'rpdf-chips', role: 'group' });
-  chips.setAttribute('aria-label', '거르기');
+  chips.setAttribute('aria-label', S.filterAria);
   // Kind chips only when there is more than one kind to tell apart.
   const kinds = KIND_ORDER.filter((k) => entries.some((e) => libraryEntryKind(e) === k));
   const filters: HomeFilter[] = ['all', ...(kinds.length > 1 ? kinds : []), 'annotated', 'reading', 'unread'];
@@ -1529,7 +1553,7 @@ function homeTools(entries: PdfLibraryEntry[]): HTMLElement {
     chips.append(chip);
   }
   const sort = el('select', { className: 'rpdf-sort' });
-  sort.setAttribute('aria-label', '정렬');
+  sort.setAttribute('aria-label', S.sortAria);
   for (const [value, label] of Object.entries(HOME_SORT_LABEL)) sort.append(el('option', { value, textContent: label, selected: homeView.sort === value }));
   sort.addEventListener('change', () => setHomeView({ sort: sort.value as HomeSort }));
   bar.append(chips, sort);
@@ -1549,16 +1573,16 @@ function renderHome(): void {
   if (query) {
     const found = searchPdfLibrary(entries, query);
     sections.push(found.length
-      ? homeSection(`검색 결과 ${found.length}개`, found.slice(0, 100).map((e) => homeRow(e, { elsewhere: otherNames(e.docId) })))
-      : el('p', { className: 'rpdf-home-empty', textContent: '일치하는 PDF가 없습니다.' }));
+      ? homeSection(S.searchResults(found.length), found.slice(0, 100).map((e) => homeRow(e, { elsewhere: otherNames(e.docId) })))
+      : el('p', { className: 'rpdf-home-empty', textContent: S.noMatchingPdf }));
     homeSections.replaceChildren(...sections);
     return;
   }
   const pinnedIds = pinnedDocIds();
   const pinned = pinnedIds.map((id) => library[id]).filter((e): e is PdfLibraryEntry => !!e);
   if (pinned.length) {
-    const hint = el('span', { className: 'rpdf-home-hint-inline', textContent: pinned.length > 1 ? '끌어서 순서 변경 · 탭 줄 순서와 같음' : '' });
-    sections.push(homeSection('고정', pinned.map((e) => homeRow(e, { pinnedList: true })), undefined, hint));
+    const hint = el('span', { className: 'rpdf-home-hint-inline', textContent: pinned.length > 1 ? S.dragToReorder : '' });
+    sections.push(homeSection(S.pinnedHeading, pinned.map((e) => homeRow(e, { pinnedList: true })), undefined, hint));
   }
   if (closed.length) {
     const rows = closed.slice(0, 6).map((entry) => {
@@ -1567,14 +1591,14 @@ function renderHome(): void {
       const text = el('span', { className: 'rpdf-item-text' });
       text.append(
         el('span', { className: 'rpdf-item-title', textContent: entry.paperTitle ?? entry.title }),
-        el('span', { className: 'rpdf-item-meta', textContent: `${relativeTimeKo(entry.closedAt)} 닫음` }),
+        el('span', { className: 'rpdf-item-meta', textContent: S.closedAgo(relativeTimeKo(entry.closedAt)) }),
       );
       main.append(icon('i-restore'), text);
       main.addEventListener('click', () => reopenClosed(entry));
       row.append(main);
       return row;
     });
-    sections.push(homeSection('최근 닫은 탭', rows));
+    sections.push(homeSection(S.recentlyClosed, rows));
   }
   const pinnedSet = new Set(pinnedIds);
   const mine = entries.filter((e) => !pinnedSet.has(e.docId) && inThisProject(e.docId, index));
@@ -1584,32 +1608,32 @@ function renderHome(): void {
   const mineShown = shown(mine);
   if (isDefault) {
     if (mine.length) {
-      sections.push(homeSection('문서', mineShown.slice(0, homeLimit).map((e) => homeRow(e)), moreButton(mineShown.length, () => { homeLimit += HOME_PAGE_SIZE; renderHome(); }), tools));
-      if (mineShown.length === 0) sections[sections.length - 1].append(el('p', { className: 'rpdf-home-hint', textContent: '이 조건에 맞는 문서가 없습니다.' }));
+      sections.push(homeSection(S.documents, mineShown.slice(0, homeLimit).map((e) => homeRow(e)), moreButton(mineShown.length, () => { homeLimit += HOME_PAGE_SIZE; renderHome(); }), tools));
+      if (mineShown.length === 0) sections[sections.length - 1].append(el('p', { className: 'rpdf-home-hint', textContent: S.noMatchFilter }));
     }
     if (sections.length === 0) {
       sections.push(el('p', {
         className: 'rpdf-home-empty',
-        textContent: '아직 연 PDF가 없습니다. 웹에서 PDF를 열거나, 파일을 이 창에 끌어다 놓으세요. 처음 연 PDF는 기본 프로젝트에 모이고, 위의 ‘프로젝트로 이동’으로 다른 프로젝트에 옮길 수 있습니다.',
+        textContent: S.emptyDefault,
       }));
     }
     homeSections.replaceChildren(...sections);
     return;
   }
-  const own = homeSection('이 프로젝트의 문서', mineShown.map((e) => homeRow(e)), undefined, tools);
+  const own = homeSection(S.projectDocs, mineShown.map((e) => homeRow(e)), undefined, tools);
   if (mine.length === 0) {
     own.append(el('p', {
       className: 'rpdf-home-hint',
-      textContent: '아직 문서가 없습니다. 아래 목록에서 열거나 +로 추가하고, 다른 프로젝트의 탭에서는 ‘프로젝트로 이동’을 쓰세요. 이 프로젝트에서 연 PDF는 자동으로 추가됩니다.',
+      textContent: S.emptyProject,
     }));
   } else if (mineShown.length === 0) {
-    own.append(el('p', { className: 'rpdf-home-hint', textContent: '이 조건에 맞는 문서가 없습니다.' }));
+    own.append(el('p', { className: 'rpdf-home-hint', textContent: S.noMatchFilter }));
   }
   sections.push(own);
   const othersShown = shown(others);
   if (othersShown.length) {
     sections.push(homeSection(
-      '다른 PDF',
+      S.otherPdfs,
       othersShown.slice(0, homeLimit).map((e) => homeRow(e, { add: true, elsewhere: otherNames(e.docId) })),
       moreButton(othersShown.length, () => { homeLimit += HOME_PAGE_SIZE; renderHome(); }),
     ));
@@ -1702,7 +1726,7 @@ function mergeTwins(reporter: HubTab, twin: HubTab): void {
   if (activeKey === drop.key) activeKey = null;
   removeTab(drop);
   if (wasShown) activate(keep.key);
-  showToast('이미 열려 있는 문서라 그 탭으로 합쳤습니다.');
+  showToast(S.mergedIntoTab);
   render();
 }
 
@@ -1758,12 +1782,12 @@ document.addEventListener('keydown', (e) => {
 // ─── Looks: document kinds, project badges, the tab's icon ───
 
 const KIND_LABEL: Record<PdfDocKind, string> = {
-  journal: '저널 논문',
-  conference: '학회 논문',
-  preprint: '프리프린트',
-  survey: '서베이·리뷰',
-  technical: '보고서·학위논문',
-  document: '일반 PDF',
+  get journal() { return S.kindJournal; },
+  get conference() { return S.kindConference; },
+  get preprint() { return S.kindPreprint; },
+  get survey() { return S.kindSurvey; },
+  get technical() { return S.kindTechnical; },
+  get document() { return S.kindDocument; },
 };
 const KIND_ORDER: PdfDocKind[] = ['journal', 'conference', 'preprint', 'survey', 'technical', 'document'];
 
@@ -1773,8 +1797,8 @@ function showKindMenu(docId: string, x: number, y: number): void {
   if (!entry) return;
   const set = (userKind: PdfDocKind | null) => { void sendLibraryUpdate({ kind: 'user-kind', docId, userKind }); };
   showMenu([
-    { heading: '문서 종류' },
-    { label: `자동 — ${KIND_LABEL[entry.paperKind ?? 'document']}`, checked: entry.userKind === null, run: () => set(null) },
+    { heading: S.kindMenuHeading },
+    { label: S.kindAuto(KIND_LABEL[entry.paperKind ?? 'document']), checked: entry.userKind === null, run: () => set(null) },
     'sep',
     ...KIND_ORDER.map((kind) => ({ label: KIND_LABEL[kind], checked: entry.userKind === kind, run: () => set(kind) })),
   ], x, y);
@@ -1927,7 +1951,7 @@ const takeEmoji = () => {
   const project = styleTarget ? projects[styleTarget] : undefined;
   const value = pdfProjectEmojiIcon(styleEmojiInput.value);
   if (!project || !styleEmojiInput.value.trim()) return;
-  if (!value) { showToast('이모지 하나를 입력하세요.'); return; }
+  if (!value) { showToast(S.enterEmoji); return; }
   styleEmojiInput.value = '';
   setStyle(project, value, project.color);
 };
@@ -1946,8 +1970,8 @@ function updateProjectLabel(): void {
   projectNameEl.textContent = name;
   fillBadge(projectBadgeEl, currentProject());
   updateFavicon();
-  projectBtn.title = `프로젝트: ${name} — 다른 프로젝트 열기, 새로 만들기`;
-  projectBtn.setAttribute('aria-label', `프로젝트 ${name}`);
+  projectBtn.title = S.projectBtnTitle(name);
+  projectBtn.setAttribute('aria-label', S.projectBtnAria(name));
 }
 
 function setProject(id: string): void {
@@ -1974,7 +1998,7 @@ async function createProject(rawName: string): Promise<string | null> {
   const id = newPdfProjectId();
   // Awaited: the next request (open, move) must find the project stored.
   const response = await sendProjectUpdate({ kind: 'create', id, name }) as { success?: boolean } | undefined;
-  if (!response?.success) { showToast('프로젝트를 만들지 못했습니다.'); return null; }
+  if (!response?.success) { showToast(S.projectCreateFailed); return null; }
   return id;
 }
 
@@ -1987,7 +2011,7 @@ async function openProject(id: string, where: 'here' | 'new-tab' = 'here'): Prom
   const response = await ask<{ success?: boolean; url?: string; error?: string }>({
     type: 'VOCAB_T_PDF_PROJECT_OPEN', project: id, inPlace: where === 'here',
   });
-  if (!response?.success) { showToast(response?.error ?? '프로젝트를 열지 못했습니다.'); return; }
+  if (!response?.success) { showToast(response?.error ?? S.projectOpenFailed); return; }
   if (response.url) await switchHere(response.url);
 }
 
@@ -2030,7 +2054,7 @@ function setFolderCollapsed(id: string, collapsed: boolean): void {
 
 function rowAction(row: HTMLElement, name: string, label: string, run: (button: HTMLButtonElement) => void, subject: string): HTMLButtonElement {
   const button = el('button', { type: 'button', className: 'rpdf-li-action', title: label });
-  button.setAttribute('aria-label', `${subject} ${label}`);
+  button.setAttribute('aria-label', S.rowActionAria(subject, label));
   button.append(icon(name));
   button.addEventListener('click', (e) => { e.stopPropagation(); run(button); });
   row.append(button);
@@ -2055,14 +2079,14 @@ function projectRow(project: PdfProject, index: Map<string, string[]>, folder: s
   const open = current || openProjectIds.has(project.id);
   text.append(
     el('span', { className: 'rpdf-li-title', textContent: project.name }),
-    el('span', { className: 'rpdf-li-sub', textContent: [current ? '지금 보는 중' : open ? '열림' : null, `문서 ${projectDocCount(project, index)}개`].filter(Boolean).join(' · ') }),
+    el('span', { className: 'rpdf-li-sub', textContent: [current ? S.viewingNow : open ? S.stateOpen : null, S.docCount(projectDocCount(project, index))].filter(Boolean).join(' · ') }),
   );
   main.append(projectBadge(project), text);
   if (current) main.setAttribute('aria-current', 'true');
   main.addEventListener('click', () => { hideProjects(); void openProject(project.id); });
   row.append(main);
-  if (!current) rowAction(row, 'i-open-new', '새 탭에서 열기', () => { hideProjects(); void openProject(project.id, 'new-tab'); }, project.name);
-  rowAction(row, 'i-more', '더 보기', (button) => { const at = menuAt(button); showProjectMenu(project, at.x, at.y); }, project.name);
+  if (!current) rowAction(row, 'i-open-new', S.openInNewTab, () => { hideProjects(); void openProject(project.id, 'new-tab'); }, project.name);
+  rowAction(row, 'i-more', S.more, (button) => { const at = menuAt(button); showProjectMenu(project, at.x, at.y); }, project.name);
   row.addEventListener('contextmenu', (e) => { e.preventDefault(); showProjectMenu(project, e.clientX, e.clientY); });
   wireListDrag(row);
   return row;
@@ -2079,15 +2103,15 @@ function folderRow(folder: PdfProjectFolder, count: number, shut: boolean): HTML
   const text = el('span', { className: 'rpdf-li-text' });
   text.append(
     el('span', { className: 'rpdf-li-title', textContent: folder.name }),
-    el('span', { className: 'rpdf-li-sub', textContent: count ? `프로젝트 ${count}개` : '비어 있음 — 프로젝트를 끌어다 넣으세요' }),
+    el('span', { className: 'rpdf-li-sub', textContent: count ? S.folderProjectCount(count) : S.folderEmpty }),
   );
   const chevron = icon('i-chevron');
   chevron.classList.add('rpdf-folder-chevron');
   main.append(chevron, icon('i-folder'), text);
-  main.title = shut ? '펼치기' : '접기';
+  main.title = shut ? S.expand : S.collapse;
   main.addEventListener('click', () => { setFolderCollapsed(folder.id, !shut); focusAfterRender = folder.id; renderProjects(); });
   row.append(main);
-  rowAction(row, 'i-more', '더 보기', (button) => { const at = menuAt(button); showFolderMenu(folder, at.x, at.y); }, folder.name);
+  rowAction(row, 'i-more', S.more, (button) => { const at = menuAt(button); showFolderMenu(folder, at.x, at.y); }, folder.name);
   row.addEventListener('contextmenu', (e) => { e.preventDefault(); showFolderMenu(folder, e.clientX, e.clientY); });
   wireListDrag(row);
   return row;
@@ -2125,7 +2149,7 @@ function renderProjects(): void {
   const index = membershipIndex();
   const { root, items } = pdfProjectTree(projects, folders);
   const collapsed = collapsedFolders();
-  const rows: HTMLElement[] = [el('h3', { className: 'rpdf-li-head', textContent: '프로젝트' }), projectRow(root, index, null)];
+  const rows: HTMLElement[] = [el('h3', { className: 'rpdf-li-head', textContent: S.projects }), projectRow(root, index, null)];
   for (const item of items) {
     if (item.kind === 'project') { rows.push(projectRow(item.project, index, null)); continue; }
     const shut = collapsed.has(item.folder.id);
@@ -2169,24 +2193,24 @@ function showMenu(entries: MenuEntry[], x: number, y: number): void {
 
 function showProjectMenu(project: PdfProject, x: number, y: number): void {
   const entries: MenuEntry[] = [
-    { label: '아이콘·색 바꾸기…', run: () => showStyle(project.id) },
-    { label: '이름 바꾸기', run: () => { const row = listRow(project.id); if (row) startRename(row, project.name, '프로젝트 이름', (name) => { void sendProjectUpdate({ kind: 'rename', id: project.id, name }); }); } },
+    { label: S.changeStyle, run: () => showStyle(project.id) },
+    { label: S.rename, run: () => { const row = listRow(project.id); if (row) startRename(row, project.name, S.projectNameLabel, (name) => { void sendProjectUpdate({ kind: 'rename', id: project.id, name }); }); } },
   ];
   if (project.id !== DEFAULT_PROJECT_ID) {
     const { items } = pdfProjectTree(projects, folders);
     const list = items.filter((item): item is Extract<typeof item, { kind: 'folder' }> => item.kind === 'folder');
-    entries.push('sep', { heading: '폴더로 옮기기' });
+    entries.push('sep', { heading: S.moveToFolderHeading });
     for (const item of list) {
       entries.push({ label: item.folder.name, disabled: project.folder === item.folder.id, run: () => placeItem({ kind: 'project', id: project.id }, item.folder.id, Infinity) });
     }
     if (project.folder && folders[project.folder]?.deletedAt === 0) {
-      entries.push({ label: '폴더 밖으로', run: () => placeAfterFolder(project.id, project.folder as string) });
+      entries.push({ label: S.outOfFolder, run: () => placeAfterFolder(project.id, project.folder as string) });
     }
-    entries.push({ label: '새 폴더 만들어 넣기…', run: () => { void newFolderWith(project.id); } });
+    entries.push({ label: S.newFolderWithProject, run: () => { void newFolderWith(project.id); } });
     entries.push('sep', {
-      label: '삭제',
+      label: S.delete,
       run: () => {
-        const ok = confirm(`‘${project.name}’ 프로젝트를 삭제할까요?\n\n문서와 필기는 지워지지 않습니다. 다른 프로젝트에 없는 문서는 기본 프로젝트로 돌아갑니다.`);
+        const ok = confirm(S.confirmDeleteProject(project.name));
         if (ok) void sendProjectUpdate({ kind: 'delete', id: project.id });
       },
     });
@@ -2196,12 +2220,12 @@ function showProjectMenu(project: PdfProject, x: number, y: number): void {
 
 function showFolderMenu(folder: PdfProjectFolder, x: number, y: number): void {
   showMenu([
-    { label: '이름 바꾸기', run: () => { const row = listRow(folder.id); if (row) startRename(row, folder.name, '폴더 이름', (name) => { void sendProjectUpdate({ kind: 'folder-rename', id: folder.id, name }); }); } },
+    { label: S.rename, run: () => { const row = listRow(folder.id); if (row) startRename(row, folder.name, S.folderNameLabel, (name) => { void sendProjectUpdate({ kind: 'folder-rename', id: folder.id, name }); }); } },
     {
-      label: '폴더 삭제 (프로젝트는 남김)',
+      label: S.deleteFolder,
       run: () => {
         void sendProjectUpdate({ kind: 'folder-delete', id: folder.id });
-        showToast(`‘${folder.name}’ 폴더를 지웠습니다. 안의 프로젝트는 목록에 그대로 있습니다.`);
+        showToast(S.folderDeleted(folder.name));
       },
     },
   ], x, y);
@@ -2271,12 +2295,12 @@ async function createFolder(rawName: string): Promise<string | null> {
   if (!name) return null;
   const id = newPdfProjectFolderId();
   const response = await sendProjectUpdate({ kind: 'folder-create', id, name, order: topEndKey() }) as { success?: boolean } | undefined;
-  if (!response?.success) { showToast('폴더를 만들지 못했습니다.'); return null; }
+  if (!response?.success) { showToast(S.folderCreateFailed); return null; }
   return id;
 }
 
 async function newFolderWith(id: string): Promise<void> {
-  const name = prompt('새 폴더 이름');
+  const name = prompt(S.newFolderPrompt);
   const folder = name ? await createFolder(name) : null;
   if (!folder) return;
   // The folder must be in storage (and read back here) before placing into it.
@@ -2388,7 +2412,7 @@ projectBtn.addEventListener('click', () => {
 });
 folderNewBtn.addEventListener('click', () => {
   const name = projectNewName.value;
-  if (!cleanPdfProjectName(name)) { projectNewName.focus(); showToast('폴더 이름을 입력한 뒤 폴더 버튼을 누르세요.'); return; }
+  if (!cleanPdfProjectName(name)) { projectNewName.focus(); showToast(S.folderNameNeeded); return; }
   void createFolder(name).then((id) => {
     if (!id) return;
     projectNewName.value = '';
@@ -2417,7 +2441,7 @@ function moveSource(docId: string | null): string {
 function renderMove(tab: HubTab): void {
   const docId = tab.docId ?? tab.libraryId ?? (tab.url ? libraryIdForUrl(tab.url) : null);
   const from = moveSource(docId);
-  moveTitle.textContent = `‘${tabName(tab)}’ 옮기기`;
+  moveTitle.textContent = S.moveTitle(tabName(tab));
   // Every project is listed, grouped as in the project list; the ones already
   // holding the document are shown disabled rather than left out, so none
   // seems to have vanished.
@@ -2428,25 +2452,25 @@ function renderMove(tab: HubTab): void {
     row.classList.toggle('is-nested', nested);
     const main = el('button', { type: 'button', className: 'rpdf-li-main' });
     const open = openProjectIds.has(project.id);
-    const where = project.id === projectId ? '지금 이 프로젝트' : '이미 들어 있음';
+    const where = project.id === projectId ? S.thisProject : S.alreadyIn;
     const text = el('span', { className: 'rpdf-li-text' });
     text.append(
       el('span', { className: 'rpdf-li-title', textContent: project.name }),
-      el('span', { className: 'rpdf-li-sub', textContent: [open ? '열림' : '닫힘', inside ? where : null].filter(Boolean).join(' · ') }),
+      el('span', { className: 'rpdf-li-sub', textContent: [open ? S.stateOpen : S.stateClosed, inside ? where : null].filter(Boolean).join(' · ') }),
     );
     main.append(projectBadge(project), text);
     if (inside) {
       main.disabled = true;
-      main.title = '이 문서가 이미 들어 있는 프로젝트입니다';
+      main.title = S.alreadyInTitle;
       row.append(main);
       return row;
     }
-    main.title = '이 프로젝트로 옮기기';
+    main.title = S.moveToThisProject;
     main.addEventListener('click', () => { hideMove(); void moveTab(tab, project.id, false); });
     row.append(main);
     if (project.id !== DEFAULT_PROJECT_ID) {
-      const add = el('button', { type: 'button', className: 'rpdf-li-action', title: '여기에도 추가 (지금 프로젝트에도 남김)' });
-      add.setAttribute('aria-label', `${project.name}에도 추가`);
+      const add = el('button', { type: 'button', className: 'rpdf-li-action', title: S.alsoAddTitle });
+      add.setAttribute('aria-label', S.alsoAddAria(project.name));
       add.append(icon('i-plus'));
       add.addEventListener('click', () => { hideMove(); void moveTab(tab, project.id, true); });
       row.append(add);
@@ -2463,7 +2487,7 @@ function renderMove(tab: HubTab): void {
     rows.push(head, ...item.projects.map((project) => projectRowFor(project, true)));
   }
   const every = [root, ...items.flatMap((item) => (item.kind === 'project' ? [item.project] : item.projects))];
-  if (!every.some((p) => !holds(p.id))) rows.push(el('p', { className: 'rpdf-li-empty', textContent: '옮길 다른 프로젝트가 없습니다. 아래에서 새로 만드세요.' }));
+  if (!every.some((p) => !holds(p.id))) rows.push(el('p', { className: 'rpdf-li-empty', textContent: S.noProjectsToMove }));
   moveItems.replaceChildren(...rows);
 }
 
@@ -2509,21 +2533,21 @@ async function moveTab(tab: HubTab, to: string, keep: boolean): Promise<void> {
   if (!docId) {
     tab.pendingMove = { to, keep };
     ensureFrame(tab);
-    showToast('문서를 불러온 뒤 옮깁니다.');
+    showToast(S.loadThenMove);
     return;
   }
   const from = moveSource(docId);
   const response = await ask<{ success?: boolean; open?: boolean; error?: string }>({
     type: 'VOCAB_T_PDF_PROJECT_MOVE', docId, url: tab.url, from, to, keep,
   });
-  if (!response?.success) { showToast(response?.error ?? '옮기지 못했습니다.'); return; }
+  if (!response?.success) { showToast(response?.error ?? S.moveFailed); return; }
   const name = projectName(to);
-  if (keep) { showToast(`${name}에도 추가했습니다.`); return; }
+  if (keep) { showToast(S.alsoAddedTo(name)); return; }
   pendingPins.delete(docId);
   if (tabs.includes(tab)) removeTab(tab);
   render();
-  showToast(tab.url ? `${name}(으)로 옮겼습니다.` : `${name}(으)로 옮겼습니다. 로컬 파일은 그 프로젝트에서 다시 열어야 합니다.`, {
-    label: '열기',
+  showToast(tab.url ? S.movedTo(name) : S.movedToLocal(name), {
+    label: S.open,
     run: () => { void openProject(to); },
   });
 }
@@ -2533,8 +2557,8 @@ function removeFromProject(tab: HubTab, docId: string): void {
   registered.add(docId); // closing it must not register it again
   if (tab.pinned) { tab.pinned = false; tab.keepOnUnpin = false; }
   closeTab(tab.key, false);
-  showToast('이 프로젝트에서 뺐습니다.', {
-    label: '되돌리기',
+  showToast(S.removedFromProject, {
+    label: S.undo,
     run: () => {
       void sendProjectUpdate({ kind: 'member', id: projectId, docId, member: true });
       if (tab.url) addDocs([{ url: tab.url, hash: '', file: null }], true);
@@ -2562,7 +2586,7 @@ async function rehome(): Promise<void> {
     return;
   }
   setProject(DEFAULT_PROJECT_ID);
-  showToast('프로젝트가 삭제되어 이 탭은 기본 프로젝트가 되었습니다.');
+  showToast(S.projectDeleted);
 }
 
 // ─── Local files ───
@@ -2676,7 +2700,7 @@ async function boot(): Promise<void> {
     response = await chrome.runtime.sendMessage({ type: 'VOCAB_T_PDF_HUB_CLAIM', docs, canGoBack: canGoBack(), project: initial.project }).catch(() => undefined);
   }
   if (response?.success && response.role === 'forwarded') {
-    emptyText.textContent = 'PDF 탭으로 옮겼습니다.';
+    emptyText.textContent = S.movedToPdfTab;
     empty.hidden = false;
     if (response.dispose === 'back') history.back();
     else if (myTabId !== null) void chrome.tabs.remove(myTabId).catch(() => undefined);

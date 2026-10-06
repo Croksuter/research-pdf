@@ -44,6 +44,7 @@ import { combineLayout } from '../../shared/layoutDetect';
 import { detectLayout } from './layoutModel';
 import { debugLog } from '../../shared/debugLog';
 import { el } from './dom';
+import { S } from './viewerParts.strings';
 
 const MIN_DRAG_PX = 6;
 // A 600 dpi full page is ~35 Mpx; beyond this the DPI is lowered to fit.
@@ -63,10 +64,7 @@ interface PageViewLike {
 
 export type CaptureMode = 'off' | 'free' | 'auto';
 
-const HINTS: Record<Exclude<CaptureMode, 'off'>, string> = {
-  free: '복사할 영역을 드래그하세요 · S: 그림·표 자동 인식 · Esc 취소',
-  auto: '그림·표를 누르면 복사됩니다 · 드래그로 직접 지정 · S: 끄기 · Esc 취소',
-};
+const hintFor = (mode: Exclude<CaptureMode, 'off'>): string => (mode === 'free' ? S.captureHintFree : S.captureHintAuto);
 
 /** A captured region, in PDF points of its page. */
 interface Region {
@@ -98,18 +96,18 @@ export class FigureCapture {
   private generation = 0;
 
   private readonly hint = el('div', { className: 'vt-capture-hint', role: 'status', hidden: true });
-  private readonly panel = el('div', { id: 'vocab-t-pdf-capture', className: 'vt-capture-panel', role: 'dialog', 'aria-label': '그림 복사', hidden: true });
+  private readonly panel = el('div', { id: 'vocab-t-pdf-capture', className: 'vt-capture-panel', role: 'dialog', 'aria-label': S.captureDialog, hidden: true });
   private readonly status = el('span', { className: 'vt-capture-status', 'aria-live': 'polite' });
-  private readonly sourceInput = el('textarea', { className: 'vt-capture-source', rows: '2', spellcheck: 'false', 'aria-label': '출처' });
+  private readonly sourceInput = el('textarea', { className: 'vt-capture-source', rows: '2', spellcheck: 'false', 'aria-label': S.captureSource });
   private readonly optionsBox = el('div', { className: 'vt-capture-options', hidden: true });
-  private readonly optionsBtn = el('button', { type: 'button', className: 'vt-btn vt-btn-text', 'aria-expanded': 'false' }, ['옵션']);
+  private readonly optionsBtn = el('button', { type: 'button', className: 'vt-btn vt-btn-text', 'aria-expanded': 'false' }, [S.captureOptions]);
   private readonly controls = {
     annotations: el('input', { type: 'checkbox' }),
     dpi: select(DPI_CHOICES.map((dpi) => [String(dpi), `${dpi} dpi`])),
-    background: select([['white', '흰색'], ['transparent', '투명']]),
-    source: select([['separate', '따로 복사 (슬라이드)'], ['together', '이미지와 함께 (문서)'], ['embed', '이미지 아래에 넣기']]),
-    style: select([['short', '짧게'], ['apa', 'APA 전체']]),
-    prefix: select([['Source:', 'Source:'], ['출처:', '출처:'], ['', '없음']]),
+    background: select([['white', S.captureWhite], ['transparent', S.captureTransparent]]),
+    source: select([['separate', S.captureSeparate], ['together', S.captureTogether], ['embed', S.captureEmbed]]),
+    style: select([['short', S.captureShort], ['apa', S.captureApa]]),
+    prefix: select([['Source:', 'Source:'], ['출처:', '출처:'], ['', S.captureNone]]),
   };
 
   constructor(private readonly deps: FigureCaptureDeps) {
@@ -156,7 +154,7 @@ export class FigureCapture {
     this.mode = mode;
     if (mode !== 'off') this.close();
     this.hint.hidden = mode === 'off';
-    this.hint.textContent = mode === 'off' ? '' : HINTS[mode];
+    this.hint.textContent = mode === 'off' ? '' : hintFor(mode);
     document.body.classList.toggle('vt-capturing', mode !== 'off');
     document.body.classList.toggle('vt-capture-auto', mode === 'auto');
     this.clearOutlines();
@@ -230,12 +228,13 @@ export class FigureCapture {
     for (const figure of figures) {
       const [x0, y0] = view.viewport.convertToViewportPoint(figure.pdf[0], figure.pdf[1]);
       const [x1, y1] = view.viewport.convertToViewportPoint(figure.pdf[2], figure.pdf[3]);
+      const figureName = figure.label ? (figure.label.kind === 'figure' ? S.captureFigureN(figure.label.number) : S.captureTableN(figure.label.number)) : S.captureFigure;
       const box = el('button', {
         type: 'button',
         className: 'vt-figure-box',
-        title: '눌러서 이 영역 복사',
-        'aria-label': `${figure.label ? (figure.label.kind === 'figure' ? `그림 ${figure.label.number}` : `표 ${figure.label.number}`) : '그림'} 복사`,
-      }, [el('span', { className: 'vt-figure-chip', textContent: figure.label ? (figure.label.kind === 'figure' ? `그림 ${figure.label.number}` : `표 ${figure.label.number}`) : '그림' })]);
+        title: S.captureClick,
+        'aria-label': S.captureCopyAria(figureName),
+      }, [el('span', { className: 'vt-figure-chip', textContent: figureName })]);
       // In percent of the page, so a zoom keeps them in place until the re-render redraws them.
       Object.assign(box.style, {
         left: `${(Math.min(x0, x1) / width) * 100}%`,
@@ -365,14 +364,14 @@ export class FigureCapture {
   }
 
   private buildPanel(): void {
-    const closeBtn = el('button', { type: 'button', className: 'vt-btn vt-icon-btn vt-capture-close', title: '닫기 (Esc)', 'aria-label': '닫기' });
+    const closeBtn = el('button', { type: 'button', className: 'vt-btn vt-icon-btn vt-capture-close', title: S.captureClose, 'aria-label': S.captureCloseAria });
     closeBtn.innerHTML = '<svg><use href="#i-close"/></svg>';
     closeBtn.addEventListener('click', () => this.close());
-    const copyImageBtn = el('button', { type: 'button', className: 'vt-btn vt-btn-text vt-btn-primary' }, ['이미지 복사']);
+    const copyImageBtn = el('button', { type: 'button', className: 'vt-btn vt-btn-text vt-btn-primary' }, [S.captureCopyImage]);
     copyImageBtn.addEventListener('click', () => this.copyImage(Promise.resolve()));
-    const copySourceBtn = el('button', { type: 'button', className: 'vt-btn vt-btn-text' }, ['출처 복사']);
+    const copySourceBtn = el('button', { type: 'button', className: 'vt-btn vt-btn-text' }, [S.captureCopySource]);
     copySourceBtn.addEventListener('click', () => { void this.copySource(); });
-    const saveBtn = el('button', { type: 'button', className: 'vt-btn vt-btn-text' }, ['PNG 저장']);
+    const saveBtn = el('button', { type: 'button', className: 'vt-btn vt-btn-text' }, [S.captureSavePng]);
     saveBtn.addEventListener('click', () => { void this.savePng(); });
     this.optionsBtn.addEventListener('click', () => {
       this.optionsBox.hidden = !this.optionsBox.hidden;
@@ -384,12 +383,12 @@ export class FigureCapture {
     const row = (label: string, control: HTMLElement) => el('label', { className: 'vt-capture-option' }, [el('span', { textContent: label }), control]);
     const c = this.controls;
     this.optionsBox.append(
-      el('label', { className: 'vt-capture-option vt-capture-check' }, [c.annotations, el('span', { textContent: '주석·필기 포함' })]),
-      row('해상도', c.dpi),
-      row('배경', c.background),
-      row('출처', c.source),
-      row('형식', c.style),
-      row('머리말', c.prefix),
+      el('label', { className: 'vt-capture-option vt-capture-check' }, [c.annotations, el('span', { textContent: S.captureAnnotations })]),
+      row(S.captureDpi, c.dpi),
+      row(S.captureBackground, c.background),
+      row(S.captureSource, c.source),
+      row(S.captureStyle, c.style),
+      row(S.capturePrefix, c.prefix),
     );
     for (const [key, control] of Object.entries(c)) {
       control.addEventListener('change', () => this.onOptionChange(key as keyof FigureCopyOptions));
@@ -496,12 +495,12 @@ export class FigureCapture {
 
   private async render(region: Region, withSource: string | null): Promise<{ blob: Blob; cssWidth: number }> {
     const doc = this.deps.getDoc();
-    if (!doc) throw new Error('열린 PDF가 없습니다.');
+    if (!doc) throw new Error(S.captureNoPdf);
     const page = await doc.getPage(region.pageNumber);
     const canvas = await renderRegion(doc, page, region, this.options);
     const out = withSource ? withCaption(canvas, withSource, this.options) : canvas;
     const blob = await new Promise<Blob>((resolve, reject) => {
-      out.toBlob((b) => (b ? resolve(b) : reject(new Error('PNG 변환에 실패했습니다.'))), 'image/png');
+      out.toBlob((b) => (b ? resolve(b) : reject(new Error(S.capturePngFailed))), 'image/png');
     });
     // Pasted at its print size: DPI → CSS pixels.
     return { blob, cssWidth: Math.round(out.width * CSS_DPI / Number(canvas.dataset.dpi)) };
@@ -512,7 +511,7 @@ export class FigureCapture {
     if (!region) return;
     const gen = this.generation;
     const mode = this.options.source;
-    this.setStatus('복사하는 중…', 'busy');
+    this.setStatus(S.captureCopying, 'busy');
     const source = labelReady.then(() => this.currentSource());
     const image = source.then((text) => this.render(region, mode === 'embed' ? text : null));
     const items: Record<string, Promise<Blob>> = { 'image/png': image.then((r) => r.blob) };
@@ -531,35 +530,35 @@ export class FigureCapture {
     void write.then(() => {
       if (gen !== this.generation) return;
       const what = formatFigureLabel(this.label, region.pageNumber);
-      this.setStatus(mode === 'separate' ? `${what} 이미지 복사됨 · 출처는 [출처 복사]` : `${what} 이미지와 출처 복사됨`);
+      this.setStatus(mode === 'separate' ? S.captureCopiedSeparate(what) : S.captureCopiedTogether(what));
     }, (error: unknown) => {
       if (gen !== this.generation) return;
-      this.setStatus(`복사하지 못했습니다: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      this.setStatus(S.captureCopyFailed(error instanceof Error ? error.message : String(error)), 'error');
     });
   }
 
   private async copySource(): Promise<void> {
     try {
       await navigator.clipboard.writeText(this.currentSource());
-      this.setStatus('출처 복사됨');
+      this.setStatus(S.captureSourceCopied);
     } catch (error) {
-      this.setStatus(`출처를 복사하지 못했습니다: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      this.setStatus(S.captureSourceCopyFailed(error instanceof Error ? error.message : String(error)), 'error');
     }
   }
 
   private async savePng(): Promise<void> {
     const region = this.region;
     if (!region) return;
-    this.setStatus('저장하는 중…', 'busy');
+    this.setStatus(S.captureSaving, 'busy');
     try {
       const { blob } = await this.render(region, this.options.source === 'embed' ? this.currentSource() : null);
       const url = URL.createObjectURL(blob);
       const a = el('a', { href: url, download: this.fileName(region) });
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 10_000);
-      this.setStatus('PNG 저장됨');
+      this.setStatus(S.captureSaved);
     } catch (error) {
-      this.setStatus(`저장하지 못했습니다: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      this.setStatus(S.captureSaveFailed(error instanceof Error ? error.message : String(error)), 'error');
     }
   }
 

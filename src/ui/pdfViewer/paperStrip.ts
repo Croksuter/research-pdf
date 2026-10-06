@@ -48,6 +48,7 @@ import { buildCitationChart } from './paperChart';
 import { ReferenceList } from './paperRefs';
 import { OPENALEX_BUDGET_REASON, isOpenAlexUrl, noteOpenAlex429, openAlexBudgetSpent, openAlexUrl, setOpenAlexApiKey } from './openAlexAccess';
 import { pdfReferences } from './pdfText';
+import { S } from './paper.strings';
 
 const OPENALEX = 'https://api.openalex.org';
 const CROSSREF = 'https://api.crossref.org';
@@ -67,13 +68,13 @@ const FIRST_PAGE_TEXT_LIMIT = 20_000;
 const NETWORK_RETRY_DELAY_MS = 15_000;
 let networkFailures = 0;
 
-const KIND_TITLE: Record<string, string> = {
-  survey: '서베이/리뷰 논문 (제목·유형으로 판별)',
-  conference: '학회(컨퍼런스) 논문',
-  journal: '저널 논문',
-  technical: '기술 보고서 / 학위논문',
-  preprint: '프리프린트 (출판본 미확인)',
-};
+const kindTitles = (): Record<string, string> => ({
+  survey: S.kindSurvey,
+  conference: S.kindConference,
+  journal: S.kindJournal,
+  technical: S.kindTechnical,
+  preprint: S.kindPreprint,
+});
 
 interface CacheEntry { fetchedAt: number; meta: PaperMeta }
 
@@ -878,11 +879,11 @@ export class PaperStrip {
     if (gen !== this.generation) return;
     if (loaded && refs.length <= this.refs.size) return;
     const databases = openAlexBudgetSpent()
-      ? 'OpenAlex는 일일 무료 한도가 소진돼 조회하지 못했고' + (s2Limited ? ' Semantic Scholar는 요청 제한(429)에 걸렸으며' : '')
+      ? S.refsBudgetSpent(s2Limited)
       : s2Limited
-      ? 'OpenAlex에 참고문헌 목록이 없고 Semantic Scholar는 요청 제한(429)으로 확인하지 못했으며'
-      : meta.openalexId || meta.s2PaperId ? 'OpenAlex·Semantic Scholar에 참고문헌 목록이 없고' : '이 논문을 OpenAlex·Semantic Scholar에서 못 찾았고';
-    await this.refs.loadFromPdf(refs, key, `${databases}, PDF에서도 참고문헌 절을 찾지 못했습니다.`);
+      ? S.refsS2Limited
+      : meta.openalexId || meta.s2PaperId ? S.refsNoList : S.refsPaperNotFound;
+    await this.refs.loadFromPdf(refs, key, S.refsNotInPdfEither(databases));
   }
 
   /**
@@ -905,11 +906,11 @@ export class PaperStrip {
       if (gen !== this.generation) return;
       debugLog('paper', 'detection', () => ({ ids, titles, textSample: evidence.pageText.slice(0, 160) }));
       if (!ids.doi && !ids.arxivId && titles.length === 0) {
-        this.renderStatus('none', '논문으로 인식되지 않았습니다.', '첫 페이지와 문서 정보에서 DOI·arXiv ID·제목을 찾지 못했습니다.');
+        this.renderStatus('none', S.notRecognized, S.notRecognizedNoIds);
         return;
       }
-      const what = ids.doi ? `DOI ${ids.doi}` : ids.arxivId ? `arXiv:${ids.arxivId}` : `제목 "${titles[0].length > 60 ? `${titles[0].slice(0, 60).trimEnd()}…` : titles[0]}"`;
-      this.renderStatus('loading', `${what} 조회 중…`);
+      const what = ids.doi ? S.whatDoi(ids.doi) : ids.arxivId ? S.whatArxiv(ids.arxivId) : S.whatTitle(titles[0].length > 60 ? `${titles[0].slice(0, 60).trimEnd()}…` : titles[0]);
+      this.renderStatus('loading', S.lookingUp(what));
 
       const key = paperCacheKey(ids, titles) as string;
       if (fresh) await dropCache(key);
@@ -938,13 +939,13 @@ export class PaperStrip {
         if (openAlexBudgetSpent()) {
           this.renderStatus('failed', `${what}: ${OPENALEX_BUDGET_REASON}`);
         } else if (networkFailures > 0) {
-          this.renderStatus('failed', `${what}: OpenAlex·Crossref·Semantic Scholar 조회가 실패했습니다 (네트워크 지연 또는 요청 제한).`);
+          this.renderStatus('failed', S.lookupFailedNetwork(what));
         } else if (lastRateLimited) {
-          this.renderStatus('failed', `${what}: OpenAlex·Crossref에 없고, Semantic Scholar는 요청 제한(429)으로 확인하지 못했습니다. 설정에 Semantic Scholar API 키를 넣으면 안정적으로 조회됩니다.`);
+          this.renderStatus('failed', S.lookupFailedS2Limited(what));
         } else if (ids.doi || ids.arxivId) {
-          this.renderStatus('failed', `${what}: 어느 데이터베이스(OpenAlex·Crossref·Semantic Scholar)에도 없습니다.`);
+          this.renderStatus('failed', S.lookupFailedNotFound(what));
         } else {
-          this.renderStatus('none', '논문으로 인식되지 않았습니다.', `${what}(으)로 OpenAlex·Crossref·Semantic Scholar를 찾아봤지만 일치하는 논문이 없습니다.`);
+          this.renderStatus('none', S.notRecognized, S.notRecognizedSearched(what));
         }
         return;
       }
@@ -965,7 +966,7 @@ export class PaperStrip {
     } catch (error) {
       debugError('paper', 'paper strip failed', () => ({ error: error instanceof Error ? error.message : String(error) }));
       if (gen === this.generation) {
-        this.renderStatus('failed', `논문 정보를 처리하는 중 오류: ${error instanceof Error ? error.message : String(error)}`);
+        this.renderStatus('failed', S.processingError(error instanceof Error ? error.message : String(error)));
       }
     }
   }
@@ -985,7 +986,7 @@ export class PaperStrip {
     } else {
       value.append(text);
     }
-    this.body.append(el('span', { className: 'vt-paper-seg' }, [el('span', { className: 'vt-paper-label', textContent: '논문정보' }), value]));
+    this.body.append(el('span', { className: 'vt-paper-seg' }, [el('span', { className: 'vt-paper-label', textContent: S.paperInfo }), value]));
     const wasHidden = this.root.hidden;
     this.root.hidden = false;
     document.body.classList.add('vt-has-paper');
@@ -1002,7 +1003,7 @@ export class PaperStrip {
     // Missing data is never rendered as 0 or a default: a ⚠︎ with a one-line
     // reason on hover takes the value's place.
     const warn = (reason: string) => {
-      const w = el('span', { className: 'vt-warn', tabindex: '0', role: 'img', 'aria-label': `정보 없음: ${reason}` }, ['⚠︎']);
+      const w = el('span', { className: 'vt-warn', tabindex: '0', role: 'img', 'aria-label': S.noInfo(reason) }, ['⚠︎']);
       w.append(el('span', { className: 'vt-warn-pop', textContent: reason }));
       return w;
     };
@@ -1014,11 +1015,11 @@ export class PaperStrip {
 
     // ── 논문정보: kind badge · venue · year, with a hover popover for details/links.
     const kind = classifyPaperKind(meta);
-    const kindBadge = el('span', { className: `vt-kind vt-kind-${kind}`, textContent: kind, title: KIND_TITLE[kind] });
-    const info = segment('논문정보', join([
+    const kindBadge = el('span', { className: `vt-kind vt-kind-${kind}`, textContent: kind, title: kindTitles()[kind] });
+    const info = segment(S.paperInfo, join([
       kindBadge,
-      meta.venue ?? (kind === 'preprint' ? null : warn('게재처(저널/학회)를 못 찾았습니다.')),
-      meta.year ? String(meta.year) : warn('출판 연도를 못 찾았습니다.'),
+      meta.venue ?? (kind === 'preprint' ? null : warn(S.noVenue)),
+      meta.year ? String(meta.year) : warn(S.noYear),
     ]));
     info.classList.add('vt-paper-info');
     info.setAttribute('tabindex', '0');
@@ -1036,24 +1037,24 @@ export class PaperStrip {
     // A paper under two years old: every citation is a recent one.
     const twoYear = partial ? null : recentTwoYearCitations(meta) ?? (recent ? total : null);
     const twoYearWarning = openAlexBudgetSpent() ? OPENALEX_BUDGET_REASON
-      : partial ? `OpenAlex가 이 논문의 인용을 일부만 알고 있어(전체의 ${Math.round((openAlexShare ?? 0) * 100)}%) 최근 2년 인용을 계산하지 않았습니다.`
-        : '연도별 인용 데이터가 없어 최근 2년 인용을 계산하지 못했습니다 (OpenAlex).';
+      : partial ? S.twoYearPartial(Math.round((openAlexShare ?? 0) * 100))
+        : S.twoYearNoHistory;
     const history = citationHistory(meta);
     const sourcesDetail = [
       typeof meta.citations.semanticScholar === 'number' ? `Semantic Scholar ${formatCount(meta.citations.semanticScholar)}` : null,
       typeof meta.citations.openalex === 'number' ? `OpenAlex ${formatCount(meta.citations.openalex)}` : null,
       typeof meta.citations.crossref === 'number' ? `Crossref ${formatCount(meta.citations.crossref)}` : null,
     ].filter(Boolean).join(' · ');
-    const cites = segment('2년/전체 인용수', [
+    const cites = segment(S.citesLabel, [
       twoYear === null ? warn(twoYearWarning) : formatCount(twoYear),
       '/',
-      total === null ? warn('인용 수를 Semantic Scholar·OpenAlex·Crossref 어디서도 못 찾았습니다.') : formatCount(total),
-      ...(s2Unavailable.has(meta) ? [' ', warn('Semantic Scholar 조회가 요청 제한(429)으로 실패해 실제보다 낮을 수 있습니다. 설정에 Semantic Scholar API 키를 넣으면 안정적으로 조회됩니다.')] : []),
-    ], total === null ? undefined : `올해·작년 인용 (OpenAlex 연도별) / 전체 인용 = 소스 최대값 (${sourcesDetail}).\nGoogle Scholar는 프리프린트·학위논문·중복 레코드까지 합산해 보통 더 높습니다.`);
+      total === null ? warn(S.noCitationCount) : formatCount(total),
+      ...(s2Unavailable.has(meta) ? [' ', warn(S.s2RateLimited)] : []),
+    ], total === null ? undefined : S.citesTooltip(sourcesDetail));
     if (history.some((p) => p.count > 0)) {
       const series = recentCitationSeries(meta);
       const max = Math.max(...series.map((p) => p.count));
-      const spark = el('span', { className: 'vt-spark', tabindex: '0', 'aria-label': '연도별 인용 그래프' });
+      const spark = el('span', { className: 'vt-spark', tabindex: '0', 'aria-label': S.citationChartLabel });
       for (const p of series) {
         const bar = el('i');
         bar.style.height = `${Math.max(2, Math.round((p.count / Math.max(1, max)) * 16))}px`;
@@ -1067,7 +1068,7 @@ export class PaperStrip {
 
     // ── 참고문헌 (hover → resolved reference list)
     const references = bestReferenceCount(meta);
-    const refs = segment('참고문헌', [references === null ? warn('참고문헌 수를 Crossref·OpenAlex·Semantic Scholar 어디서도 못 찾았습니다.') : formatCount(references)]);
+    const refs = segment(S.referencesLabel, [references === null ? warn(S.noReferenceCount) : formatCount(references)]);
     // No database count: the PDF's own list gives it, once read.
     // No publisher count: the PDF's own list gives it, once read, when it is
     // more than the indexes know.
@@ -1075,7 +1076,7 @@ export class PaperStrip {
       const value = refs.querySelector('.vt-paper-value');
       if (!value || this.meta !== meta || (references !== null && count <= references)) return;
       value.replaceChildren(formatCount(count));
-      refs.title = 'PDF 본문의 참고문헌 목록에서 센 수 (데이터베이스의 수보다 많음)';
+      refs.title = S.referencesCountedFromPdf;
     };
     refs.classList.add('vt-paper-refs');
     refs.setAttribute('tabindex', '0');
@@ -1084,9 +1085,9 @@ export class PaperStrip {
 
     // ── right-aligned copy buttons
     const actions = el('span', { className: 'vt-paper-actions' });
-    const copyBib = el('button', { type: 'button', className: 'vt-btn vt-btn-text vt-paper-copy', title: 'BibTeX 복사' }, ['BibTeX']);
+    const copyBib = el('button', { type: 'button', className: 'vt-btn vt-btn-text vt-paper-copy', title: S.copyBibtex }, ['BibTeX']);
     copyBib.addEventListener('click', () => { void this.copy(copyBib, 'bibtex'); });
-    const copyApa = el('button', { type: 'button', className: 'vt-btn vt-btn-text vt-paper-copy', title: 'APA 7 서식 복사' }, ['APA']);
+    const copyApa = el('button', { type: 'button', className: 'vt-btn vt-btn-text vt-paper-copy', title: S.copyApa }, ['APA']);
     copyApa.addEventListener('click', () => { void this.copy(copyApa, 'apa'); });
     actions.append(copyBib, copyApa);
     this.body.append(actions);
@@ -1102,7 +1103,7 @@ export class PaperStrip {
     const pop = el('div', { className: 'vt-paper-pop', role: 'tooltip' });
     pop.append(el('div', { className: 'vt-paper-pop-title', textContent: meta.title }));
     if (meta.authors.length) {
-      const shown = meta.authors.slice(0, 6).join(', ') + (meta.authors.length > 6 ? ` 외 ${meta.authors.length - 6}명` : '');
+      const shown = meta.authors.slice(0, 6).join(', ') + (meta.authors.length > 6 ? S.authorsMore(meta.authors.length - 6) : '');
       pop.append(el('div', { className: 'vt-paper-pop-authors', textContent: shown }));
     }
     const facts: string[] = [];
@@ -1110,8 +1111,8 @@ export class PaperStrip {
     if (meta.arxivId) facts.push(`arXiv:${meta.arxivId}`);
     if (meta.venueType !== 'repository' && meta.workType !== 'preprint') {
       facts.push(meta.venueTwoYearMeanCitedness !== null
-        ? `게재처 2년 평균 피인용 ${meta.venueTwoYearMeanCitedness.toFixed(1)} (IF와 같은 정의, OpenAlex)`
-        : '⚠︎ 게재처 2년 평균 피인용을 OpenAlex에서 못 찾았습니다.');
+        ? S.venueMeanCitedness(meta.venueTwoYearMeanCitedness.toFixed(1))
+        : S.noVenueMeanCitedness);
     }
     for (const f of facts) pop.append(el('div', { className: 'vt-paper-pop-fact', textContent: f }));
     const links = el('div', { className: 'vt-paper-links' });
@@ -1138,9 +1139,9 @@ export class PaperStrip {
         text = this.bibtexCache;
       }
       await navigator.clipboard.writeText(text);
-      button.textContent = '복사됨';
+      button.textContent = S.copied;
     } catch {
-      button.textContent = '실패';
+      button.textContent = S.copyFailed;
     } finally {
       setTimeout(() => { button.textContent = original; button.disabled = false; }, 1_500);
     }

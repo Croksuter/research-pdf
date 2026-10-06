@@ -9,6 +9,7 @@ import {
   type AnnotationReconciliation,
 } from '../../shared/pdfAnnotations';
 import { byId, el } from './dom';
+import { S } from './viewerParts.strings';
 
 type Conflict = Extract<AnnotationReconciliation, { kind: 'conflict' }>;
 
@@ -27,8 +28,7 @@ export function showAnnotationConflictDialog(conflict: Conflict, hooks: Hooks): 
   const cacheCount = byId<HTMLSpanElement>('vt-conflict-cache-count');
 
   summary.textContent =
-    `이 PDF 파일에는 브라우저에 없는 필기 ${conflict.fileOnly.length}개가, `
-    + `브라우저에는 파일에 없는 필기 ${conflict.cacheOnly.length}개가 저장돼 있습니다. 어느 쪽을 유지할까요?`;
+    S.conflictSummary(conflict.fileOnly.length, conflict.cacheOnly.length);
   fileCount.textContent = String(conflict.fileOnly.length);
   cacheCount.textContent = String(conflict.cacheOnly.length);
 

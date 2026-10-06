@@ -6,6 +6,8 @@
 // lifts that. The strip notes when the budget is spent instead of showing
 // missing data as if OpenAlex had none.
 
+import { S } from './viewerParts.strings';
+
 let apiKey = '';
 let budgetSpent = false;
 
@@ -33,4 +35,4 @@ export function openAlexBudgetSpent(): boolean {
   return budgetSpent;
 }
 
-export const OPENALEX_BUDGET_REASON = 'OpenAlex의 무료 일일 한도(같은 네트워크가 함께 씀)를 다 써서 OpenAlex를 조회하지 못했습니다. 설정에 OpenAlex API 키(무료)를 넣으면 계속 조회됩니다.';
+export const OPENALEX_BUDGET_REASON = S.openAlexBudget;

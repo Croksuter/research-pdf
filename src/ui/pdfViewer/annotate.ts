@@ -6,6 +6,7 @@ import { AnnotationEditorParamsType, AnnotationEditorType } from 'pdfjs-dist';
 import type { AnnotationEditorUIManager } from 'pdfjs-dist';
 import type { EventBus, PDFViewer } from 'pdfjs-dist/web/pdf_viewer.mjs';
 import { byId } from './dom';
+import { S } from './viewerParts.strings';
 
 export const HIGHLIGHT_COLORS = 'yellow=#FFFF98,green=#53FFBC,blue=#80EBFF,pink=#FFCBE6,red=#FF4F5F';
 
@@ -108,7 +109,7 @@ export class AnnotationToolbar {
       btn.className = 'vt-swatch' + (color === current ? ' is-active' : '');
       btn.style.setProperty('--swatch', color);
       btn.title = color;
-      btn.setAttribute('aria-label', `색상 ${color}`);
+      btn.setAttribute('aria-label', S.swatch(color));
       btn.addEventListener('click', () => {
         if (isHighlight) this.highlightColor = color; else this.inkColor = color;
         this.renderSwatches();

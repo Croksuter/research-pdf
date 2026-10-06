@@ -30,6 +30,11 @@ import { PDF_PROJECTS_STORAGE_KEY, parsePdfProjects } from '../shared/pdfProject
 import { isEmptyAnnotationCache, parsePdfAnnotationCache } from '../shared/pdfAnnotations';
 import { openAlexCheck, semanticScholarCheck, type ApiCheck } from '../shared/apiStatus';
 import { DISPLAY_PREFS_STORAGE_KEY, parseDisplayPrefs, type DisplayPrefs } from '../shared/displayPrefs';
+import { LANGUAGE_STORAGE_KEY, currentLanguage, localizeDocument, parseLanguagePref, saveLanguagePref } from '../shared/i18n';
+import { S } from './settings.strings';
+
+localizeDocument(S);
+document.title = S.pageTitle;
 
 const byId = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
@@ -138,30 +143,30 @@ function renderSync(status: SyncStatus): void {
   const email = status.googleAccountEmail;
   syncAvatar.textContent = status.googleConnected ? (email[0] ?? 'G').toUpperCase() : 'G';
   syncAvatar.classList.toggle('is-off', !status.googleConnected);
-  syncAccount.textContent = status.googleConnected ? email || 'Google 계정' : '연결된 Google 계정이 없습니다.';
+  syncAccount.textContent = status.googleConnected ? email || S.googleAccount : S.noAccount;
   syncEnabledInput.checked = status.enabled;
   syncEnabledInput.disabled = !status.googleConnected;
-  syncConnectButton.textContent = status.googleConnected ? '다른 계정으로 연결' : 'Google 계정 연결';
+  syncConnectButton.textContent = status.googleConnected ? S.connectOther : S.connectGoogle;
   syncConnectButton.classList.toggle('st-btn-primary', !status.googleConnected);
   syncConnectButton.disabled = !status.googleConfigured;
   syncNowButton.hidden = !status.googleConnected;
   syncNowButton.disabled = !status.enabled || status.syncing;
   syncDisconnectButton.hidden = !status.googleConnected;
   syncSetup.textContent = status.googleConfigured
-    ? `로그인 창에 redirect_uri_mismatch가 뜨면 이 설치의 리디렉션 URI가 OAuth 클라이언트에 등록되지 않은 것입니다: ${redirectUri()}`
-    : `이 빌드에는 Google OAuth 클라이언트 ID가 없습니다. docs/google-drive-sync.md를 따라 설정하세요. 등록할 리디렉션 URI: ${redirectUri()}`;
-  if (status.syncing) syncStatus.textContent = '동기화 중…';
-  else if (status.error) syncStatus.textContent = `동기화 오류: ${status.error}`;
+    ? S.setupConfigured(redirectUri())
+    : S.setupMissing(redirectUri());
+  if (status.syncing) syncStatus.textContent = S.syncing;
+  else if (status.error) syncStatus.textContent = S.syncError(status.error);
   else if (status.lastSyncAt) {
-    syncStatus.textContent = `마지막 동기화 ${new Date(status.lastSyncAt).toLocaleString('ko-KR')}${status.pendingLocalChanges ? ' · 보낼 변경 있음' : ''}`;
-  } else if (status.googleConnected) syncStatus.textContent = status.enabled ? '첫 동기화를 기다리는 중입니다.' : '동기화가 꺼져 있습니다.';
-  else syncStatus.textContent = '연결하면 약 15분마다, 그리고 문서를 열고 필기할 때 동기화합니다.';
+    syncStatus.textContent = S.lastSync(new Date(status.lastSyncAt).toLocaleString(currentLanguage()), status.pendingLocalChanges);
+  } else if (status.googleConnected) syncStatus.textContent = status.enabled ? S.waitingFirst : S.syncOff;
+  else syncStatus.textContent = S.syncHint;
 }
 
 async function loadSync(): Promise<void> {
   const status = await send<SyncStatus | { success: false; error: string }>({ type: 'VOCAB_T_GET_CLOUD_SYNC_STATUS' });
   if (!status || 'success' in status) {
-    syncStatus.textContent = status?.error ?? '동기화 상태를 불러오지 못했습니다.';
+    syncStatus.textContent = status?.error ?? S.syncStatusFailed;
     return;
   }
   renderSync(status);
@@ -169,10 +174,10 @@ async function loadSync(): Promise<void> {
 
 syncConnectButton.addEventListener('click', () => {
   syncConnectButton.disabled = true;
-  syncStatus.textContent = 'Google 로그인 창을 여는 중…';
+  syncStatus.textContent = S.signInOpening;
   void send<{ success: boolean; error?: string }>({ type: 'VOCAB_T_CONNECT_GOOGLE_SYNC' }).then(async (response) => {
     await loadSync();
-    if (response && !response.success) syncStatus.textContent = response.error ?? 'Google 계정을 연결하지 못했습니다.';
+    if (response && !response.success) syncStatus.textContent = response.error ?? S.connectFailed;
   });
 });
 
@@ -181,8 +186,8 @@ syncDisconnectButton.addEventListener('click', () => {
   void send<{ success: boolean; error?: string }>({ type: 'VOCAB_T_DISCONNECT_GOOGLE_SYNC' }).then(async (response) => {
     await loadSync();
     syncStatus.textContent = response?.success
-      ? '연결을 해제했습니다. Drive에 저장된 데이터는 그대로 남아 있습니다.'
-      : response?.error ?? '연결을 해제하지 못했습니다.';
+      ? S.disconnected
+      : response?.error ?? S.disconnectFailed;
   });
 });
 
@@ -193,10 +198,10 @@ syncEnabledInput.addEventListener('change', () => {
 
 syncNowButton.addEventListener('click', () => {
   syncNowButton.disabled = true;
-  syncStatus.textContent = '동기화 중…';
+  syncStatus.textContent = S.syncing;
   void send<{ success: boolean; error?: string }>({ type: 'VOCAB_T_SYNC_CLOUD_NOW' }).then(async (response) => {
     await loadSync();
-    if (!response?.success) syncStatus.textContent = response?.error ?? '동기화에 실패했습니다.';
+    if (!response?.success) syncStatus.textContent = response?.error ?? S.syncFailed;
   });
 });
 
@@ -237,8 +242,8 @@ async function renderAccess(): Promise<void> {
   // The rule only exists while host access is granted; reflect that, not just the stored flag.
   webPdfInput.checked = webOn && web;
   localPdfInput.checked = localOn;
-  badge(webAccess, web ? '사이트 접근 허용됨' : '사이트 접근 필요', web ? 'ok' : 'muted');
-  badge(fileAccess, file ? '파일 URL 접근 켜짐' : '파일 URL 접근 꺼짐', file ? 'ok' : localOn ? 'warn' : 'muted');
+  badge(webAccess, web ? S.siteAccessOn : S.siteAccessNeeded, web ? 'ok' : 'muted');
+  badge(fileAccess, file ? S.fileUrlOn : S.fileUrlOff, file ? 'ok' : localOn ? 'warn' : 'muted');
   fileAccessOpen.hidden = file;
 }
 
@@ -259,7 +264,7 @@ webPdfInput.addEventListener('change', () => {
       }
       if (!granted) {
         webPdfInput.checked = false;
-        openStatus.textContent = '사이트 접근 권한이 허용되지 않아 켜지 못했습니다.';
+        openStatus.textContent = S.siteDenied;
         void renderAccess();
         return;
       }
@@ -267,8 +272,8 @@ webPdfInput.addEventListener('change', () => {
     await setSetting(WEB_PDF_VIEWER_ENABLED_SETTING_KEY, enable);
     const response = await send<{ success: boolean }>({ type: 'VOCAB_T_SYNC_WEB_PDF_ROUTING' });
     openStatus.textContent = !response?.success
-      ? '저장했지만 적용하지 못했습니다. 확장 프로그램을 다시 로드하세요.'
-      : enable ? '웹 PDF를 ResearchPDF로 엽니다. 이미 열린 PDF 탭은 새로고침하세요.' : '웹 PDF는 Chrome 기본 뷰어로 엽니다.';
+      ? S.savedNotApplied
+      : enable ? S.webOn : S.webOff;
     void renderAccess();
   })();
 });
@@ -277,8 +282,8 @@ localPdfInput.addEventListener('change', () => {
   void setSetting(LOCAL_PDF_VIEWER_ENABLED_SETTING_KEY, localPdfInput.checked).then(async () => {
     const file = await hasFileAccess();
     openStatus.textContent = !localPdfInput.checked
-      ? '컴퓨터의 PDF는 Chrome 기본 뷰어로 엽니다.'
-      : file ? '컴퓨터의 PDF를 ResearchPDF로 엽니다.' : '켰습니다. Chrome에서 "파일 URL에 대한 액세스 허용"도 켜야 열립니다.';
+      ? S.localOff
+      : file ? S.localOn : S.localNeedsAccess;
     void renderAccess();
   });
 });
@@ -296,16 +301,22 @@ restoreTabsButton.addEventListener('click', () => {
   restoreTabsButton.disabled = true;
   void send<{ success: boolean; restored?: number; open?: number }>({ type: 'VOCAB_T_RESTORE_VIEWER_TABS' }).then((response) => {
     restoreTabsButton.disabled = false;
-    if (!response?.success) { openStatus.textContent = 'PDF 탭을 복구하지 못했습니다.'; return; }
+    if (!response?.success) { openStatus.textContent = S.restoreFailed; return; }
     const restored = Number(response.restored ?? 0);
     const open = Number(response.open ?? 0);
     openStatus.textContent = restored > 0
-      ? `PDF 탭 ${restored}개를 다시 열었습니다.`
-      : open > 0 ? `복구할 탭이 없습니다 (열려 있는 PDF 탭 ${open}개).` : '복구할 PDF 탭 기록이 없습니다.';
+      ? S.restoredTabs(restored)
+      : open > 0 ? S.nothingToRestore(open) : S.noTabHistory;
   });
 });
 
 // ─── Display (this device; open hubs follow at once) ───
+
+const displayLanguage = byId<HTMLSelectElement>('display-language');
+displayLanguage.value = parseLanguagePref(localStorage.getItem(LANGUAGE_STORAGE_KEY));
+displayLanguage.addEventListener('change', () => {
+  void saveLanguagePref(parseLanguagePref(displayLanguage.value)).then(() => location.reload());
+});
 
 const displayTitle = byId<HTMLSelectElement>('display-tab-title');
 const displaySubtitle = byId<HTMLSelectElement>('display-tab-subtitle');
@@ -363,7 +374,7 @@ async function probe(url: string, init?: RequestInit): Promise<Response | null> 
   }
 }
 
-const offline: ApiCheck = { state: 'error', message: '연결하지 못했습니다. 네트워크를 확인하세요.' };
+const offline: ApiCheck = { state: 'error', message: S.offline };
 
 const keyFields: KeyField[] = [
   {
@@ -399,8 +410,8 @@ const keyFields: KeyField[] = [
 
 async function renderKey(field: KeyField): Promise<string> {
   const key = (await getSetting<string>(field.setting, '')).trim();
-  badge(field.state, key ? '키 저장됨' : '키 없음', key ? 'ok' : 'muted');
-  field.input.placeholder = key ? '저장됨 — 바꾸려면 새 키 입력, 지우려면 비우고 저장' : '키 붙여넣기';
+  badge(field.state, key ? S.keySaved : S.keyNone, key ? 'ok' : 'muted');
+  field.input.placeholder = key ? S.keyPlaceholderSaved : S.keyPlaceholderEmpty;
   return key;
 }
 
@@ -411,14 +422,14 @@ for (const field of keyFields) {
       field.input.value = '';
       await renderKey(field);
       field.result.dataset.state = '';
-      field.result.textContent = key ? '저장했습니다. "확인"으로 동작하는지 볼 수 있습니다.' : '키를 지웠습니다.';
+      field.result.textContent = key ? S.keySavedNote : S.keyRemoved;
     });
   });
   field.input.addEventListener('keydown', (e) => { if (e.key === 'Enter') field.save.click(); });
   field.check.addEventListener('click', () => {
     field.check.disabled = true;
     field.result.dataset.state = '';
-    field.result.textContent = '확인 중…';
+    field.result.textContent = S.checking;
     void (async () => {
       // A key typed but not saved yet is what the user wants checked.
       const key = field.input.value.trim() || (await getSetting<string>(field.setting, '')).trim();
@@ -444,36 +455,36 @@ async function renderStorage(): Promise<void> {
   try {
     const { files, bytes } = await pdfFileCacheUsage();
     const share = Math.min(1, bytes / PDF_CACHE_MAX_BYTES);
-    cacheUsage.textContent = files ? `보관한 PDF ${files}개 · ${megabytes(bytes)} / ${megabytes(PDF_CACHE_MAX_BYTES)}` : '보관한 PDF가 없습니다.';
+    cacheUsage.textContent = files ? S.savedPdfsUsage(files, megabytes(bytes), megabytes(PDF_CACHE_MAX_BYTES)) : S.noSavedPdfs;
     cacheBar.style.width = `${Math.max(files ? 1 : 0, Math.round(share * 100))}%`;
     cacheBar.parentElement?.setAttribute('aria-valuenow', String(Math.round(share * 100)));
     cacheClearButton.disabled = files === 0;
   } catch {
-    cacheUsage.textContent = '보관 용량을 읽지 못했습니다.';
+    cacheUsage.textContent = S.usageFailed;
   }
   try {
     const stored = await chrome.storage.local.get([PDF_LIBRARY_STORAGE_KEY, PDF_PROJECTS_STORAGE_KEY]);
-    byId('stat-library').textContent = `${Object.keys(parsePdfLibrary(stored[PDF_LIBRARY_STORAGE_KEY])).length}편`;
-    byId('stat-projects').textContent = `${Object.values(parsePdfProjects(stored[PDF_PROJECTS_STORAGE_KEY])).filter((p) => p.deletedAt === 0).length}개`;
+    byId('stat-library').textContent = S.countPapers(Object.keys(parsePdfLibrary(stored[PDF_LIBRARY_STORAGE_KEY])).length);
+    byId('stat-projects').textContent = S.countProjects(Object.values(parsePdfProjects(stored[PDF_PROJECTS_STORAGE_KEY])).filter((p) => p.deletedAt === 0).length);
   } catch { /* stays – */ }
   try {
     const rows = await dbGetAll<unknown>(STORE_PDF_ANNOTATIONS);
     const annotated = rows.map(parsePdfAnnotationCache).filter((c) => c && !isEmptyAnnotationCache(c)).length;
-    byId('stat-annotated').textContent = `${annotated}편`;
+    byId('stat-annotated').textContent = S.countPapers(annotated);
   } catch { /* stays – */ }
 }
 
 fileCacheInput.addEventListener('change', () => {
   void setSetting(PDF_FILE_CACHE_ENABLED_SETTING_KEY, fileCacheInput.checked).then(() => {
     storageStatus.textContent = fileCacheInput.checked
-      ? '연 웹 PDF를 이 기기에 보관합니다.'
-      : '더 이상 보관하지 않습니다. 이미 보관한 PDF는 비우기로 지울 수 있습니다.';
+      ? S.cacheOn
+      : S.cacheOff;
   });
 });
 
 cacheClearButton.addEventListener('click', () => {
   void clearPdfFileCache().then(() => {
-    storageStatus.textContent = '보관한 PDF를 모두 지웠습니다. 필기와 읽던 위치는 그대로입니다.';
+    storageStatus.textContent = S.cacheCleared;
     return renderStorage();
   });
 });
@@ -497,42 +508,44 @@ function keyCaps(combo: string): HTMLElement {
   return wrap;
 }
 
-const SHORTCUTS: Array<{ group: string; keys: Array<[string, string]> }> = [
-  {
-    group: 'PDF 탭',
-    keys: [
-      ['Alt+Shift+← / Alt+Shift+→', '이전·다음 PDF 탭'],
-      ['Alt+W', '지금 PDF 탭 닫기'],
-      ['Alt+Shift+T', '닫은 탭 다시 열기'],
-      ['Alt+↑ / Alt+↓', '프로젝트 목록에서 순서 옮기기'],
-    ],
-  },
-  {
-    group: '보기',
-    keys: [
-      ['Ctrl+F', '문서에서 찾기'],
-      ['Ctrl+G / Ctrl+Shift+G', '다음·이전 찾은 곳'],
-      ['Ctrl++ / Ctrl+-', '확대·축소'],
-      ['Ctrl+0', '자동 맞춤'],
-      ['Ctrl+[ / Ctrl+]', '왼쪽·오른쪽으로 회전'],
-      ['Home / End', '첫·마지막 페이지'],
-      ['Ctrl+P', '인쇄'],
-      ['Ctrl+S', '다운로드 (필기 포함)'],
-    ],
-  },
-  {
-    group: '필기·캡처',
-    keys: [
-      ['Ctrl+Z / Ctrl+Y', '실행 취소·다시 실행'],
-      ['S / Ctrl+Shift+X', '영역 캡처 → 한 번 더: 그림·표 자동 인식 → 한 번 더: 끄기'],
-      ['Esc', '캡처·찾기·필기 도구 닫기'],
-    ],
-  },
-];
+function shortcuts(): Array<{ group: string; keys: Array<[string, string]> }> {
+  return [
+    {
+      group: S.groupTabs,
+      keys: [
+        ['Alt+Shift+← / Alt+Shift+→', S.scPrevNextTab],
+        ['Alt+W', S.scCloseTab],
+        ['Alt+Shift+T', S.scReopenTab],
+        ['Alt+↑ / Alt+↓', S.scMoveInProject],
+      ],
+    },
+    {
+      group: S.groupView,
+      keys: [
+        ['Ctrl+F', S.scFind],
+        ['Ctrl+G / Ctrl+Shift+G', S.scFindNext],
+        ['Ctrl++ / Ctrl+-', S.scZoom],
+        ['Ctrl+0', S.scFit],
+        ['Ctrl+[ / Ctrl+]', S.scRotate],
+        ['Home / End', S.scFirstLast],
+        ['Ctrl+P', S.scPrint],
+        ['Ctrl+S', S.scDownload],
+      ],
+    },
+    {
+      group: S.groupAnnotate,
+      keys: [
+        ['Ctrl+Z / Ctrl+Y', S.scUndoRedo],
+        ['S / Ctrl+Shift+X', S.scCapture],
+        ['Esc', S.scEsc],
+      ],
+    },
+  ];
+}
 
 function renderShortcuts(): void {
   const host = byId<HTMLDivElement>('shortcuts');
-  for (const { group, keys } of SHORTCUTS) {
+  for (const { group, keys } of shortcuts()) {
     const section = document.createElement('div');
     section.className = 'st-keys-group';
     const title = document.createElement('h3');

@@ -28,6 +28,7 @@
 //      file only, browser only, both, or per-annotation.
 
 import { PDF_DOC_ID_MAX_CHARS } from './pdfIdentity';
+import { S } from './shared.strings';
 
 export const PDF_ANNOTATION_CACHE_VERSION = 1;
 export const PDF_ANNOTATION_CACHE_MAX_DOCS = 200;
@@ -356,17 +357,17 @@ export function resolveAnnotationConflict(
 
 // ─── Labels for the conflict UI ───
 
-const EDITOR_LABELS: Record<number, string> = {
-  [EDITOR_TYPE_FREETEXT]: '텍스트',
-  [EDITOR_TYPE_HIGHLIGHT]: '형광펜',
-  [EDITOR_TYPE_STAMP]: '이미지',
-  [EDITOR_TYPE_INK]: '펜',
-};
-const SUBTYPE_LABELS: Record<string, string> = {
-  FreeText: '텍스트', Highlight: '형광펜', Stamp: '이미지', Ink: '펜', Text: '메모', Underline: '밑줄',
-  StrikeOut: '취소선', Squiggly: '물결 밑줄', Square: '사각형', Circle: '원', Line: '선', Polygon: '다각형',
-  PolyLine: '꺾은선', Caret: '삽입 표시', FileAttachment: '첨부 파일', Sound: '소리', Redact: '가림',
-};
+const editorLabels = (): Record<number, string> => ({
+  [EDITOR_TYPE_FREETEXT]: S.labelText,
+  [EDITOR_TYPE_HIGHLIGHT]: S.labelHighlight,
+  [EDITOR_TYPE_STAMP]: S.labelImage,
+  [EDITOR_TYPE_INK]: S.labelPen,
+});
+const subtypeLabels = (): Record<string, string> => ({
+  FreeText: S.labelText, Highlight: S.labelHighlight, Stamp: S.labelImage, Ink: S.labelPen, Text: S.labelNote, Underline: S.labelUnderline,
+  StrikeOut: S.labelStrikeOut, Squiggly: S.labelSquiggly, Square: S.labelSquare, Circle: S.labelCircle, Line: S.labelLine, Polygon: S.labelPolygon,
+  PolyLine: S.labelPolyLine, Caret: S.labelCaret, FileAttachment: S.labelFileAttachment, Sound: S.labelSound, Redact: S.labelRedact,
+});
 
 function excerpt(text: unknown): string {
   if (typeof text !== 'string') return '';
@@ -376,15 +377,15 @@ function excerpt(text: unknown): string {
 }
 
 export function describeCachedItem(item: CachedAnnotationItem): string {
-  const type = EDITOR_LABELS[item.annotationType] ?? '주석';
+  const type = editorLabels()[item.annotationType] ?? S.labelAnnotation;
   const text = excerpt(item.data.value) || excerpt(item.data.comment);
-  return text ? `${type} · ${item.pageIndex + 1}쪽 · “${text}”` : `${type} · ${item.pageIndex + 1}쪽`;
+  return text ? `${type} · ${S.pageNumber(item.pageIndex + 1)} · “${text}”` : `${type} · ${S.pageNumber(item.pageIndex + 1)}`;
 }
 
 export function describeFileAnnotation(mark: FileAnnotationSummary): string {
-  const type = SUBTYPE_LABELS[mark.subtype] ?? mark.subtype;
+  const type = subtypeLabels()[mark.subtype] ?? mark.subtype;
   const text = excerpt(mark.contents);
-  return text ? `${type} · ${mark.pageIndex + 1}쪽 · “${text}”` : `${type} · ${mark.pageIndex + 1}쪽`;
+  return text ? `${type} · ${S.pageNumber(mark.pageIndex + 1)} · “${text}”` : `${type} · ${S.pageNumber(mark.pageIndex + 1)}`;
 }
 
 // ─── Stored-row validation ───

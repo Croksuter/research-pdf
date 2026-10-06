@@ -1,5 +1,6 @@
 import { GOOGLE_DRIVE_SYNC_FILE_NAME } from '../shared/constants';
 import { CloudSyncError } from './cloudSyncError';
+import { S } from './background.strings';
 
 /**
  * A byte store over ONE file in the signed-in user's Drive `appDataFolder`.
@@ -106,13 +107,13 @@ async function decodeBody(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
       // The file is ours, but never let a corrupt object exhaust memory.
       if (total > MAX_DECOMPRESSED_BYTES) {
         await reader.cancel();
-        throw new CloudSyncError('Google Drive의 동기화 파일이 너무 큽니다.');
+        throw new CloudSyncError(S.driveFileTooLarge);
       }
       chunks.push(value);
     }
   } catch (error) {
     if (error instanceof CloudSyncError) throw error;
-    throw new CloudSyncError('Google Drive의 동기화 파일을 읽지 못했습니다.');
+    throw new CloudSyncError(S.driveReadFailed);
   }
   const merged = new Uint8Array(total);
   let offset = 0;
@@ -133,18 +134,18 @@ async function driveErrorReason(response: Response): Promise<string> {
 
 async function driveError(response: Response): Promise<CloudSyncError> {
   if (response.status === 401) {
-    return new CloudSyncError('Google 로그인이 만료되었습니다. 설정에서 Google 계정을 다시 연결하세요.');
+    return new CloudSyncError(S.authExpired);
   }
   if (response.status === 403) {
     const reason = await driveErrorReason(response);
-    if (reason === 'storageQuotaExceeded') return new CloudSyncError('Google Drive 저장 공간이 부족합니다.');
+    if (reason === 'storageQuotaExceeded') return new CloudSyncError(S.driveQuotaExceeded);
     if (reason === 'rateLimitExceeded' || reason === 'userRateLimitExceeded') {
-      return new CloudSyncError('Google Drive 요청 한도를 초과했습니다. 잠시 후 다시 시도하세요.');
+      return new CloudSyncError(S.driveRateLimited);
     }
-    return new CloudSyncError('Google Drive 접근이 거부되었습니다.');
+    return new CloudSyncError(S.driveDenied);
   }
-  if (response.status === 429) return new CloudSyncError('Google Drive 요청 한도를 초과했습니다. 잠시 후 다시 시도하세요.');
-  return new CloudSyncError(`Google Drive 요청이 실패했습니다 (HTTP ${response.status}).`);
+  if (response.status === 429) return new CloudSyncError(S.driveRateLimited);
+  return new CloudSyncError(S.driveHttpError(response.status));
 }
 
 export function createGoogleDriveStore(getToken: DriveTokenProvider, fileName: string = GOOGLE_DRIVE_SYNC_FILE_NAME) {
@@ -152,7 +153,7 @@ export function createGoogleDriveStore(getToken: DriveTokenProvider, fileName: s
     // Every request is pinned to Google's API host, including the resumable
     // session URI that comes back from the server.
     if (!url.startsWith(`${DRIVE_API}/`) && !url.startsWith(`${DRIVE_UPLOAD}/`)) {
-      throw new CloudSyncError('Google Drive 요청 주소가 올바르지 않습니다.');
+      throw new CloudSyncError(S.driveBadUrl);
     }
     for (let attempt = 0; ; attempt += 1) {
       const token = await getToken(attempt > 0);
@@ -169,9 +170,9 @@ export function createGoogleDriveStore(getToken: DriveTokenProvider, fileName: s
         });
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') {
-          throw new CloudSyncError('동기화 요청 시간이 초과되었습니다.');
+          throw new CloudSyncError(S.syncTimeout);
         }
-        throw new CloudSyncError('Google Drive에 연결하지 못했습니다.');
+        throw new CloudSyncError(S.driveUnreachable);
       } finally {
         clearTimeout(timeout);
       }
@@ -184,7 +185,7 @@ export function createGoogleDriveStore(getToken: DriveTokenProvider, fileName: s
     const response = await request(url, init, METADATA_TIMEOUT_MS);
     if (!response.ok) throw await driveError(response);
     try { return await response.json(); } catch {
-      throw new CloudSyncError('Google Drive 응답을 해석하지 못했습니다.');
+      throw new CloudSyncError(S.driveBadResponse);
     }
   }
 
@@ -247,7 +248,7 @@ export function createGoogleDriveStore(getToken: DriveTokenProvider, fileName: s
       ?? (uploadId
         ? `${DRIVE_UPLOAD}/files${fileId ? `/${fileId}` : ''}?uploadType=resumable&fields=${FILE_FIELDS}&upload_id=${encodeURIComponent(uploadId)}`
         : null);
-    if (!session) throw new CloudSyncError('Google Drive 업로드 세션을 열지 못했습니다.');
+    if (!session) throw new CloudSyncError(S.driveUploadSessionFailed);
     const finish = await request(
       session,
       { method: 'PUT', headers: { 'Content-Type': 'application/gzip' }, body: bytes },
@@ -255,7 +256,7 @@ export function createGoogleDriveStore(getToken: DriveTokenProvider, fileName: s
     );
     if (!finish.ok) throw await driveError(finish);
     const written = fileRefFromUnknown(await finish.json().catch(() => null));
-    if (!written) throw new CloudSyncError('Google Drive 업로드 결과를 확인하지 못했습니다.');
+    if (!written) throw new CloudSyncError(S.driveUploadUnverified);
     return written;
   }
 
@@ -283,7 +284,7 @@ export function createGoogleDriveStore(getToken: DriveTokenProvider, fileName: s
       const body = await json(`${DRIVE_API}/about?fields=user(permissionId,emailAddress)`);
       const user = isRecord(body) && isRecord(body.user) ? body.user : {};
       if (typeof user.permissionId !== 'string' || !user.permissionId) {
-        throw new CloudSyncError('Google 계정 정보를 확인하지 못했습니다.');
+        throw new CloudSyncError(S.accountInfoFailed);
       }
       return {
         id: user.permissionId.slice(0, 128),
@@ -309,7 +310,7 @@ export function createGoogleDriveStore(getToken: DriveTokenProvider, fileName: s
           return { kind: 'file', text, etag: driveEtag(winner.id, winner.headRevisionId) };
         }
       }
-      throw new CloudSyncError('Google Drive 파일이 계속 변경되어 읽지 못했습니다. 잠시 후 다시 시도하세요.');
+      throw new CloudSyncError(S.driveFileChanging);
     },
 
     /** One exact historical body, for clobber repair. null when Drive pruned it. */

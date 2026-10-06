@@ -43,6 +43,10 @@ import type { PdfDocIdentity, PdfDocRecord } from '../shared/pdfIdentity';
 import type { PdfLibraryUpdate } from '../shared/pdfLibrary';
 import { fitTextLayerFonts, useEmbeddedFontsForText } from './pdfViewer/textLayerFonts';
 import { placeTextLayerRuns } from './pdfViewer/textLayerPositions';
+import { localizeDocument } from '../shared/i18n';
+import { S } from './pdfViewer.strings';
+
+localizeDocument(S);
 
 const FIND_STATE_NOT_FOUND = 1;
 const FIND_STATE_PENDING = 3;
@@ -175,7 +179,7 @@ const figureCapture = new FigureCapture({
     captureBtn.setAttribute('aria-pressed', String(mode !== 'off'));
   },
 });
-captureBtn.title = `그림 복사 (${/Mac/u.test(navigator.platform) ? '⌘⇧X' : 'Ctrl+Shift+X'} · S) — 한 번: 직접 지정 · 두 번: 그림·표 자동 인식 · 세 번: 끄기 · 언제든 Alt+드래그`;
+captureBtn.title = S.captureTitle(/Mac/u.test(navigator.platform) ? '⌘⇧X' : 'Ctrl+Shift+X');
 captureBtn.addEventListener('click', () => figureCapture.cycleMode());
 // Drawings persist per document identity and come back on reopen; when the
 // file itself also carries annotations the user resolves it in a dialog.
@@ -311,7 +315,7 @@ function syncZoomSelect() {
   }
   const fitPage = value === 'page-fit';
   fitToggleBtn.querySelector('use')?.setAttribute('href', fitPage ? '#i-fit-width' : '#i-fit-page');
-  fitToggleBtn.title = fitPage ? '너비에 맞춤' : '페이지에 맞춤';
+  fitToggleBtn.title = fitPage ? S.fitToWidth : S.fitToPage;
 }
 
 function zoomBy(factor: number) {
@@ -398,8 +402,8 @@ findWord.addEventListener('change', () => dispatchFind('entirewordchange'));
 
 function renderFindStatus(state: number, matches: { current: number; total: number } | undefined) {
   findStatus.classList.toggle('is-notfound', state === FIND_STATE_NOT_FOUND);
-  if (state === FIND_STATE_PENDING) findStatus.textContent = '검색 중…';
-  else if (state === FIND_STATE_NOT_FOUND) findStatus.textContent = '없음';
+  if (state === FIND_STATE_PENDING) findStatus.textContent = S.searching;
+  else if (state === FIND_STATE_NOT_FOUND) findStatus.textContent = S.noMatches;
   else if (matches && matches.total > 0) findStatus.textContent = `${matches.current} / ${matches.total}`;
   else findStatus.textContent = '';
 }
@@ -413,7 +417,7 @@ eventBus.on('updatefindmatchescount', (evt: { matchesCount: { current: number; t
 // ─── Toolbar: download / print / menu ───
 
 function ensureDoc(): PDFDocumentProxy | null {
-  if (!currentDoc) showMessage('열린 PDF가 없습니다.');
+  if (!currentDoc) showMessage(S.noOpenPdf);
   return currentDoc;
 }
 
@@ -426,7 +430,7 @@ async function downloadCurrent() {
     const data = doc.annotationStorage.size > 0 ? await doc.saveDocument() : await doc.getData();
     downloadManager.download(data, currentFileUrl ?? '', currentFileName);
   } catch (error) {
-    showMessage(`다운로드하지 못했습니다: ${error instanceof Error ? error.message : String(error)}`);
+    showMessage(S.downloadFailed(error instanceof Error ? error.message : String(error)));
   }
 }
 downloadBtn.addEventListener('click', () => { void downloadCurrent(); });
@@ -482,7 +486,7 @@ openNativeBtn.addEventListener('click', () => {
   // navigation listener does not bounce the document straight back here.
   chrome.runtime.sendMessage({ type: 'VOCAB_T_OPEN_NATIVE_PDF', url: currentFileUrl }, (response) => {
     if (chrome.runtime.lastError || !response?.success) {
-      showMessage('기본 뷰어로 열지 못했습니다. 설정에서 PDF 뷰어 옵션을 끄고 다시 시도하세요.');
+      showMessage(S.openNativeFailed);
     }
   });
 });
@@ -666,15 +670,15 @@ document.addEventListener('drop', (e) => {
   e.preventDefault();
   const pdfs = files.filter((file) => file.type === 'application/pdf' || /\.pdf$/iu.test(file.name));
   if (pdfs.length) openLocalFiles(pdfs);
-  else showMessage('PDF 파일만 열 수 있습니다.');
+  else showMessage(S.pdfOnly);
 });
 
 // ─── Loading ───
 
 function askPassword(reason: number): Promise<string | null> {
   passwordHint.textContent = reason === PASSWORD_INCORRECT
-    ? '암호가 올바르지 않습니다. 다시 입력하세요.'
-    : '이 문서를 열려면 암호를 입력하세요.';
+    ? S.passwordWrong
+    : S.passwordPrompt;
   passwordInput.value = '';
   return new Promise((resolve) => {
     const finish = (value: string | null) => {
@@ -718,7 +722,7 @@ async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesIn
   task.onPassword = (updatePassword: (password: string) => void, reason: number) => {
     void askPassword(reason).then((password) => {
       if (password === null) {
-        showMessage('암호를 입력하지 않아 문서를 열 수 없습니다.');
+        showMessage(S.passwordCancelled);
         void task.destroy();
       } else {
         updatePassword(password);
@@ -778,8 +782,8 @@ async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesIn
 async function onRemoteUpdate(doc: PDFDocumentProxy): Promise<void> {
   debugLog('viewer', 'document updated by sync', () => ({ touched: userTouched }));
   if (userTouched) {
-    showMessage('다른 기기에서 이 문서의 필기나 읽던 위치가 바뀌었습니다.', {
-      label: '다시 불러오기',
+    showMessage(S.changedElsewhere, {
+      label: S.reload,
       onClick: () => { hideMessage(); void reopenInPlace(doc); },
     });
     return;
@@ -796,7 +800,7 @@ async function reopenInPlace(doc: PDFDocumentProxy): Promise<void> {
     const bytesInfo = currentFileUrl ? null : await inspectPdfBytes(data);
     await openDocument(pdfjsLib.getDocument({ data, ...documentOptions() }), currentLabel, bytesInfo);
   } catch (error) {
-    showMessage(`문서를 다시 불러오지 못했습니다: ${error instanceof Error ? error.message : String(error)}`);
+    showMessage(S.reloadFailed(error instanceof Error ? error.message : String(error)));
   }
 }
 
@@ -823,7 +827,7 @@ async function loadFromFile(file: File) {
     await openDocument(pdfjsLib.getDocument({ data, ...documentOptions() }), file.name, bytesInfo);
   } catch (error) {
     setProgress(null);
-    showMessage(`PDF를 열지 못했습니다: ${error instanceof Error ? error.message : String(error)}`);
+    showMessage(S.openFailed(error instanceof Error ? error.message : String(error)));
   }
 }
 
@@ -859,7 +863,7 @@ async function loadFromUrl(fileUrl: string) {
       debugLog('cache', 'opened from local copy', () => ({ url: fileUrl }));
       void revalidateCachedPdf(fileUrl, cached).then((outcome) => {
         if (outcome === 'changed' && currentDoc === doc) {
-          showMessage('서버에 이 PDF의 새 버전이 있습니다.', { label: '새 버전 열기', onClick: () => location.reload() });
+          showMessage(S.newVersion, { label: S.openNewVersion, onClick: () => location.reload() });
         }
       });
       return;
@@ -882,9 +886,9 @@ async function loadFromUrl(fileUrl: string) {
       const hostAccess = await chrome.permissions.contains({ origins: [...WEB_PDF_HOST_ORIGINS] }).catch(() => false);
       if (!hostAccess) {
         showMessage(
-          `${APP_NAME}가 이 사이트에서 PDF를 받아올 권한이 없습니다. 권한을 허용하면 이 탭을 다시 불러옵니다.`,
+          S.noSiteAccess(APP_NAME),
           {
-            label: '사이트 접근 권한 허용',
+            label: S.allowSiteAccess,
             onClick: () => {
               void chrome.permissions.request({ origins: [...WEB_PDF_HOST_ORIGINS] }).then((granted) => {
                 if (granted) location.reload();
@@ -902,14 +906,14 @@ async function loadFromUrl(fileUrl: string) {
       const fileAccess = await chrome.extension.isAllowedFileSchemeAccess();
       if (!fileAccess) {
         showMessage(
-          `${APP_NAME}가 로컬 파일을 읽을 수 없습니다. 확장 프로그램 설정에서 "파일 URL에 대한 액세스 허용"을 켠 뒤 이 탭을 새로고침하세요.`,
-          { label: '확장 프로그램 설정 열기', onClick: openExtensionSettings },
+          S.noFileAccess(APP_NAME),
+          { label: S.openExtensionSettings, onClick: openExtensionSettings },
         );
         return;
       }
     }
-    showMessage(`PDF를 열지 못했습니다: ${message}`, isFramed && !inHub ? undefined : {
-      label: '기본 뷰어로 열기',
+    showMessage(S.openFailed(message), isFramed && !inHub ? undefined : {
+      label: S.openNativeAction,
       onClick: () => openNativeBtn.click(),
     });
   }
@@ -927,8 +931,8 @@ function boot() {
   // A hub tab for a local file: the file arrives by postMessage.
   if (inHub && new URLSearchParams(location.search).get('hub') === 'file') return;
   if (!fileUrl) {
-    showMessage('열 PDF가 지정되지 않았습니다. PDF 파일을 이 창에 끌어다 놓거나 메뉴에서 "파일 열기…"를 선택하세요.', {
-      label: '파일 열기…',
+    showMessage(S.noPdfSpecified, {
+      label: S.openFile,
       onClick: () => openFileInput.click(),
     });
     return;
@@ -938,7 +942,7 @@ function boot() {
     // publisher's "view PDF" wrapper) hands it to the hub, which replaces
     // the page; anything smaller is read right here.
     void askToPromote(fileUrl).then((promoted) => {
-      if (promoted) showMessage('PDF 탭으로 여는 중…');
+      if (promoted) showMessage(S.openingInTab);
       else void loadFromUrl(fileUrl);
     });
     return;

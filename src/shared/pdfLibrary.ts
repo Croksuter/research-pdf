@@ -18,6 +18,8 @@
 // report, or a plain PDF — is what the paper strip found it to be, unless the
 // user said otherwise. The hub draws it as the document's icon.
 
+import { S } from './shared.strings';
+
 export const PDF_LIBRARY_STORAGE_KEY = 'rpdfLibrary';
 export const PDF_LIBRARY_MAX = 1_000;
 export const PDF_LIBRARY_MAX_PINNED = 100;
@@ -331,15 +333,15 @@ function safeDecode(url: string): string {
   }
 }
 
-/** "방금", "5분 전", "3시간 전", "2일 전", then a date. */
+/** "방금", "5분 전", "3시간 전", "2일 전", then a date (in the current language). */
 export function relativeTimeKo(then: number, now: number = Date.now()): string {
   const diff = Math.max(0, now - then);
   const minute = 60_000;
-  if (diff < minute) return '방금';
-  if (diff < 60 * minute) return `${Math.floor(diff / minute)}분 전`;
-  if (diff < 24 * 60 * minute) return `${Math.floor(diff / (60 * minute))}시간 전`;
-  if (diff < 7 * 24 * 60 * minute) return `${Math.floor(diff / (24 * 60 * minute))}일 전`;
+  if (diff < minute) return S.justNow;
+  if (diff < 60 * minute) return S.minutesAgo(Math.floor(diff / minute));
+  if (diff < 24 * 60 * minute) return S.hoursAgo(Math.floor(diff / (60 * minute)));
+  if (diff < 7 * 24 * 60 * minute) return S.daysAgo(Math.floor(diff / (24 * 60 * minute)));
   const date = new Date(then);
   const sameYear = date.getFullYear() === new Date(now).getFullYear();
-  return sameYear ? `${date.getMonth() + 1}월 ${date.getDate()}일` : `${date.getFullYear()}. ${date.getMonth() + 1}. ${date.getDate()}.`;
+  return sameYear ? S.dateThisYear(date.getMonth() + 1, date.getDate()) : S.dateOtherYear(date.getFullYear(), date.getMonth() + 1, date.getDate());
 }

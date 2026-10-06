@@ -6,6 +6,7 @@
 import type { CitationHistoryPoint } from '../../shared/paperIdentifiers';
 import { formatCount } from '../../shared/paperIdentifiers';
 import { el } from './dom';
+import { S } from './viewerParts.strings';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const W = 440;
@@ -36,7 +37,7 @@ function labelledYears(years: number[]): Set<number> {
 export function buildCitationChart(history: CitationHistoryPoint[]): HTMLElement {
   const wrap = el('div', { className: 'vt-chart' });
   if (history.length === 0) {
-    wrap.append(el('p', { className: 'vt-chart-empty', textContent: '연도별 인용 데이터가 없습니다.' }));
+    wrap.append(el('p', { className: 'vt-chart-empty', textContent: S.chartEmpty }));
     return wrap;
   }
   const max = Math.max(1, ...history.map((p) => p.count));
@@ -46,7 +47,7 @@ export function buildCitationChart(history: CitationHistoryPoint[]): HTMLElement
   const barW = Math.max(3, Math.min(28, slot * 0.62));
   const yOf = (count: number) => PAD.top + plotH - (count / max) * plotH;
 
-  const root = svg('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, class: 'vt-chart-svg', role: 'img', 'aria-label': '연도별 인용 수' });
+  const root = svg('svg', { viewBox: `0 0 ${W} ${H}`, width: W, height: H, class: 'vt-chart-svg', role: 'img', 'aria-label': S.chartAria });
 
   // Axes.
   root.append(svg('line', { x1: PAD.left, y1: PAD.top + plotH, x2: W - PAD.right, y2: PAD.top + plotH, class: 'vt-chart-axis' }));
@@ -81,9 +82,9 @@ export function buildCitationChart(history: CitationHistoryPoint[]): HTMLElement
     const show = () => {
       bar.classList.add('is-hover');
       readout.replaceChildren(
-        el('b', { textContent: `${point.year}년` }),
-        el('span', { textContent: ` 인용 ${formatCount(point.count)}회` }),
-        el('span', { className: 'vt-chart-cum', textContent: point.cumulative === null ? '' : ` · 누적 ${formatCount(point.cumulative)}회` }),
+        el('b', { textContent: S.chartYear(point.year) }),
+        el('span', { textContent: S.chartCitations(formatCount(point.count)) }),
+        el('span', { className: 'vt-chart-cum', textContent: point.cumulative === null ? '' : S.chartCumulative(formatCount(point.cumulative)) }),
       );
       readout.hidden = false;
       const leftPct = ((cx) / W) * 100;

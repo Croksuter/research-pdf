@@ -7,6 +7,7 @@ import {
   revokeGoogleToken,
 } from './googleAuth';
 import { DriveAccount, GoogleDriveStore, createGoogleDriveStore } from './googleDriveStore';
+import { S } from './background.strings';
 
 /**
  * The connected Google account, as each sync engine stores it: the Drive
@@ -35,7 +36,7 @@ export async function accessTokenForAccount(account: GoogleAccountRef, forceRefr
   const actual = await createGoogleDriveStore(async () => token.accessToken).account();
   if (actual.id !== account.id) {
     await revokeGoogleToken(token.accessToken);
-    throw new CloudSyncError('연결된 Google 계정과 다른 계정으로 로그인되어 있습니다. 설정에서 다시 연결하세요.');
+    throw new CloudSyncError(S.accountMismatch);
   }
   await cacheGoogleToken(account.id, token);
   return token.accessToken;

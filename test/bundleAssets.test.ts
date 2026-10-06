@@ -9,7 +9,7 @@ describe.skipIf(!existsSync(resolve(dist, 'pdfViewer.js')))('production package'
   it('contains only the viewer, its popup and settings page, the sync background, the upkeep page, PDF.js assets and the layout model', () => {
     const files = readdirSync(dist).filter((name) => !name.endsWith('.map')).sort();
     expect(files).toEqual([
-      'background.js', 'icons', 'manifest.json', 'models', 'ort', 'ort.js', 'pdf-hub.html', 'pdf-upkeep.html', 'pdf-viewer.html', 'pdfHub.css', 'pdfHub.js',
+      '_locales', 'background.js', 'icons', 'manifest.json', 'models', 'ort', 'ort.js', 'pdf-hub.html', 'pdf-upkeep.html', 'pdf-viewer.html', 'pdfHub.css', 'pdfHub.js',
       'pdfUpkeep.js', 'pdfViewer.css', 'pdfViewer.js', 'pdfjs', 'popup.css', 'popup.html', 'popup.js', 'settings.css', 'settings.html',
       'settings.js', 'tokens.css',
     ]);

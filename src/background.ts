@@ -32,27 +32,30 @@ import {
   syncPdfNow,
 } from './background/pdfSyncService';
 import { updatePdfLibrary } from './background/pdfLibraryStore';
+import { followStoredLanguage } from './shared/i18n';
+import { S } from './background/background.strings';
 
 initDebugLogging();
+followStoredLanguage();
 
 const messageHandlers: Record<string, MessageHandler> = {
   ...pdfMessageHandlers,
   VOCAB_T_GET_CLOUD_SYNC_STATUS: (m) => parseGetCloudSyncStatusRequest(m)
     ? getPdfSyncStatus()
-    : { success: false, error: '동기화 상태 요청 형식이 올바르지 않습니다.' },
+    : { success: false, error: S.badSyncStatusRequest },
   VOCAB_T_SYNC_CLOUD_NOW: (m) => parseSyncCloudNowRequest(m)
     ? syncPdfNow()
-    : { success: false, error: '동기화 요청 형식이 올바르지 않습니다.' },
+    : { success: false, error: S.badSyncRequest },
   // Account changes come from this extension's own pages only.
   VOCAB_T_CONNECT_GOOGLE_SYNC: (m, sender) => parseConnectGoogleSyncRequest(m) && isExtensionPageSender(sender)
     ? connectPdfSyncGoogle()
-    : { success: false, error: 'Google 연결 요청 형식이 올바르지 않습니다.' },
+    : { success: false, error: S.badConnectRequest },
   VOCAB_T_DISCONNECT_GOOGLE_SYNC: (m, sender) => parseDisconnectGoogleSyncRequest(m) && isExtensionPageSender(sender)
     ? disconnectPdfSyncGoogle()
-    : { success: false, error: 'Google 연결 해제 요청 형식이 올바르지 않습니다.' },
+    : { success: false, error: S.badDisconnectRequest },
   VOCAB_T_SET_PDF_SYNC_ENABLED: async (m, sender) => {
     const request = parseSetPdfSyncEnabledRequest(m);
-    if (!request || !isExtensionPageSender(sender)) return { success: false, error: '동기화 설정 요청 형식이 올바르지 않습니다.' };
+    if (!request || !isExtensionPageSender(sender)) return { success: false, error: S.badSyncSettingRequest };
     return { success: true, status: await setPdfSyncEnabled(request.enabled) };
   },
   // An `open` pull answers with the documents it changed (the viewer has
@@ -60,7 +63,7 @@ const messageHandlers: Record<string, MessageHandler> = {
   // push a little later.
   VOCAB_T_PDF_SYNC_HINT: async (m, sender) => {
     const request = parsePdfSyncHintRequest(m);
-    if (!request || !isExtensionPageSender(sender)) return { success: false, error: '동기화 힌트 형식이 올바르지 않습니다.' };
+    if (!request || !isExtensionPageSender(sender)) return { success: false, error: S.badSyncHint };
     if (request.reason === 'open') return { success: true, ...(await pullPdfSyncForOpen()) };
     requestPdfSyncSoon();
     return { success: true };
@@ -68,7 +71,7 @@ const messageHandlers: Record<string, MessageHandler> = {
   // Opens and detected titles from viewer frames, pins from the hub.
   VOCAB_T_PDF_LIBRARY_UPDATE: async (m, sender) => {
     const request = parsePdfLibraryUpdateRequest(m);
-    if (!request || !isExtensionPageSender(sender)) return { success: false, error: '라이브러리 요청 형식이 올바르지 않습니다.' };
+    if (!request || !isExtensionPageSender(sender)) return { success: false, error: S.badLibraryRequest };
     if (await updatePdfLibrary(request.update)) requestPdfSyncSoon();
     return { success: true };
   },

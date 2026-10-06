@@ -32,6 +32,7 @@ import {
 import { stableJson } from '../shared/threeWayMerge';
 import { mergeIntoPdfLibrary, readPdfLibrary } from './pdfLibraryStore';
 import { mergeIntoPdfProjects, readPdfProjectFolders, readPdfProjects } from './pdfProjectStore';
+import { S } from './background.strings';
 
 export const PDF_SYNC_CONFIG_SETTING_KEY = 'researchPdfSyncConfig';
 export const PDF_SYNC_STATE_SETTING_KEY = 'researchPdfSyncState';
@@ -75,7 +76,7 @@ export type PdfSyncResult =
 
 class StaleConfigError extends CloudSyncError {
   constructor() {
-    super('동기화 중 Google 계정 연결이 바뀌어 이전 결과를 적용하지 않았습니다.');
+    super(S.accountChangedDuringSync);
     this.name = 'StaleConfigError';
   }
 }
@@ -303,10 +304,10 @@ function parseRemote(text: string): PdfSyncSnapshot {
   try {
     raw = JSON.parse(text);
   } catch {
-    throw new CloudSyncError('Google Drive의 동기화 파일이 유효한 ResearchPDF 문서가 아닙니다.');
+    throw new CloudSyncError(S.syncFileInvalid);
   }
   const snapshot = parsePdfSyncSnapshot(raw);
-  if (!snapshot) throw new CloudSyncError('Google Drive의 동기화 파일을 이 버전에서 읽을 수 없습니다.');
+  if (!snapshot) throw new CloudSyncError(S.syncFileTooNew);
   return snapshot;
 }
 
@@ -315,13 +316,13 @@ function storeFor(config: PdfSyncConfig): GoogleDriveStore {
 }
 
 function assertReady(config: PdfSyncConfig): void {
-  if (!isGoogleSyncConfigured()) throw new CloudSyncError('이 빌드에는 Google 동기화가 구성되어 있지 않습니다.');
-  if (!config.googleAccountId) throw new CloudSyncError('설정에서 Google 계정을 먼저 연결하세요.');
-  if (!config.enabled) throw new CloudSyncError('클라우드 동기화가 꺼져 있습니다.');
+  if (!isGoogleSyncConfigured()) throw new CloudSyncError(S.syncNotConfigured);
+  if (!config.googleAccountId) throw new CloudSyncError(S.connectAccountFirst);
+  if (!config.enabled) throw new CloudSyncError(S.syncTurnedOff);
 }
 
 function safeError(error: unknown): string {
-  return error instanceof CloudSyncError ? error.message : '클라우드 동기화에 실패했습니다.';
+  return error instanceof CloudSyncError ? error.message : S.syncFailed;
 }
 
 // ─── Sync run ───
@@ -382,7 +383,7 @@ async function performSync(): Promise<PdfSyncResult> {
       debugLog('sync', `drive write ${written.kind}`, () => ({ attempt }));
       if (written.kind === 'precondition-failed') {
         if (preconditionRetries >= MAX_PRECONDITION_RETRIES) {
-          throw new CloudSyncError('다른 기기와 동시에 동기화되어 충돌했습니다. 다시 시도하세요.');
+          throw new CloudSyncError(S.syncConflict);
         }
         preconditionRetries += 1;
         continue;
@@ -391,7 +392,7 @@ async function performSync(): Promise<PdfSyncResult> {
         await assertConfigCurrent(config, generation);
         await saveState({ repair: written.clobber });
         if (clobberRepairRetries >= MAX_CLOBBER_REPAIR_RETRIES) {
-          throw new CloudSyncError('다른 기기와 동시에 동기화되어 충돌했습니다. 다시 시도하세요.');
+          throw new CloudSyncError(S.syncConflict);
         }
         clobberRepairRetries += 1;
         continue;

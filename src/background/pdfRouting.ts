@@ -41,6 +41,7 @@ import { claimPdfHub, movePdfToProject, noteTopLevelCommit, openPdfProject, prom
 import { updatePdfProjectFolders, updatePdfProjects } from './pdfProjectStore';
 import { isExtensionPageSender } from './messageDispatcher';
 import { requestPdfSyncSoon } from './pdfSyncService';
+import { S } from './background.strings';
 
 // ─── PDF viewer routing ───
 //
@@ -183,10 +184,10 @@ async function nativeTargetTab(sender: chrome.runtime.MessageSender): Promise<nu
 async function openNativePdf(url: string, sender: chrome.runtime.MessageSender): Promise<Record<string, unknown>> {
   const isWeb = isWebPdfSourceUrl(url);
   if (!isWeb && !(await isFileSchemeAccessAllowed())) {
-    return { success: false, error: '파일 URL 액세스가 꺼져 있어 로컬 파일로 이동할 수 없습니다.' };
+    return { success: false, error: S.fileAccessOff };
   }
   const tabId = await nativeTargetTab(sender).catch(() => null);
-  if (tabId === null) return { success: false, error: '탭 정보를 찾을 수 없습니다.' };
+  if (tabId === null) return { success: false, error: S.tabNotFound };
   nativePdfBypassTabs.add(tabId);
   if (isWeb) {
     try {
@@ -268,7 +269,7 @@ async function recordHubState(
   sender: chrome.runtime.MessageSender,
 ): Promise<Record<string, unknown>> {
   const tab = sender.tab;
-  if (!tab || typeof tab.id !== 'number' || sender.frameId !== 0) return { success: false, error: '탭 정보를 찾을 수 없습니다.' };
+  if (!tab || typeof tab.id !== 'number' || sender.frameId !== 0) return { success: false, error: S.tabNotFound };
   const records = await readViewerTabs();
   if (request.urls.length === 0) {
     delete records[String(tab.id)];
@@ -371,24 +372,24 @@ export const pdfMessageHandlers: Record<string, PdfMessageHandler> = {
     const request = parseOpenNativePdfRequest(m);
     return request
       ? openNativePdf(request.url, sender)
-      : { success: false, error: '기본 PDF 뷰어 열기 요청 형식이 올바르지 않습니다.' };
+      : { success: false, error: S.badOpenDefaultViewerRequest };
   },
   VOCAB_T_PDF_HUB_CLAIM: (m, sender) => {
     const request = parsePdfHubClaimRequest(m);
     return request && isHubPageSender(sender)
       ? claimPdfHub(request, sender)
-      : { success: false, error: 'PDF 탭 요청 형식이 올바르지 않습니다.' };
+      : { success: false, error: S.badPdfTabRequest };
   },
   VOCAB_T_PDF_HUB_STATE: (m, sender) => {
     const request = parsePdfHubStateRequest(m);
     return request && isHubPageSender(sender)
       ? recordHubState(request, sender)
-      : { success: false, error: 'PDF 탭 상태 형식이 올바르지 않습니다.' };
+      : { success: false, error: S.badPdfTabState };
   },
   VOCAB_T_PDF_EMBED_PROMOTE: async (m, sender) => {
     const request = parsePdfEmbedPromoteRequest(m);
     if (!request || !isExtensionPageSender(sender) || !(sender.url ?? '').startsWith(chrome.runtime.getURL(PDF_VIEWER_PAGE))) {
-      return { success: false, error: '요청 형식이 올바르지 않습니다.' };
+      return { success: false, error: S.badRequest };
     }
     return { success: true, promoted: await promoteEmbeddedPdf(request, sender) };
   },
@@ -396,7 +397,7 @@ export const pdfMessageHandlers: Record<string, PdfMessageHandler> = {
   VOCAB_T_PDF_SHOW_SETTINGS: (_m, sender) => (isExtensionPageSender(sender) ? showPdfSettings() : { success: false }),
   VOCAB_T_PDF_PROJECT_UPDATE: async (m, sender) => {
     const request = parsePdfProjectUpdateRequest(m);
-    if (!request || !isHubPageSender(sender)) return { success: false, error: '프로젝트 요청 형식이 올바르지 않습니다.' };
+    if (!request || !isHubPageSender(sender)) return { success: false, error: S.badProjectRequest };
     const { update } = request;
     const changed = update.kind === 'folder-create' || update.kind === 'folder-rename' || update.kind === 'folder-delete' || update.kind === 'arrange'
       ? await updatePdfProjectFolders(update)
@@ -408,21 +409,21 @@ export const pdfMessageHandlers: Record<string, PdfMessageHandler> = {
     const request = parsePdfProjectOpenRequest(m);
     return request && isHubPageSender(sender)
       ? openPdfProject(request.project, sender, request.inPlace)
-      : { success: false, error: '프로젝트 열기 요청 형식이 올바르지 않습니다.' };
+      : { success: false, error: S.badOpenProjectRequest };
   },
   VOCAB_T_PDF_PROJECT_MOVE: async (m, sender) => {
     const request = parsePdfProjectMoveRequest(m);
-    if (!request || !isHubPageSender(sender)) return { success: false, error: '프로젝트 이동 요청 형식이 올바르지 않습니다.' };
+    if (!request || !isHubPageSender(sender)) return { success: false, error: S.badMoveProjectRequest };
     const result = await movePdfToProject(request);
     if (result.success) requestPdfSyncSoon();
     return result;
   },
   VOCAB_T_RESTORE_VIEWER_TABS: async (m) => {
-    if (!parseRestoreViewerTabsRequest(m)) return { success: false, error: '뷰어 탭 복구 요청 형식이 올바르지 않습니다.' };
+    if (!parseRestoreViewerTabsRequest(m)) return { success: false, error: S.badRestoreTabsRequest };
     return { success: true, ...(await restoreViewerTabs()) };
   },
   VOCAB_T_SYNC_WEB_PDF_ROUTING: async (m) => {
-    if (!parseSyncWebPdfRoutingRequest(m)) return { success: false, error: '웹 PDF 라우팅 동기화 요청 형식이 올바르지 않습니다.' };
+    if (!parseSyncWebPdfRoutingRequest(m)) return { success: false, error: S.badSyncWebRoutingRequest };
     return { success: true, ...(await syncWebPdfRouting()) };
   },
 };

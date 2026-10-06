@@ -1,5 +1,6 @@
 import { GOOGLE_DRIVE_APPDATA_SCOPE, GOOGLE_OAUTH_CLIENT_ID } from '../shared/constants';
 import { CloudSyncError } from './cloudSyncError';
+import { S } from './background.strings';
 
 /**
  * Google sign-in for Drive sync.
@@ -109,7 +110,7 @@ export function parseGoogleAuthRedirect(
   now: number = Date.now(),
 ): GoogleAccessToken {
   if (!responseUrl || !responseUrl.startsWith(expected.redirectUri)) {
-    throw new GoogleAuthError('failed', 'Google 로그인 응답이 올바르지 않습니다.');
+    throw new GoogleAuthError('failed', S.authBadResponse);
   }
   let params: URLSearchParams;
   try {
@@ -117,22 +118,22 @@ export function parseGoogleAuthRedirect(
     // Implicit flow answers in the fragment; an error may arrive in the query.
     params = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : url.search);
   } catch {
-    throw new GoogleAuthError('failed', 'Google 로그인 응답이 올바르지 않습니다.');
+    throw new GoogleAuthError('failed', S.authBadResponse);
   }
   // Check state before anything else: a response that is not bound to the
   // request this extension started is never trusted, not even its error code.
   if (params.get('state') !== expected.state) {
-    throw new GoogleAuthError('failed', 'Google 로그인 응답을 검증하지 못했습니다.');
+    throw new GoogleAuthError('failed', S.authVerifyFailed);
   }
   const error = params.get('error');
   if (error) {
     if (INTERACTION_ERRORS.has(error)) {
-      throw new GoogleAuthError('interaction-required', 'Google 로그인이 만료되었습니다. 설정에서 Google 계정을 다시 연결하세요.');
+      throw new GoogleAuthError('interaction-required', S.authExpired);
     }
     if (error === 'access_denied') {
-      throw new GoogleAuthError('denied', 'Google 계정 접근이 허용되지 않았습니다.');
+      throw new GoogleAuthError('denied', S.authDenied);
     }
-    throw new GoogleAuthError('failed', 'Google 로그인에 실패했습니다.');
+    throw new GoogleAuthError('failed', S.authFailed);
   }
   const accessToken = params.get('access_token') ?? '';
   const tokenType = (params.get('token_type') ?? '').toLowerCase();
@@ -140,11 +141,11 @@ export function parseGoogleAuthRedirect(
   const scopes = (params.get('scope') ?? '').split(/\s+/u);
   if (!accessToken || accessToken.length > MAX_TOKEN_CHARS || tokenType !== 'bearer'
     || !Number.isFinite(expiresIn) || expiresIn <= 0) {
-    throw new GoogleAuthError('failed', 'Google 로그인 응답이 올바르지 않습니다.');
+    throw new GoogleAuthError('failed', S.authBadResponse);
   }
   // Granular consent lets a user untick a scope; without it sync cannot work.
   if (!scopes.includes(GOOGLE_DRIVE_APPDATA_SCOPE)) {
-    throw new GoogleAuthError('denied', 'Google Drive 앱 데이터 접근 권한이 허용되지 않았습니다.');
+    throw new GoogleAuthError('denied', S.authDriveDenied);
   }
   return { accessToken, expiresAt: now + expiresIn * 1_000 };
 }
@@ -163,7 +164,7 @@ async function postForm(url: string, fields: Record<string, string>): Promise<Re
       cache: 'no-store',
     });
   } catch {
-    throw new GoogleAuthError('failed', 'Google 인증 서버에 연결하지 못했습니다.');
+    throw new GoogleAuthError('failed', S.authServerUnreachable);
   } finally {
     clearTimeout(timeout);
   }
@@ -172,13 +173,13 @@ async function postForm(url: string, fields: Record<string, string>): Promise<Re
 /** Confirm with Google that the token was issued to THIS client for our scope. */
 async function verifyTokenAudience(token: GoogleAccessToken, clientId: string): Promise<void> {
   const response = await postForm(TOKENINFO_ENDPOINT, { access_token: token.accessToken });
-  if (!response.ok) throw new GoogleAuthError('failed', 'Google 토큰을 검증하지 못했습니다.');
+  if (!response.ok) throw new GoogleAuthError('failed', S.tokenVerifyFailed);
   let info: unknown;
   try { info = await response.json(); } catch { info = null; }
   const record = info && typeof info === 'object' ? info as Record<string, unknown> : {};
   const scopes = typeof record.scope === 'string' ? record.scope.split(/\s+/u) : [];
   if (record.aud !== clientId || !scopes.includes(GOOGLE_DRIVE_APPDATA_SCOPE)) {
-    throw new GoogleAuthError('failed', 'Google 토큰을 검증하지 못했습니다.');
+    throw new GoogleAuthError('failed', S.tokenVerifyFailed);
   }
 }
 
@@ -191,7 +192,7 @@ export async function requestGoogleAccessToken(options: {
   loginHint?: string;
 }): Promise<GoogleAccessToken> {
   if (!isGoogleSyncConfigured()) {
-    throw new GoogleAuthError('not-configured', '이 빌드에는 Google 동기화가 구성되어 있지 않습니다.');
+    throw new GoogleAuthError('not-configured', S.syncNotConfigured);
   }
   const clientId = googleClientId();
   const redirectUri = googleRedirectUri();
@@ -214,8 +215,8 @@ export async function requestGoogleAccessToken(options: {
     // Chrome rejects both for a closed window and for a silent flow that needed
     // UI. The rejection text is not a stable API, so classify by mode only.
     throw options.interactive
-      ? new GoogleAuthError('cancelled', 'Google 로그인이 취소되었습니다.')
-      : new GoogleAuthError('interaction-required', 'Google 로그인이 만료되었습니다. 설정에서 Google 계정을 다시 연결하세요.');
+      ? new GoogleAuthError('cancelled', S.authCancelled)
+      : new GoogleAuthError('interaction-required', S.authExpired);
   }
   const token = parseGoogleAuthRedirect(responseUrl, { redirectUri, state });
   await verifyTokenAudience(token, clientId);
