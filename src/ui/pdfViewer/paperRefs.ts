@@ -10,21 +10,18 @@
 import { debugLog } from '../../shared/debugLog';
 import { formatCount, titleSimilarity } from '../../shared/paperIdentifiers';
 import type { PdfReference } from '../../shared/pdfReferences';
-import { isOpenAlexUrl, noteOpenAlex429, openAlexBudgetSpent, openAlexUrl } from './openAlexAccess';
+import { openAlexBudgetSpent } from './openAlexAccess';
 import { el } from './dom';
 import { readPaperCache, writePaperCache } from './paperCache';
+import { OPENALEX, REF_WORK_SELECT as WORK_SELECT, SEMANTIC_SCHOLAR, fetchJson as fetchWith, newLookup } from './paperSources';
 import { S } from './paper.strings';
 
-const OPENALEX = 'https://api.openalex.org';
-const SEMANTIC_SCHOLAR = 'https://api.semanticscholar.org/graph/v1';
 const S2_PAGE = 500;
 const S2_MAX = 1_000;
 const BATCH = 50;
 const BATCH_GAP_MS = 350;
 const MAX_REFS = 400;
 const CACHE_PREFIX = 'refs:v2:';
-const FETCH_TIMEOUT_MS = 12_000;
-const WORK_SELECT = 'id,display_name,publication_year,cited_by_count,doi,primary_location,authorships';
 // Linking the PDF's own list: titles are searched one by one, politely, and
 // at most this many each time the list is opened (OpenAlex's free daily
 // budget is shared by everyone behind the same address).
@@ -66,25 +63,10 @@ interface RefWork {
 
 type Status = 'idle' | 'loading' | 'done' | 'failed';
 
-async function fetchJson<T>(url: string, headers?: Record<string, string>): Promise<T | null> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const openAlex = isOpenAlexUrl(url);
-    if (openAlex && openAlexBudgetSpent()) return null;
-    const res = await fetch(openAlex ? openAlexUrl(url) : url, { signal: ctrl.signal, headers });
-    if (res.status === 429 && openAlex && noteOpenAlex429(await res.clone().text().catch(() => ''))) return null;
-    if (res.status === 429) {
-      await new Promise((r) => setTimeout(r, 2_000));
-      const again = await fetch(openAlex ? openAlexUrl(url) : url, { signal: ctrl.signal, headers });
-      return again.ok ? await again.json() as T : null;
-    }
-    return res.ok ? await res.json() as T : null;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+// One 2 s retry on a 429. The list's own lookups are not reported anywhere,
+// so each request gets a context of its own.
+function fetchJson<T>(url: string, headers?: Record<string, string>): Promise<T | null> {
+  return fetchWith<T>(newLookup(), url, undefined, [2_000], headers);
 }
 
 function shortId(id: string): string {
