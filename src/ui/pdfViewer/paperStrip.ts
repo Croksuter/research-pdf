@@ -756,6 +756,57 @@ async function writeCache(key: string, meta: PaperMeta): Promise<void> {
   }
 }
 
+// ─── Without the strip (background upkeep, ui/pdfUpkeep.ts) ───
+
+/** What a document says about itself, and the cache key a lookup goes under. */
+export interface PaperEvidence {
+  ids: PaperIdentifiers;
+  titles: string[];
+  evidence: DocumentEvidence;
+  key: string | null;
+  /** The PDF's own Title metadata, when it names something. */
+  docTitle: string | null;
+}
+
+export function paperCacheKey(ids: PaperIdentifiers, titles: readonly string[]): string | null {
+  return ids.doi ?? (ids.arxivId ? `arxiv:${ids.arxivId}` : titles[0] ? `title:${normalizeTitle(titles[0])}` : null);
+}
+
+export async function paperEvidence(doc: PDFDocumentProxy, sourceUrl: string | null): Promise<PaperEvidence> {
+  const [fromMeta, page] = await Promise.all([metadataIdentifiers(doc), firstPageText(doc)]);
+  const ids = mergeIdentifiers(sourceUrl ? identifiersFromUrl(sourceUrl) : {}, fromMeta.ids, identifiersFromText(page.text));
+  const titles = [fromMeta.title, page.bigTitle].filter((t): t is string => !!t && !isGenericTitle(t));
+  const docTitle = fromMeta.title && !isGenericTitle(fromMeta.title) ? fromMeta.title : null;
+  return { ids, titles, evidence: { titles, pageText: page.text }, key: paperCacheKey(ids, titles), docTitle };
+}
+
+/** Whether lookups are on, with the user's API keys applied. */
+export async function loadPaperSettings(): Promise<boolean> {
+  s2ApiKey = (await getSetting<string>(SEMANTIC_SCHOLAR_API_KEY_SETTING_KEY, '')).trim();
+  setOpenAlexApiKey(await getSetting<string>(OPENALEX_API_KEY_SETTING_KEY, ''));
+  return getSetting(PAPER_INFO_ENABLED_SETTING_KEY, DEFAULT_PAPER_INFO_ENABLED);
+}
+
+export function cachedPaperMeta(key: string): Promise<PaperMeta | null> {
+  return readCache(key).then((meta) => (meta ? tidyPaperMeta(meta) : null));
+}
+
+/**
+ * Resolves and enriches like the strip, shows nothing, and caches the result
+ * as the strip would. `limited`: no answer because of a rate limit, a spent
+ * budget or a network failure — worth trying again later, not now.
+ */
+export async function lookupPaperQuietly(found: PaperEvidence): Promise<{ meta: PaperMeta | null; limited: boolean }> {
+  networkFailures = 0;
+  lastRateLimited = false;
+  const primary = await resolvePrimary(found.ids, found.titles, found.evidence);
+  if (!primary) return { meta: null, limited: networkFailures > 0 || openAlexBudgetSpent() || lastRateLimited };
+  const raw = await enrich(primary);
+  const meta = tidyPaperMeta(raw);
+  if (found.key && !s2Unavailable.has(raw) && !openAlexBudgetSpent()) await writeCache(found.key, meta);
+  return { meta, limited: false };
+}
+
 // ─── UI ───
 
 export class PaperStrip {
@@ -846,18 +897,13 @@ export class PaperStrip {
     this.meta = null;
     this.bibtexCache = null;
     try {
-      if (!(await getSetting(PAPER_INFO_ENABLED_SETTING_KEY, DEFAULT_PAPER_INFO_ENABLED))) {
+      if (!(await loadPaperSettings())) {
         debugLog('paper', 'paper info disabled by setting');
         return;
       }
-      s2ApiKey = (await getSetting<string>(SEMANTIC_SCHOLAR_API_KEY_SETTING_KEY, '')).trim();
-      setOpenAlexApiKey(await getSetting<string>(OPENALEX_API_KEY_SETTING_KEY, ''));
-      const [fromMeta, page] = await Promise.all([metadataIdentifiers(doc), firstPageText(doc)]);
+      const { ids, titles, evidence } = await paperEvidence(doc, sourceUrl);
       if (gen !== this.generation) return;
-      const ids = mergeIdentifiers(sourceUrl ? identifiersFromUrl(sourceUrl) : {}, fromMeta.ids, identifiersFromText(page.text));
-      const titles = [fromMeta.title, page.bigTitle].filter((t): t is string => !!t && !isGenericTitle(t));
-      const evidence = { titles, pageText: page.text };
-      debugLog('paper', 'detection', () => ({ ids, titles, textSample: page.text.slice(0, 160) }));
+      debugLog('paper', 'detection', () => ({ ids, titles, textSample: evidence.pageText.slice(0, 160) }));
       if (!ids.doi && !ids.arxivId && titles.length === 0) {
         this.renderStatus('none', '논문으로 인식되지 않았습니다.', '첫 페이지와 문서 정보에서 DOI·arXiv ID·제목을 찾지 못했습니다.');
         return;
@@ -865,7 +911,7 @@ export class PaperStrip {
       const what = ids.doi ? `DOI ${ids.doi}` : ids.arxivId ? `arXiv:${ids.arxivId}` : `제목 "${titles[0].length > 60 ? `${titles[0].slice(0, 60).trimEnd()}…` : titles[0]}"`;
       this.renderStatus('loading', `${what} 조회 중…`);
 
-      const key = ids.doi ?? (ids.arxivId ? `arxiv:${ids.arxivId}` : `title:${normalizeTitle(titles[0])}`);
+      const key = paperCacheKey(ids, titles) as string;
       if (fresh) await dropCache(key);
       const cached = fresh ? null : await readCache(key);
       if (cached) {

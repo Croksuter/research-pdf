@@ -148,6 +148,15 @@ of ten colors) and its place in the list (folder + order key). Folders are
   technical) and the user's override (`userKind`, also "일반 PDF"; latest
   choice wins a merge). Tabs and home rows draw it as the document's icon;
   the tab menu and a right click on a home row change it.
+- **Upkeep** (`shared/pdfUpkeep.ts`, `ui/pdfUpkeep.ts`): rows an older build
+  left without what opening now derives (today: the kind) are revisited once
+  per upkeep version, from a hidden frame a hub loads 20 s after it settled,
+  and only when such rows exist. Cheapest source first: the paper-lookup
+  cache, then the PDF from the local file cache or a local file (never
+  downloaded again), then the databases as the strip asks them, 3 s apart and
+  only with paper info on; a rate limit or network failure ends the run. Done
+  rows are recorded per device (`rpdfUpkeep`, not synced); one hub runs it at
+  a time (Web Lock `rpdf-upkeep`).
 
 ## Paper strip
 

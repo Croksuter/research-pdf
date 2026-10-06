@@ -76,6 +76,7 @@ import {
   type PdfProjectUpdate,
 } from '../shared/pdfProjects';
 import { compareOrderKeys, orderKeyAtEnd, orderKeyBetween, orderKeysBetween } from '../shared/orderKey';
+import { PDF_UPKEEP_DONE_MESSAGE, PDF_UPKEEP_PAGE, PDF_UPKEEP_STORAGE_KEY, parsePdfUpkeepState, rowsNeedingUpkeep } from '../shared/pdfUpkeep';
 import { PDF_DOC_STATE_STORAGE_KEY, parsePdfDocRecords, type PdfDocRecords } from '../shared/pdfIdentity';
 import {
   PDF_LIBRARY_STORAGE_KEY,
@@ -2273,6 +2274,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
+// ─── Upkeep: library rows an older build left incomplete ───
+//
+// Once the hub has settled, and only if some rows need it, a hidden frame
+// (ui/pdfUpkeep.ts) brings them up to date one at a time; it says when it is
+// done and goes away. Another hub already running it makes this one's a no-op.
+
+const UPKEEP_DELAY_MS = 20_000;
+const UPKEEP_MAX_MS = 15 * 60_000;
+let upkeepFrame: HTMLIFrameElement | null = null;
+
+function endUpkeep(): void {
+  upkeepFrame?.remove();
+  upkeepFrame = null;
+}
+
+async function startUpkeep(): Promise<void> {
+  if (upkeepFrame || !isHub) return;
+  const stored = await chrome.storage.local.get(PDF_UPKEEP_STORAGE_KEY).catch(() => ({} as Record<string, unknown>));
+  if (rowsNeedingUpkeep(library, parsePdfUpkeepState(stored[PDF_UPKEEP_STORAGE_KEY])).length === 0) return;
+  upkeepFrame = el('iframe', { src: PDF_UPKEEP_PAGE, hidden: true, tabIndex: -1 });
+  upkeepFrame.setAttribute('aria-hidden', 'true');
+  document.body.append(upkeepFrame);
+  setTimeout(endUpkeep, UPKEEP_MAX_MS);
+}
+
+function scheduleUpkeep(): void {
+  setTimeout(() => {
+    const idle = (window as unknown as { requestIdleCallback?: (run: () => void, options?: { timeout: number }) => void }).requestIdleCallback;
+    if (idle) idle(() => { void startUpkeep(); }, { timeout: 10_000 });
+    else void startUpkeep();
+  }, UPKEEP_DELAY_MS);
+}
+
+window.addEventListener('message', (e) => {
+  if (upkeepFrame && e.source === upkeepFrame.contentWindow && e.data === PDF_UPKEEP_DONE_MESSAGE) endUpkeep();
+});
+
 // ─── Boot ───
 
 // Whether this tab has a page to go back to. `navigation.canGoBack` only sees
@@ -2331,6 +2369,7 @@ async function boot(): Promise<void> {
   const handedOver = response?.docs ?? [];
   if (handedOver.length) addDocs(handedOver.map((doc) => ({ ...doc, file: null })), true);
   render();
+  scheduleUpkeep();
 }
 
 void boot();
