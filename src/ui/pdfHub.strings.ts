@@ -181,6 +181,11 @@ export const S = messages({
     removedFromProject: '이 프로젝트에서 뺐습니다.',
     projectDeleted: '프로젝트가 삭제되어 이 탭은 기본 프로젝트가 되었습니다.',
     movedToPdfTab: 'PDF 탭으로 옮겼습니다.',
+    gatherBanner: (n: number) => `Chrome 기본 뷰어에 열린 PDF가 ${n}개 있습니다.`,
+    gatherHere: '이 프로젝트로 모으기',
+    gatherDismiss: '닫기',
+    gathered: (n: number) => `PDF ${n}개를 이 탭으로 모았습니다.`,
+    gatherMore: (n: number) => `외 ${n}개`,
   },
   en: {
     // Strip and static page
@@ -361,5 +366,10 @@ export const S = messages({
     removedFromProject: 'Removed from this project.',
     projectDeleted: 'The project was deleted, so this tab is now in the default project.',
     movedToPdfTab: 'Moved to the PDF tab.',
+    gatherBanner: (n: number) => `${n} PDF${n === 1 ? ' is' : 's are'} open in Chrome’s own viewer.`,
+    gatherHere: 'Gather into this project',
+    gatherDismiss: 'Dismiss',
+    gathered: (n: number) => `Gathered ${n} PDF${n === 1 ? '' : 's'} into this tab.`,
+    gatherMore: (n: number) => `and ${n} more`,
   },
 });

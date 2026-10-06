@@ -990,3 +990,21 @@ body.is-dropping .rpdf-frames { box-shadow: inset 0 0 0 3px var(--hub-accent); }
 }
 .rpdf-selbar-btn:hover { background: rgba(255, 255, 255, 0.12); }
 .rpdf-selbar-btn:focus-visible { outline: 2px solid var(--hub-accent); outline-offset: 1px; }
+
+/* ── PDFs open in Chrome's own viewer, offered on home ── */
+.rpdf-gather {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 12px 12px 12px 16px;
+  border: 1px solid rgba(138, 180, 248, 0.35);
+  border-radius: 12px;
+  background: rgba(138, 180, 248, 0.08);
+}
+.rpdf-gather > svg { flex: none; width: 20px; height: 20px; fill: none; stroke: var(--hub-accent); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.rpdf-gather-text { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.rpdf-gather-text strong { font-size: 13.5px; font-weight: 600; }
+.rpdf-gather-text span { overflow: hidden; color: var(--hub-muted); font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
+.rpdf-gather .rpdf-primary { height: 32px; }
+.rpdf-gather .rpdf-item-act { opacity: 1; }

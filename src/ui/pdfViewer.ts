@@ -498,7 +498,14 @@ eventBus.on('pagesinit', () => {
   const hash = location.hash.slice(1);
   const restore = pendingRestore;
   pendingRestore = null;
-  if (hash) {
+  const params = new URLSearchParams(hash);
+  const zoomOnly = !!hash && [...params.keys()].every((k) => k === 'zoom') && /^\d+(?:\.\d+)?$/u.test(params.get('zoom') ?? '');
+  if (zoomOnly) {
+    // Only a zoom (a PDF gathered from Chrome's viewer): the remembered page
+    // still applies, at that zoom.
+    if (restore?.page && restore.page <= pdfViewer.pagesCount) pdfViewer.currentPageNumber = restore.page;
+    pdfViewer.currentScaleValue = String(Number(params.get('zoom')) / 100);
+  } else if (hash) {
     // An explicit `#page=…` (link, tab restore after reload) wins over the
     // remembered position.
     linkService.setHash(hash);

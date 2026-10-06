@@ -164,6 +164,12 @@ export const S = messages({
     privacy: '개인정보처리방침',
     feedback: '문의·버그 제보',
     webStore: 'Chrome 웹 스토어',
+    gatherTitle: '열려 있는 PDF 모으기',
+    gatherSub: 'Chrome 기본 뷰어로 열려 있는 PDF를 이 PDF 탭으로 옮기고 원래 탭을 닫습니다. 확대 배율은 함께 가져오고, 스크롤 위치는 Chrome이 다른 확장에 알려 주지 않아 읽던 위치 기록이 있을 때만 이어집니다.',
+    gatherButton: '모으기',
+    gatherNone: '모을 PDF 탭이 없습니다.',
+    gatherNeedsAccess: '모을 PDF 탭이 없습니다. 웹 PDF를 찾으려면 위의 "웹 PDF도 ResearchPDF로 열기"를 켜세요.',
+    gatherDone: (n: number) => `PDF ${n}개를 모았습니다.`,
   },
   en: {
     // ── Page and navigation ──
@@ -327,5 +333,11 @@ export const S = messages({
     privacy: 'Privacy policy',
     feedback: 'Feedback and bug reports',
     webStore: 'Chrome Web Store',
+    gatherTitle: 'Gather open PDFs',
+    gatherSub: 'Moves PDFs open in Chrome’s own viewer into this PDF tab and closes their tabs. Their zoom comes along; the scroll position can’t (Chrome doesn’t share it with other extensions), so they resume where you left off only if ResearchPDF remembers it.',
+    gatherButton: 'Gather',
+    gatherNone: 'No PDF tabs to gather.',
+    gatherNeedsAccess: 'No PDF tabs to gather. To find web PDFs, turn on “Open web PDFs in ResearchPDF” above.',
+    gatherDone: (n: number) => `Gathered ${n} PDF${n === 1 ? '' : 's'}.`,
   },
 });

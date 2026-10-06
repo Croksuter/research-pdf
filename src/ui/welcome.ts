@@ -8,7 +8,8 @@
 
 import { DEFAULT_LOCAL_PDF_VIEWER_ENABLED, LOCAL_PDF_VIEWER_ENABLED_SETTING_KEY, WEB_PDF_VIEWER_ENABLED_SETTING_KEY } from '../shared/constants';
 import { getSetting, setSetting } from '../db/settingsRepository';
-import { PDF_HUB_PAGE, WEB_PDF_HOST_ORIGINS, buildPdfHubUrl, isLocalPdfUrl, isWebPdfSuffixUrl } from '../shared/localPdf';
+import { PDF_HUB_PAGE, WEB_PDF_HOST_ORIGINS, buildPdfHubEntryUrl, buildPdfHubUrl } from '../shared/localPdf';
+import { closeTabs, findOpenPdfTabs, tabPlace, zoomHash, type OpenPdfTab } from './openPdfTabs';
 import { currentLanguage, localizeDocument, saveLanguagePref } from '../shared/i18n';
 import { S } from './welcome.strings';
 
@@ -147,18 +148,11 @@ const gatherCloseRow = byId<HTMLLabelElement>('wl-gather-close-row');
 const gatherClose = byId<HTMLInputElement>('wl-gather-close');
 const gatherDone = byId<HTMLParagraphElement>('wl-gather-done');
 
-/** A tab showing a PDF in Chrome's own viewer, as far as its address tells. */
-function looksLikePdf(url: string): boolean {
-  return isWebPdfSuffixUrl(url) || isLocalPdfUrl(url) || /^https?:\/\/(?:www\.)?arxiv\.org\/pdf\//iu.test(url);
-}
-
-let found: chrome.tabs.Tab[] = [];
+let found: OpenPdfTab[] = [];
 
 async function renderGather(): Promise<void> {
-  const tabs = await chrome.tabs.query({}).catch(() => [] as chrome.tabs.Tab[]);
-  // Without site access Chrome hides other tabs' addresses.
-  const hidden = tabs.some((t) => !t.url && !t.pendingUrl);
-  found = tabs.filter((t) => typeof t.id === 'number' && t.url && looksLikePdf(t.url));
+  const result = await findOpenPdfTabs();
+  found = result.tabs;
   gatherList.replaceChildren(...found.map((tab) => {
     const li = document.createElement('li');
     const box = document.createElement('input');
@@ -167,9 +161,9 @@ async function renderGather(): Promise<void> {
     box.dataset.tabId = String(tab.id);
     const text = document.createElement('span');
     const title = document.createElement('strong');
-    title.textContent = tab.title || tab.url || '';
+    title.textContent = tab.title;
     const where = document.createElement('small');
-    try { where.textContent = tab.url?.startsWith('file:') ? decodeURIComponent(new URL(tab.url).pathname.split('/').pop() ?? '') : new URL(tab.url ?? '').hostname; } catch { where.textContent = ''; }
+    where.textContent = tabPlace(tab.url);
     text.append(title, where);
     const label = document.createElement('label');
     label.append(box, text);
@@ -177,15 +171,15 @@ async function renderGather(): Promise<void> {
     return li;
   }));
   gatherEmpty.hidden = found.length > 0;
-  gatherEmpty.textContent = found.length ? '' : hidden && !(await hasWebAccess()) ? `${S.gatherNone} ${S.gatherNeedsAccess}` : S.gatherNone;
+  gatherEmpty.textContent = found.length ? '' : result.hidden ? `${S.gatherNone} ${S.gatherNeedsAccess}` : S.gatherNone;
   gatherCloseRow.hidden = found.length === 0;
   gatherButton.hidden = found.length === 0;
   updateGatherButton();
 }
 
-function chosenTabs(): chrome.tabs.Tab[] {
+function chosenTabs(): OpenPdfTab[] {
   const ids = new Set(Array.from(gatherList.querySelectorAll<HTMLInputElement>('input:checked')).map((b) => Number(b.dataset.tabId)));
-  return found.filter((t) => ids.has(t.id as number));
+  return found.filter((t) => ids.has(t.id));
 }
 
 function updateGatherButton(): void {
@@ -198,12 +192,12 @@ gatherList.addEventListener('change', updateGatherButton);
 gatherButton.addEventListener('click', () => {
   void (async () => {
     const tabs = chosenTabs();
-    const urls = tabs.map((t) => t.url as string);
+    const urls = tabs.map((t) => t.url);
     if (!urls.length) return;
-    // The new tab claims like any PDF tab: it becomes the PDF tab, or hands
-    // the documents to the one already open.
-    await chrome.tabs.create({ url: buildPdfHubUrl(urls, 0, hubBase), active: false });
-    if (gatherClose.checked) await chrome.tabs.remove(tabs.map((t) => t.id as number)).catch(() => undefined);
+    // Each opens like a PDF from the web (with its zoom): the first becomes
+    // the PDF tab, or hands itself to the one already open, and so do the rest.
+    for (const tab of tabs) await chrome.tabs.create({ url: buildPdfHubEntryUrl(tab.url + zoomHash(tab), hubBase), active: false });
+    if (gatherClose.checked) await closeTabs(tabs);
     gatherDone.hidden = false;
     gatherDone.textContent = S.gatherDone(urls.length);
     await renderGather();

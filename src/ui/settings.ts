@@ -23,7 +23,8 @@ import {
 import { getSetting, setSetting } from '../db/settingsRepository';
 import { dbGetAll } from '../db/database';
 import { clearPdfFileCache, pdfFileCacheUsage } from '../db/pdfFileCache';
-import { WEB_PDF_HOST_ORIGINS } from '../shared/localPdf';
+import { PDF_HUB_PAGE, WEB_PDF_HOST_ORIGINS, buildPdfHubEntryUrl } from '../shared/localPdf';
+import { GATHER_MESSAGE, closeTabs, findOpenPdfTabs, zoomHash } from './openPdfTabs';
 import { PDF_CACHE_MAX_BYTES } from '../shared/pdfCachePolicy';
 import { PDF_LIBRARY_STORAGE_KEY, parsePdfLibrary } from '../shared/pdfLibrary';
 import { PDF_PROJECTS_STORAGE_KEY, parsePdfProjects } from '../shared/pdfProjects';
@@ -308,6 +309,22 @@ restoreTabsButton.addEventListener('click', () => {
       ? S.restoredTabs(restored)
       : open > 0 ? S.nothingToRestore(open) : S.noTabHistory;
   });
+});
+
+// Gather the PDFs open in Chrome's own viewer: into the hub this page is
+// framed in, or (on its own) the way a PDF from the web opens.
+byId<HTMLButtonElement>('gather-open-pdfs').addEventListener('click', () => {
+  void (async () => {
+    const { tabs, hidden } = await findOpenPdfTabs();
+    if (tabs.length === 0) { openStatus.textContent = hidden ? S.gatherNeedsAccess : S.gatherNone; return; }
+    if (embedded) {
+      window.parent.postMessage({ tag: GATHER_MESSAGE, tabs }, location.origin);
+    } else {
+      for (const tab of tabs) await chrome.tabs.create({ url: buildPdfHubEntryUrl(tab.url + zoomHash(tab), chrome.runtime.getURL(PDF_HUB_PAGE)), active: false });
+      await closeTabs(tabs);
+    }
+    openStatus.textContent = S.gatherDone(tabs.length);
+  })();
 });
 
 // ─── Display (this device; open hubs follow at once) ───

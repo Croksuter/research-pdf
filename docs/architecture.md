@@ -112,6 +112,17 @@ a tour with a demo paper; done. The demo paper is LaTeX about the extension
 itself (`assets/demo/`, Korean and English), published on the site
 (`docs/demo/`) so it opens as an ordinary web PDF.
 
+## Gathering PDFs open in Chrome's viewer
+
+`ui/openPdfTabs.ts`: tabs whose address looks like a PDF (visible to the
+extension once site access is granted; local files with file-URL access).
+Home shows a banner when there are some ("이 프로젝트로 모으기"), the
+settings page has a button, the welcome page a step; gathered documents join
+this PDF tab and their tabs close. Chrome's viewer keeps its zoom as the tab's
+zoom, so `chrome.tabs.getZoom` carries it over as `#zoom=N` (the viewer then
+still restores the remembered page). Its scroll position and page are inside
+Chrome's own viewer frame, which no extension can read.
+
 ## Languages
 
 Korean and English (`src/shared/i18n.ts`). Each module keeps its strings in a

@@ -106,6 +106,7 @@ import { openDB } from '../db/database';
 import { byId } from './pdfViewer/dom';
 import { prefetchPdf } from './pdfFileFetch';
 import { S as SHARED } from '../shared/shared.strings';
+import { GATHER_MESSAGE, closeTabs, findOpenPdfTabs, zoomHash, type OpenPdfTab } from './openPdfTabs';
 import { LANGUAGE_STORAGE_KEY, currentLanguage, localizeDocument, parseLanguagePref, resolveLanguage } from '../shared/i18n';
 import { S } from './pdfHub.strings';
 
@@ -646,6 +647,7 @@ function showHome(focusSearch: boolean): void {
   homeLimit = HOME_PAGE_SIZE;
   renderHome();
   void loadAnnotated().then(() => scheduleHomeRender());
+  void refreshOpenPdfs();
   if (focusSearch) homeSearch.focus();
   render();
 }
@@ -1560,6 +1562,64 @@ function homeTools(entries: PdfLibraryEntry[]): HTMLElement {
   return bar;
 }
 
+// ─── PDFs open in Chrome's own viewer: offered on home, gathered here ───
+
+let openPdfs: OpenPdfTab[] = [];
+const GATHER_DISMISSED_KEY = 'rpdfGatherDismissed';
+
+async function refreshOpenPdfs(): Promise<void> {
+  const { tabs: found } = await findOpenPdfTabs();
+  const before = openPdfs.map((t) => t.id).join();
+  openPdfs = found;
+  if (found.map((t) => t.id).join() !== before) scheduleHomeRender();
+}
+
+/** Adds the documents to this tab (not shown yet) and closes the tabs they came from. */
+function gatherHere(found: OpenPdfTab[]): void {
+  if (!found.length) return;
+  addDocs(found.map((t) => ({ url: t.url, hash: zoomHash(t), file: null })), false, false);
+  void closeTabs(found);
+  openPdfs = openPdfs.filter((t) => !found.some((f) => f.id === t.id));
+  showToast(S.gathered(found.length));
+  scheduleHomeRender();
+}
+
+function gatherBanner(): HTMLElement | null {
+  let dismissed = '';
+  try { dismissed = sessionStorage.getItem(GATHER_DISMISSED_KEY) ?? ''; } catch { /* none */ }
+  const offered = openPdfs;
+  if (offered.length === 0 || dismissed === offered.map((t) => t.id).join()) return null;
+  const banner = el('div', { className: 'rpdf-gather' });
+  const text = el('div', { className: 'rpdf-gather-text' });
+  text.append(el('strong', { textContent: S.gatherBanner(offered.length) }));
+  const names = offered.slice(0, 3).map((t) => t.title).join(' · ');
+  text.append(el('span', { textContent: offered.length > 3 ? `${names} ${S.gatherMore(offered.length - 3)}` : names }));
+  const go = el('button', { type: 'button', className: 'rpdf-primary', textContent: S.gatherHere });
+  go.addEventListener('click', () => gatherHere(offered));
+  const dismiss = el('button', { type: 'button', className: 'rpdf-item-act', title: S.gatherDismiss });
+  dismiss.setAttribute('aria-label', S.gatherDismiss);
+  dismiss.append(icon('i-close'));
+  dismiss.addEventListener('click', () => {
+    try { sessionStorage.setItem(GATHER_DISMISSED_KEY, offered.map((t) => t.id).join()); } catch { /* a nicety */ }
+    scheduleHomeRender();
+  });
+  banner.append(icon('i-file'), text, go, dismiss);
+  return banner;
+}
+
+// The settings page (framed in this hub) asks to gather.
+window.addEventListener('message', (event) => {
+  if (event.origin !== location.origin || event.source !== settingsView.querySelector('iframe')?.contentWindow) return;
+  const data = event.data as { tag?: unknown; tabs?: unknown };
+  if (data?.tag !== GATHER_MESSAGE || !Array.isArray(data.tabs)) return;
+  const found = (data.tabs as unknown[])
+    .filter((t): t is OpenPdfTab => !!t && typeof (t as OpenPdfTab).id === 'number' && typeof (t as OpenPdfTab).url === 'string')
+    .map((t) => ({ ...t, zoom: typeof t.zoom === 'number' ? t.zoom : null }));
+  gatherHere(found);
+});
+
+window.addEventListener('focus', () => { if (activeKey === HOME) void refreshOpenPdfs(); });
+
 function renderHome(): void {
   const project = currentProject();
   homeTitle.replaceChildren(projectBadge(project), document.createTextNode(project.name));
@@ -1578,6 +1638,8 @@ function renderHome(): void {
     homeSections.replaceChildren(...sections);
     return;
   }
+  const banner = gatherBanner();
+  if (banner) sections.push(banner);
   const pinnedIds = pinnedDocIds();
   const pinned = pinnedIds.map((id) => library[id]).filter((e): e is PdfLibraryEntry => !!e);
   if (pinned.length) {
