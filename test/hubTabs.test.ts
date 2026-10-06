@@ -3,9 +3,17 @@ import { describe, expect, it } from 'vitest';
 import {
   HUB_CLOSED_MAX,
   arxivVersionBadges,
+  fileIdentity,
   findOpenDoc,
+  homeFilterChoices,
+  homePositionKey,
   hubDocKey,
+  moveInOrder,
   parseClosedTabs,
+  parseLocalTabs,
+  progressBucket,
+  sameSource,
+  visibleSelection,
   pickTabsToSleep,
   pushClosedTab,
   type HubClosedTab,
@@ -92,5 +100,74 @@ describe('recently closed', () => {
     expect(parseClosedTabs([closed('https://a.org/x.pdf'), closed(null, 3), { url: null, fileId: null, title: 't', index: 0, closedAt: 1 }, 'x']))
       .toEqual([closed('https://a.org/x.pdf'), closed(null, 3)]);
     expect(parseClosedTabs('nope')).toEqual([]);
+  });
+});
+
+describe('reordering', () => {
+  it('puts the dragged item before or after the target, or last', () => {
+    expect(moveInOrder(['a', 'b', 'c', 'd'], 'd', 'b')).toEqual(['a', 'd', 'b', 'c']);
+    expect(moveInOrder(['a', 'b', 'c', 'd'], 'a', 'c', true)).toEqual(['b', 'c', 'a', 'd']);
+    expect(moveInOrder(['a', 'b', 'c'], 'a', null)).toEqual(['b', 'c', 'a']);
+    expect(moveInOrder(['a', 'b', 'c'], 'b', 'zz')).toEqual(['a', 'c', 'b']);
+    expect(moveInOrder(['a', 'b'], 'a', 'a', true)).toEqual(['a', 'b']);
+    // A pin without a tab here (another device's local file) keeps its place.
+    expect(moveInOrder(['p1', 'local', 'p2'], 'p2', 'p1')).toEqual(['p2', 'p1', 'local']);
+  });
+});
+
+describe('home', () => {
+  it('keeps only the selected rows still on screen', () => {
+    expect([...visibleSelection(['a', 'b', 'c'], ['b', 'c', 'd'])]).toEqual(['b', 'c']);
+    expect(visibleSelection(['a'], []).size).toBe(0);
+  });
+
+  it('always offers the filter in force', () => {
+    expect(homeFilterChoices('all', ['journal', 'preprint'], ['reading'], 'all')).toEqual(['all', 'journal', 'preprint', 'reading']);
+    // One kind only: no kind chips — unless that kind is the active filter.
+    expect(homeFilterChoices('all', ['journal'], ['reading'], 'all')).toEqual(['all', 'reading']);
+    expect(homeFilterChoices('all', ['journal'], ['reading'], 'survey')).toEqual(['all', 'survey', 'reading']);
+  });
+
+  it('re-renders only for position changes home shows', () => {
+    expect(progressBucket(null, 10)).toBe('unread');
+    expect(progressBucket(1, 10)).toBe('unread');
+    expect(progressBucket(5, 10)).toBe('reading');
+    expect(progressBucket(10, 10)).toBe('done');
+    const entries = [{ docId: 'a', numPages: 10 }, { docId: 'b', numPages: 10 }];
+    const key = (pages: Record<string, number>, shown: string[], every = false) => homePositionKey(entries, (id) => pages[id] ?? null, new Set(shown), every);
+    // b is off screen: moving from page 3 to 4 changes nothing home shows…
+    expect(key({ a: 2, b: 3 }, ['a'])).toBe(key({ a: 2, b: 4 }, ['a']));
+    // …but starting to read it changes the filter counts,
+    expect(key({ a: 2, b: 1 }, ['a'])).not.toBe(key({ a: 2, b: 4 }, ['a']));
+    // a row on screen shows its page, and a progress sort orders by every page.
+    expect(key({ a: 2, b: 3 }, ['a'])).not.toBe(key({ a: 3, b: 3 }, ['a']));
+    expect(key({ a: 2, b: 3 }, ['a'], true)).not.toBe(key({ a: 2, b: 4 }, ['a'], true));
+  });
+});
+
+describe('gathering and local files', () => {
+  it('compares sources without their fragment', () => {
+    expect(sameSource('https://x.org/a.pdf#page=2', 'https://x.org/a.pdf')).toBe(true);
+    expect(sameSource('https://x.org/a.pdf', 'https://x.org/b.pdf')).toBe(false);
+  });
+
+  it('reads the local-file tab record defensively', () => {
+    expect(parseLocalTabs([
+      { fileId: 3, index: 2, title: 'a.pdf', paperTitle: 'A', active: true },
+      { fileId: 3, index: 4, title: 'dup.pdf' },
+      { fileId: 'x', index: 0, title: 'bad' },
+      { fileId: 4, index: -2, title: 'b.pdf', paperTitle: 7 },
+      null,
+    ])).toEqual([
+      { fileId: 3, index: 2, title: 'a.pdf', paperTitle: 'A', active: true },
+      { fileId: 4, index: 0, title: 'b.pdf', paperTitle: null, active: false },
+    ]);
+    expect(parseLocalTabs('nope')).toEqual([]);
+  });
+
+  it('names a file by what it is, not by the object holding it', () => {
+    const one = { name: 'a.pdf', size: 10, lastModified: 5 };
+    expect(fileIdentity(one)).toBe(fileIdentity({ ...one }));
+    expect(fileIdentity(one)).not.toBe(fileIdentity({ ...one, size: 11 }));
   });
 });

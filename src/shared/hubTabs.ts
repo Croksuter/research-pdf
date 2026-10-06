@@ -156,3 +156,102 @@ export function parseClosedTabs(value: unknown): HubClosedTab[] {
   }
   return out;
 }
+
+/** Whether two addresses name the same source (the fragment ignored). */
+export function sameSource(a: string, b: string): boolean {
+  return hubDocKey(a).url === hubDocKey(b).url;
+}
+
+// ─── Reordering (a drag in the strip, pins) ───
+
+/**
+ * `list` with `moved` put before `target` (after it with `after`), or last
+ * when `target` is null or not in the list.
+ */
+export function moveInOrder<T>(list: readonly T[], moved: T, target: T | null, after = false): T[] {
+  if (target === moved) return [...list];
+  const rest = list.filter((x) => x !== moved);
+  const at = target === null ? -1 : rest.indexOf(target);
+  if (at < 0) return [...rest, moved];
+  rest.splice(at + (after ? 1 : 0), 0, moved);
+  return rest;
+}
+
+// ─── Home ───
+
+/** The selected ids still on screen: a filter, search, page or pin hides the rest, and an action must never reach a row nobody sees. */
+export function visibleSelection(selected: Iterable<string>, visible: Iterable<string>): Set<string> {
+  const shown = new Set(visible);
+  return new Set([...selected].filter((id) => shown.has(id)));
+}
+
+/**
+ * Filter chips: all, the kinds when there is more than one to tell apart,
+ * the states — and always the one in force, so an active filter is never
+ * invisible (it is per device; another project may lack that kind).
+ */
+export function homeFilterChoices<F extends string>(all: F, kinds: readonly F[], states: readonly F[], active: F): F[] {
+  const choices = [all, ...(kinds.length > 1 ? kinds : []), ...states];
+  if (!choices.includes(active)) choices.splice(1, 0, active);
+  return choices;
+}
+
+/** Reading progress as home groups it (the reading / unread filters). */
+export function progressBucket(page: number | null, numPages: number): 'unread' | 'reading' | 'done' {
+  if (!page || page <= 1) return 'unread';
+  return page / Math.max(1, numPages) < 0.98 ? 'reading' : 'done';
+}
+
+/**
+ * What home shows of reading positions: each document's progress bucket
+ * (filter counts), and the page of the rows on screen — every page when
+ * sorted by progress. A position saved elsewhere that changes none of it
+ * needs no re-render.
+ */
+export function homePositionKey(
+  entries: ReadonlyArray<{ docId: string; numPages: number }>,
+  pageOf: (docId: string) => number | null,
+  shown: ReadonlySet<string>,
+  everyPage: boolean,
+): string {
+  return entries.map((e) => {
+    const page = pageOf(e.docId);
+    return everyPage || shown.has(e.docId) ? `${e.docId}:${page ?? 0}` : `${e.docId}:${progressBucket(page, e.numPages)}`;
+  }).join('|');
+}
+
+// ─── Local files (kept across a reload and a project switch) ───
+
+/** A local file's tab, recorded per project in the hub tab's session. */
+export interface HubLocalTab {
+  fileId: number;
+  index: number;
+  title: string;
+  paperTitle: string | null;
+  active: boolean;
+}
+
+export function parseLocalTabs(value: unknown): HubLocalTab[] {
+  if (!Array.isArray(value)) return [];
+  const out: HubLocalTab[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== 'object') continue;
+    const e = raw as Record<string, unknown>;
+    if (!Number.isInteger(e.fileId) || !Number.isInteger(e.index) || typeof e.title !== 'string') continue;
+    if (out.some((t) => t.fileId === e.fileId)) continue;
+    out.push({
+      fileId: e.fileId as number,
+      index: Math.max(0, e.index as number),
+      title: e.title.slice(0, 300),
+      paperTitle: typeof e.paperTitle === 'string' ? e.paperTitle.slice(0, 300) : null,
+      active: e.active === true,
+    });
+    if (out.length >= 100) break;
+  }
+  return out;
+}
+
+/** The same file opened again (dropped twice, or handed over by a viewer as a copy) keeps one handle. */
+export function fileIdentity(file: { name: string; size: number; lastModified: number }): string {
+  return `${file.name}\n${file.size}\n${file.lastModified}`;
+}

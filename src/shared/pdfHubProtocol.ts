@@ -83,13 +83,29 @@ export function parseHubToViewerMessage(value: unknown): HubToViewerMessage | nu
  * Alt+Shift+T to reopen (matched on `code`, since macOS Option turns the key
  * itself into a symbol).
  */
-export function hubKeyAction(e: { altKey: boolean; shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; code: string }): HubKeyAction | null {
+export function hubKeyAction(e: { altKey: boolean; shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; code: string; target?: unknown }): HubKeyAction | null {
   if (!e.altKey || e.ctrlKey || e.metaKey) return null;
+  // In a text field these are editing keys (macOS Option+Shift+← selects a word).
+  if (isEditableTarget(e.target)) return null;
   if (e.shiftKey && e.code === 'ArrowLeft') return 'prev';
   if (e.shiftKey && e.code === 'ArrowRight') return 'next';
   if (!e.shiftKey && e.code === 'KeyW') return 'close';
   if (e.shiftKey && e.code === 'KeyT') return 'reopen';
   return null;
+}
+
+// Inputs that take no text: hub keys stay hub keys there.
+const NON_TEXT_INPUTS = new Set(['button', 'checkbox', 'color', 'file', 'image', 'radio', 'range', 'reset', 'submit']);
+
+/** Whether a key event's target takes text: an input, a textarea, a select or an editable element. */
+export function isEditableTarget(target: unknown): boolean {
+  if (!target || typeof target !== 'object') return false;
+  const t = target as { tagName?: unknown; type?: unknown; isContentEditable?: unknown };
+  if (t.isContentEditable === true) return true;
+  const tag = typeof t.tagName === 'string' ? t.tagName.toUpperCase() : '';
+  if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (tag !== 'INPUT') return false;
+  return !NON_TEXT_INPUTS.has(typeof t.type === 'string' ? t.type.toLowerCase() : 'text');
 }
 
 /** Same title up to case, spacing and punctuation (a PDF's metadata often repeats the paper title). */
