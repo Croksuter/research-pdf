@@ -4,13 +4,17 @@
 //   npm run build
 //   PLAYWRIGHT_CORE=/path/to/node_modules/playwright-core \
 //   CHROMIUM=/path/to/chrome \
-//   [OPENALEX_API_KEY=…] \
+//   [OPENALEX_API_KEY=…] [STORE_LANG=ko|en] [HIDE_UNANSWERED=1] \
 //   node artifact/chrome-web-store/tools/capture.cjs
+//
+// STORE_LANG picks the extension's language and the sample project names
+// (default ko); the screens go to raw/<lang>/. HIDE_UNANSWERED leaves out a
+// paper-strip field whose database did not answer, instead of its ⚠.
 //
 // OPENALEX_API_KEY (optional, your own) is saved in the throwaway profile's
 // settings, so the shots do not depend on the keyless daily budget.
 //
-// Writes artifact/chrome-web-store/tools/raw/*.png (git-ignored); compose.cjs
+// Writes artifact/chrome-web-store/tools/raw/<lang>/*.png (git-ignored); compose.cjs
 // turns them into the listing images. Every paper shown is CC BY 4.0 (see
 // ../README.md). Needs the network: arXiv, PLOS and the paper databases.
 
@@ -20,7 +24,8 @@ const path = require('path');
 const { chromium } = require(process.env.PLAYWRIGHT_CORE || 'playwright-core');
 
 const ROOT = path.resolve(__dirname, '../../..');
-const RAW = path.join(__dirname, 'raw');
+const LANG = process.env.STORE_LANG === 'en' ? 'en' : 'ko';
+const RAW = path.join(__dirname, 'raw', LANG);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const PAPERS = {
@@ -32,11 +37,16 @@ const PAPERS = {
   plos: 'https://journals.plos.org/ploscompbiol/article/file?id=10.1371/journal.pcbi.1005510&type=printable',
 };
 
-const FOLDER = { id: 'fphdresearch', name: '박사 연구' };
+// What a user would have named things, in the language of the shots.
+const NAMES = {
+  ko: { folder: '박사 연구', reasoning: 'LLM 추론', preference: '선호 정렬', reading: '읽을거리', note: '핵심 아이디어!', locale: 'ko-KR' },
+  en: { folder: 'PhD research', reasoning: 'LLM reasoning', preference: 'Preference alignment', reading: 'Reading list', note: 'Key idea!', locale: 'en-US' },
+}[LANG];
+const FOLDER = { id: 'fphdresearch', name: NAMES.folder };
 const PROJECTS = [
-  { id: 'pllmreasonin', name: 'LLM 추론', icon: 'i:brain', color: 'violet', folder: FOLDER.id, order: '1', docs: ['cot', 'tot', 'react'] },
-  { id: 'ppreference1', name: '선호 정렬', icon: 'i:target', color: 'green', folder: FOLDER.id, order: '2', docs: ['dpo'] },
-  { id: 'preadinglist', name: '읽을거리', icon: 'e:📚', color: null, folder: null, order: '3', docs: ['plos'] },
+  { id: 'pllmreasonin', name: NAMES.reasoning, icon: 'i:brain', color: 'violet', folder: FOLDER.id, order: '1', docs: ['cot', 'tot', 'react'] },
+  { id: 'ppreference1', name: NAMES.preference, icon: 'i:target', color: 'green', folder: FOLDER.id, order: '2', docs: ['dpo'] },
+  { id: 'preadinglist', name: NAMES.reading, icon: 'e:📚', color: null, folder: null, order: '3', docs: ['plos'] },
 ];
 const DEFAULT_DOCS = ['mistral'];
 
@@ -60,8 +70,8 @@ function extensionCopy() {
     headless: true,
     viewport: { width: 1280, height: 800 },
     deviceScaleFactor: 2,
-    locale: 'ko-KR',
-    args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`, '--headless=new', '--lang=ko-KR'],
+    locale: NAMES.locale,
+    args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`, '--headless=new', `--lang=${NAMES.locale}`],
   });
   let [sw] = ctx.serviceWorkers();
   if (!sw) sw = await ctx.waitForEvent('serviceworker');
@@ -74,28 +84,51 @@ function extensionCopy() {
     return `chrome-extension://${id}/pdf-hub.html?${params}`;
   };
   const shot = async (page, name) => {
-    await page.screenshot({ path: path.join(RAW, `${name}.png`) });
     // A ⚠ in the paper strip means a database did not answer (rate limit, spent budget).
-    const warnings = await page.frameLocator('#rpdf-frames iframe:not([hidden])').first().locator('#vocab-t-pdf-paper:not([hidden]) .vt-warn').count().catch(() => 0);
-    console.log('captured', name, warnings ? `— ${warnings} ⚠ in the paper strip: retake once the databases answer` : '');
+    const strip = page.frameLocator('#rpdf-frames iframe:not([hidden])').first().locator('#vocab-t-pdf-paper:not([hidden])');
+    const warnings = await strip.locator('.vt-warn, .vt-warn-inline').count().catch(() => 0);
+    if (process.env.HIDE_UNANSWERED) {
+      // Leave out what has no answer rather than show its ⚠: strip fields, and
+      // in the reference list the "not found / daily limit" notes.
+      await strip.evaluate((el) => {
+        for (const seg of el.querySelectorAll('.vt-paper-seg')) if (seg.querySelector('.vt-warn, .vt-warn-inline')) seg.style.display = 'none';
+        for (const note of el.ownerDocument.querySelectorAll('.vt-refs-note')) note.style.display = 'none';
+        for (const stats of el.ownerDocument.querySelectorAll('.vt-ref-stats')) if (/OpenAlex/u.test(stats.textContent)) stats.style.visibility = 'hidden';
+      }).catch(() => undefined);
+      await sleep(200);
+    }
+    await page.screenshot({ path: path.join(RAW, `${name}.png`) });
+    const note = !warnings ? '' : process.env.HIDE_UNANSWERED ? `— ${warnings} field(s) without an answer left out` : `— ${warnings} ⚠ in the paper strip: retake once the databases answer (or HIDE_UNANSWERED=1)`;
+    console.log('captured', name, note);
   };
   const viewer = (page) => page.frameLocator('#rpdf-frames iframe:not([hidden])').first();
   /** Shows every tab once so each document loads and its paper is looked up. */
   const visitTabs = async (page, wait = 20_000) => {
-    const count = await page.locator('.rpdf-tab').count();
+    const count = await page.locator('.rpdf-tab-main').count();
     for (let i = 0; i < count; i += 1) {
-      await page.locator('.rpdf-tab').nth(i).click();
+      await page.locator('.rpdf-tab-main').nth(i).click();
       await sleep(wait);
     }
   };
 
+  // The language, chosen before any page of the extension shows text.
+  const popup = await ctx.newPage();
+  await popup.goto(`chrome-extension://${id}/popup.html`);
+  await popup.evaluate(async (lang) => {
+    localStorage.setItem('rpdfLanguage', lang);
+    await chrome.storage.local.set({ rpdfLanguage: lang });
+  }, LANG);
+  await popup.close();
+
   if (process.env.OPENALEX_API_KEY) {
-    const popup = await ctx.newPage();
-    await popup.goto(`chrome-extension://${id}/popup.html`);
-    await popup.fill('#openalex-api-key-input', process.env.OPENALEX_API_KEY);
-    await popup.click('#openalex-api-key-save');
-    await sleep(500);
-    await popup.close();
+    const settings = await ctx.newPage();
+    await settings.goto(`chrome-extension://${id}/pdf-hub.html?s=settings`);
+    await sleep(1500);
+    const form = settings.frameLocator('#rpdf-settings iframe');
+    await form.locator('#openalex-api-key-input').fill(process.env.OPENALEX_API_KEY);
+    await form.locator('#openalex-api-key-save').click();
+    await sleep(800);
+    await settings.close();
   }
 
   // Projects, their folder and looks — as the user would have set them up.
@@ -127,7 +160,7 @@ function extensionCopy() {
   console.log('library:', JSON.stringify(library));
 
   // 1. The paper in front, its citation history open (hover on the sparkline).
-  await main.locator('.rpdf-tab').nth(0).click();
+  await main.locator('.rpdf-tab-main').nth(0).click();
   await sleep(4000);
   const cot = viewer(main);
   if (await cot.locator('.vt-spark').count()) {
@@ -136,7 +169,7 @@ function extensionCopy() {
   }
   await shot(main, '1-paper');
 
-  // 2. The reference list (hover on 참고문헌).
+  // 2. The reference list (hover on References).
   if (await cot.locator('.vt-paper-refs').count()) {
     await cot.locator('.vt-paper-refs').first().hover();
     await sleep(2500);
@@ -145,7 +178,7 @@ function extensionCopy() {
   await main.mouse.move(640, 700);
 
   // 3. Drawings on the Tree of Thoughts paper: a highlight, a red pen mark, a typed note.
-  await main.locator('.rpdf-tab').nth(1).click();
+  await main.locator('.rpdf-tab-main').nth(1).click();
   await sleep(4000);
   const v = viewer(main);
   await v.locator('#viewerContainer').evaluate((el) => { el.scrollTop = 420; });
@@ -197,7 +230,7 @@ function extensionCopy() {
     await sleep(300);
     await main.mouse.click(hl.x + hl.width + 18, hl.y - 4);
     await sleep(400);
-    await main.keyboard.type('핵심 아이디어!');
+    await main.keyboard.type(NAMES.note);
     await sleep(300);
     // Clicking outside the note commits it.
     await main.mouse.click(hl.x + hl.width + 60, hl.y + 220);
@@ -218,11 +251,11 @@ function extensionCopy() {
   await shot(main, '4-projects');
   await main.keyboard.press('Escape');
 
-  // 5. Figure capture, auto-detect mode (S twice), on a page of the ReAct paper with figures.
-  await main.locator('.rpdf-tab').nth(2).click();
+  // 5. Figure capture, auto-detect mode (S twice), on the ReAct paper's Figure 1 (page 2).
+  await main.locator('.rpdf-tab-main').nth(2).click();
   await sleep(4000);
   const r = viewer(main);
-  await r.locator('#vt-page').fill('3');
+  await r.locator('#vt-page').fill('2');
   await r.locator('#vt-page').press('Enter');
   await sleep(2500);
   await r.locator('#viewerContainer').click({ position: { x: 30, y: 300 } });
@@ -237,7 +270,7 @@ function extensionCopy() {
   await main.keyboard.press('Escape');
 
   // Extra: moving a document between projects.
-  await main.locator('.rpdf-tab').nth(0).click();
+  await main.locator('.rpdf-tab-main').nth(0).click();
   await sleep(2500);
   await main.click('#rpdf-move-btn');
   await sleep(800);

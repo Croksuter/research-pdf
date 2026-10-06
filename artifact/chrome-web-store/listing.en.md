@@ -45,3 +45,18 @@ ResearchPDF is a Chrome PDF viewer for people who read papers. PDFs you open on 
 
 Questions and bug reports: https://github.com/Croksuter/research-pdf/issues
 ```
+
+## Graphics (English listing)
+
+The English listing uses the English images; the icon is the same for both.
+
+| Item | Spec | File |
+|---|---|---|
+| Store icon | 128×128 PNG | `icon/store-icon-128.png` |
+| Screenshot 1 | 1280×800, 24-bit PNG | `screenshots/en/01-paper-info.png` |
+| Screenshot 2 | 〃 | `screenshots/en/02-references.png` |
+| Screenshot 3 | 〃 | `screenshots/en/03-annotate-sync.png` |
+| Screenshot 4 | 〃 | `screenshots/en/04-projects.png` |
+| Screenshot 5 | 〃 | `screenshots/en/05-figure-capture.png` |
+| Small promo tile | 440×280, 24-bit PNG | `promo/en/small-tile-440x280.png` |
+| Marquee promo tile | 1400×560, 24-bit PNG | `promo/en/marquee-1400x560.png` |

@@ -3,18 +3,23 @@
 // 128×128 store icon. Rendered as HTML in headless Chromium, written as
 // opaque PNGs (the store wants 24-bit PNG without alpha, or JPEG).
 //
-//   PLAYWRIGHT_CORE=… CHROMIUM=… node artifact/chrome-web-store/tools/compose.cjs
+//   PLAYWRIGHT_CORE=… CHROMIUM=… [STORE_LANG=ko|en] node artifact/chrome-web-store/tools/compose.cjs
+//
+// Korean (default) goes to screenshots/ and promo/, English to
+// screenshots/en/ and promo/en/; the icon has no words and is the same.
 
 const fs = require('fs');
 const path = require('path');
 const { chromium } = require(process.env.PLAYWRIGHT_CORE || 'playwright-core');
 
 const HERE = path.resolve(__dirname, '..');
-const RAW = path.join(__dirname, 'raw');
+const LANG = process.env.STORE_LANG === 'en' ? 'en' : 'ko';
+const RAW = path.join(__dirname, 'raw', LANG);
+const OUT = (dir) => (LANG === 'ko' ? path.join(HERE, dir) : path.join(HERE, dir, LANG));
 const ICON = path.resolve(HERE, '../../src/icons/icon-256.png');
 const dataUrl = (file) => `data:image/png;base64,${fs.readFileSync(file).toString('base64')}`;
 
-const SCREENS = [
+const SCREENS_KO = [
   {
     raw: '1-paper', out: '01-paper-info',
     tag: '논문 정보',
@@ -47,6 +52,54 @@ const SCREENS = [
   },
 ];
 
+const SCREENS_EN = [
+  {
+    raw: '1-paper', out: '01-paper-info',
+    tag: 'Paper info',
+    title: 'Open a paper, see its venue and citations at once',
+    sub: 'Recognizes the DOI, arXiv ID or title, then shows the conference or journal, year, citation count with a yearly chart, and one-click BibTeX and APA in a single line.',
+  },
+  {
+    raw: '2-references', out: '02-references',
+    tag: 'References',
+    title: 'Everything it cites, most-cited first',
+    sub: 'Skim the reference list and open any entry. When no database has it, the list printed in the PDF is read directly.',
+  },
+  {
+    raw: '3-annotate', out: '03-annotate-sync',
+    tag: 'Annotate · Sync',
+    title: 'Highlights, pen and notes, the same on every device',
+    sub: 'Your drawings and reading position sync through an app-only space in your own Google Drive. PDF files are never uploaded.',
+  },
+  {
+    raw: '4-projects', out: '04-projects',
+    tag: 'Projects',
+    title: 'One tab per project, so papers never scatter',
+    sub: 'PDFs you open on the web gather in one tab. Sort them into projects and folders, tell projects apart by icon, and see each paper’s kind at a glance.',
+  },
+  {
+    raw: '5-figures', out: '05-figure-capture',
+    tag: 'Figure capture',
+    title: 'Find figures and tables, copy one with a click',
+    sub: 'Press S twice to outline every figure and table on the page; click one to copy it as an image, with its source.',
+  },
+];
+
+const TEXT = {
+  ko: {
+    screens: SCREENS_KO,
+    tile: '논문 읽기를 위한 PDF 뷰어<br>필기는 내 Google Drive로 동기화',
+    marquee: '논문 PDF를 위한 Chrome 뷰어.<br>읽던 곳과 필기가 모든 기기를 따라옵니다.',
+    chips: ['게재처·인용 추이', '참고문헌', '형광펜·필기 동기화', '프로젝트별 탭', '그림·표 캡처'],
+  },
+  en: {
+    screens: SCREENS_EN,
+    tile: 'A PDF viewer for reading papers<br>Notes sync to your Google Drive',
+    marquee: 'A Chrome PDF viewer for research papers.<br>Your place and notes follow you everywhere.',
+    chips: ['Venue & citation trend', 'References', 'Highlights that sync', 'A tab per project', 'Figure & table capture'],
+  },
+}[LANG];
+
 const FONT = `'Pretendard', 'Noto Sans KR', 'Noto Sans CJK KR', 'Apple SD Gothic Neo', system-ui, sans-serif`;
 const BASE_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;800&display=swap');
@@ -64,7 +117,7 @@ const BASE_CSS = `
 `;
 
 function screenHtml(screen) {
-  return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><style>${BASE_CSS}
+  return `<!doctype html><html lang="${LANG}"><head><meta charset="utf-8"><style>${BASE_CSS}
     .head { position: absolute; left: 72px; right: 72px; top: 44px; }
     .tag { display: inline-flex; align-items: center; gap: 8px; height: 28px; padding: 0 12px; border-radius: 14px;
       background: rgba(138, 180, 248, 0.16); color: #a9c7ff; font-size: 14px; font-weight: 700; letter-spacing: 0.02em; }
@@ -85,7 +138,7 @@ function screenHtml(screen) {
 }
 
 function smallTileHtml() {
-  return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><style>${BASE_CSS}
+  return `<!doctype html><html lang="${LANG}"><head><meta charset="utf-8"><style>${BASE_CSS}
     body { display: flex; flex-direction: column; justify-content: center; padding: 0 36px; }
     .row { display: flex; align-items: center; gap: 16px; }
     img { width: 72px; height: 72px; border-radius: 18px; box-shadow: 0 10px 24px rgba(0,0,0,0.4); }
@@ -93,13 +146,13 @@ function smallTileHtml() {
     p { margin-top: 18px; color: #c9d4ea; font-size: 19px; font-weight: 500; line-height: 1.45; }
   </style></head><body>
     <div class="row"><img src="${dataUrl(ICON)}"><h1>ResearchPDF</h1></div>
-    <p>논문 읽기를 위한 PDF 뷰어<br>필기는 내 Google Drive로 동기화</p>
+    <p>${TEXT.tile}</p>
   </body></html>`;
 }
 
 function marqueeHtml() {
-  const chips = ['게재처·인용 추이', '참고문헌', '형광펜·필기 동기화', '프로젝트별 탭', '그림·표 캡처'];
-  return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><style>${BASE_CSS}
+  const { chips } = TEXT;
+  return `<!doctype html><html lang="${LANG}"><head><meta charset="utf-8"><style>${BASE_CSS}
     .text { position: absolute; left: 80px; top: 0; bottom: 0; width: 560px; display: flex; flex-direction: column; justify-content: center; }
     .row { display: flex; align-items: center; gap: 18px; }
     .row img { width: 84px; height: 84px; border-radius: 20px; box-shadow: 0 12px 28px rgba(0,0,0,0.45); }
@@ -113,7 +166,7 @@ function marqueeHtml() {
   </style></head><body>
     <div class="text">
       <div class="row"><img src="${dataUrl(ICON)}"><h1>ResearchPDF</h1></div>
-      <p>논문 PDF를 위한 Chrome 뷰어.<br>읽던 곳과 필기가 모든 기기를 따라옵니다.</p>
+      <p>${TEXT.marquee}</p>
       <div class="chips">${chips.map((c) => `<span>${c}</span>`).join('')}</div>
     </div>
     <div class="shot"><img src="${dataUrl(path.join(RAW, '1-paper.png'))}"></div>
@@ -128,7 +181,7 @@ function iconHtml() {
 }
 
 (async () => {
-  for (const dir of ['screenshots', 'promo', 'icon']) fs.mkdirSync(path.join(HERE, dir), { recursive: true });
+  for (const dir of [OUT('screenshots'), OUT('promo'), path.join(HERE, 'icon')]) fs.mkdirSync(dir, { recursive: true });
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || undefined, headless: true });
   const render = async (html, width, height, file, { transparent = false } = {}) => {
     const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: 1 });
@@ -138,12 +191,12 @@ function iconHtml() {
     await page.close();
     console.log('wrote', path.relative(HERE, file));
   };
-  for (const screen of SCREENS) {
+  for (const screen of TEXT.screens) {
     if (!fs.existsSync(path.join(RAW, `${screen.raw}.png`))) { console.warn('missing raw', screen.raw); continue; }
-    await render(screenHtml(screen), 1280, 800, path.join(HERE, 'screenshots', `${screen.out}.png`));
+    await render(screenHtml(screen), 1280, 800, path.join(OUT('screenshots'), `${screen.out}.png`));
   }
-  await render(smallTileHtml(), 440, 280, path.join(HERE, 'promo', 'small-tile-440x280.png'));
-  await render(marqueeHtml(), 1400, 560, path.join(HERE, 'promo', 'marquee-1400x560.png'));
+  await render(smallTileHtml(), 440, 280, path.join(OUT('promo'), 'small-tile-440x280.png'));
+  await render(marqueeHtml(), 1400, 560, path.join(OUT('promo'), 'marquee-1400x560.png'));
   await render(iconHtml(), 128, 128, path.join(HERE, 'icon', 'store-icon-128.png'), { transparent: true });
   await browser.close();
 })().catch((error) => {
