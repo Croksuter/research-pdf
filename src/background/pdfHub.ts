@@ -131,6 +131,48 @@ async function writeRegistry(registry: HubRegistry): Promise<void> {
 
 const serialized = createSerialQueue();
 
+// ─── Tabs sent back that come again ───
+//
+// A tab that handed its documents over goes back to the page it came from.
+// When that page sends it on to the PDF again by itself (a publisher's "your
+// PDF is on its way" page), the tab would hand them over again, go back, and
+// so on, bringing the PDF tab forward each time. So a tab that hands the same
+// documents over again soon after it went back closes instead, and the PDF
+// tab is not brought forward again. Kept in session storage, like the
+// registry, so a worker restart mid-loop does not lose it.
+
+const HANDED_BACK_KEY = 'rpdfHandedBack';
+export const HANDED_BACK_MS = 30_000;
+type HandedBack = Record<string, { docs: string; at: number }>;
+
+/** The documents of a hand-over, as one comparable key (fragments do not make a different hand-over). */
+export function handOverKey(docs: readonly PdfHubDoc[]): string {
+  return docs.map((d) => d.url.replace(/#.*$/u, '')).sort().join('\n');
+}
+
+/** Whether `key` repeats what the tab handed over and went back from moments ago. */
+export function handsOverAgain(last: { docs: string; at: number } | undefined, key: string, now: number): boolean {
+  return !!last && last.docs === key && now - last.at < HANDED_BACK_MS;
+}
+
+async function readHandedBack(): Promise<HandedBack> {
+  try {
+    const value = (await chrome.storage.session.get(HANDED_BACK_KEY))[HANDED_BACK_KEY];
+    return value && typeof value === 'object' ? value as HandedBack : {};
+  } catch {
+    return {};
+  }
+}
+
+async function writeHandedBack(value: HandedBack, now = Date.now()): Promise<void> {
+  for (const [tabId, entry] of Object.entries(value)) if (now - entry.at >= HANDED_BACK_MS) delete value[tabId];
+  try {
+    await chrome.storage.session.set({ [HANDED_BACK_KEY]: value });
+  } catch {
+    /* best effort: the next round of a loop is caught instead */
+  }
+}
+
 async function liveEntry(registry: HubRegistry, project: string): Promise<HubRegistryEntry | null> {
   const entry = registry[project];
   if (!entry) return null;
@@ -323,71 +365,92 @@ export function claimPdfHub(
   if (!tab || typeof tab.id !== 'number' || sender.frameId !== 0) {
     return Promise.resolve({ success: false, error: S.tabNotFound });
   }
-  const claimer = { id: tab.id, windowId: tab.windowId, index: tab.index, active: tab.active };
-  const dispose = request.canGoBack ? 'back' as const : 'close' as const;
+  const tabId = tab.id;
   return serialized(async (): Promise<HubClaimResult> => {
-    const registry = await readRegistry();
-    const { project } = await claimTarget(request, registry);
-    const promoted = await takePromotion(claimer.id, request.docs);
-    const entry = registry[project] ?? null;
-    const liveness = entry ? await hubLiveness(entry.tabId) : 'gone';
-    let delivery: HubDelivery | null = null;
-    let answer: Promise<'taken' | 'gone'> | null = null;
-    for (;;) {
-      // A page naming its project is a hub by intent (opened, restored or
-      // switched to it), and so is one replacing a PDF's wrapper page: it
-      // never hands its tab back to a web page.
-      const decision = decideHubClaim({
-        entry: registry[project] ?? null, liveness, delivery,
-        claimerTabId: claimer.id, canGoBack: request.canGoBack && !request.project && !promoted, hasDocs: request.docs.length > 0,
-      });
-      debugLog('bg:hub', `claim → ${decision.kind}`, () => ({ tabId: claimer.id, project, docs: request.docs.length, liveness, delivery }));
-      if ((decision.kind === 'become-hub' || decision.kind === 'spawn-hub') && decision.forget) delete registry[project];
-      switch (decision.kind) {
-        case 'become-hub': {
+    const handedBack = await readHandedBack();
+    const key = handOverKey(request.docs);
+    const now = Date.now();
+    const again = handsOverAgain(handedBack[String(tabId)], key, now);
+    if (again) debugLog('bg:hub', 'the same documents again right after going back: this tab closes', () => ({ tabId }));
+    const claimer = { id: tabId, windowId: tab.windowId, index: tab.index, active: tab.active && !again };
+    const dispose = request.canGoBack && !again ? 'back' as const : 'close' as const;
+    const result = await settleClaim(request, claimer, dispose);
+    if (result.success && result.role === 'forwarded') {
+      if (result.dispose === 'back') handedBack[String(tabId)] = { docs: key, at: now };
+      else delete handedBack[String(tabId)];
+      await writeHandedBack(handedBack, now);
+    }
+    return result;
+  });
+}
+
+/** The claim itself (inside the serial queue): become the hub, or hand the documents to it. */
+async function settleClaim(
+  request: { docs: PdfHubDoc[]; canGoBack: boolean; project: string | null },
+  claimer: { id: number; windowId: number; index: number; active: boolean },
+  dispose: 'back' | 'close',
+): Promise<HubClaimResult> {
+  const registry = await readRegistry();
+  const { project } = await claimTarget(request, registry);
+  const promoted = await takePromotion(claimer.id, request.docs);
+  const entry = registry[project] ?? null;
+  const liveness = entry ? await hubLiveness(entry.tabId) : 'gone';
+  let delivery: HubDelivery | null = null;
+  let answer: Promise<'taken' | 'gone'> | null = null;
+  for (;;) {
+    // A page naming its project is a hub by intent (opened, restored or
+    // switched to it), and so is one replacing a PDF's wrapper page: it
+    // never hands its tab back to a web page.
+    const decision = decideHubClaim({
+      entry: registry[project] ?? null, liveness, delivery,
+      claimerTabId: claimer.id, canGoBack: request.canGoBack && !request.project && !promoted, hasDocs: request.docs.length > 0,
+    });
+    debugLog('bg:hub', `claim → ${decision.kind}`, () => ({ tabId: claimer.id, project, docs: request.docs.length, liveness, delivery }));
+    if ((decision.kind === 'become-hub' || decision.kind === 'spawn-hub') && decision.forget) delete registry[project];
+    switch (decision.kind) {
+      case 'become-hub': {
+        register(registry, project, { tabId: claimer.id, ready: true, pending: [] });
+        await writeRegistry(registry);
+        return { success: true, role: 'hub', project, docs: decision.pending };
+      }
+      case 'queue': {
+        queueForHub(registry, project, request.docs, decision.ready, answer);
+        await writeRegistry(registry);
+        if (claimer.active && !answer) await activateTab(decision.hubTabId);
+        return { success: true, role: 'forwarded', dispose };
+      }
+      case 'handed-over':
+        return { success: true, role: 'forwarded', dispose };
+      case 'forward-live': {
+        // Shown first: that also wakes a hub Chrome froze in the background.
+        if (claimer.active) await activateTab(decision.hubTabId);
+        ({ delivery, answer } = await forwardToLiveHub(decision.hubTabId, request.docs, claimer.active));
+        debugLog('bg:hub', `forwarded → ${delivery}`, () => ({ hubTabId: decision.hubTabId }));
+        continue;
+      }
+      case 'spawn-hub': {
+        const base = chrome.runtime.getURL(PDF_HUB_PAGE);
+        const url = request.docs.length === 1 && project === DEFAULT_PROJECT_ID
+          ? buildPdfHubEntryUrl(request.docs[0].url + request.docs[0].hash, base)
+          : buildPdfHubUrl(request.docs.map((d) => d.url), 0, base, null, project);
+        try {
+          const created = await chrome.tabs.create({ windowId: claimer.windowId, index: claimer.index + 1, active: claimer.active, url });
+          if (typeof created.id !== 'number') throw new Error('no tab id');
+          register(registry, project, { tabId: created.id, ready: false, pending: [] });
+          await writeRegistry(registry);
+          return { success: true, role: 'forwarded', dispose };
+        } catch (error) {
+          debugError('bg:hub', 'failed to create hub tab', () => ({ error: error instanceof Error ? error.message : String(error) }));
+          // Fall back to keeping the document right here.
           register(registry, project, { tabId: claimer.id, ready: true, pending: [] });
           await writeRegistry(registry);
-          return { success: true, role: 'hub', project, docs: decision.pending };
+          return { success: true, role: 'hub', project, docs: [] };
         }
-        case 'queue': {
-          queueForHub(registry, project, request.docs, decision.ready, answer);
-          await writeRegistry(registry);
-          if (claimer.active && !answer) await activateTab(decision.hubTabId);
-          return { success: true, role: 'forwarded', dispose };
-        }
-        case 'handed-over':
-          return { success: true, role: 'forwarded', dispose };
-        case 'forward-live': {
-          // Shown first: that also wakes a hub Chrome froze in the background.
-          if (claimer.active) await activateTab(decision.hubTabId);
-          ({ delivery, answer } = await forwardToLiveHub(decision.hubTabId, request.docs, claimer.active));
-          debugLog('bg:hub', `forwarded → ${delivery}`, () => ({ hubTabId: decision.hubTabId }));
-          continue;
-        }
-        case 'spawn-hub': {
-          const base = chrome.runtime.getURL(PDF_HUB_PAGE);
-          const url = request.docs.length === 1 && project === DEFAULT_PROJECT_ID
-            ? buildPdfHubEntryUrl(request.docs[0].url + request.docs[0].hash, base)
-            : buildPdfHubUrl(request.docs.map((d) => d.url), 0, base, null, project);
-          try {
-            const created = await chrome.tabs.create({ windowId: claimer.windowId, index: claimer.index + 1, active: claimer.active, url });
-            if (typeof created.id !== 'number') throw new Error('no tab id');
-            register(registry, project, { tabId: created.id, ready: false, pending: [] });
-            await writeRegistry(registry);
-            return { success: true, role: 'forwarded', dispose };
-          } catch (error) {
-            debugError('bg:hub', 'failed to create hub tab', () => ({ error: error instanceof Error ? error.message : String(error) }));
-            // Fall back to keeping the document right here.
-            register(registry, project, { tabId: claimer.id, ready: true, pending: [] });
-            await writeRegistry(registry);
-            return { success: true, role: 'hub', project, docs: [] };
-          }
-        }
-        default:
-          return { success: false, error: 'unreachable' };
       }
+      default:
+        return { success: false, error: 'unreachable' };
     }
-  });
+  }
 }
 
 // ─── The settings page ───
@@ -525,10 +588,19 @@ function forgetHubTab(tabId: number): Promise<void> {
   });
 }
 
+function forgetClosedTab(tabId: number): Promise<void> {
+  return serialized(async () => {
+    const handedBack = await readHandedBack();
+    if (!(String(tabId) in handedBack)) return;
+    delete handedBack[String(tabId)];
+    await writeHandedBack(handedBack);
+  });
+}
+
 /** A hub tab that navigated to anything but the hub page is no longer a hub. */
 export function noteTopLevelCommit(tabId: number, url: string): void {
   if (url.startsWith(chrome.runtime.getURL(PDF_HUB_PAGE))) return;
   void forgetHubTab(tabId);
 }
 
-chrome.tabs.onRemoved.addListener((tabId) => { void forgetHubTab(tabId); });
+chrome.tabs.onRemoved.addListener((tabId) => { void forgetHubTab(tabId); void forgetClosedTab(tabId); });
