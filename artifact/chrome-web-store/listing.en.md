@@ -35,8 +35,8 @@ ResearchPDF is a Chrome PDF viewer for people who read papers. PDFs you open on 
 • The home page lists every PDF you have opened, with reading progress and search.
 
 ■ Figure and table capture
-• Press S and drag to copy any region as an image.
-• Press S again and it finds the figures and tables on the page; click one to copy it with its source. Detection runs on your device with a model shipped inside the extension.
+• Press S and the figures and tables on the page are outlined; click one to copy it as an image with its source, or drag to copy any other area.
+• Choose in settings what a capture puts on the clipboard: the image, the image with its source, or the source alone. Detection runs on your device with a model shipped inside the extension.
 
 ■ Privacy
 • PDFs are read only in your browser. To look a paper up, only identifiers (DOI, arXiv id, title) go to the scholarly databases.

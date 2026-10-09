@@ -4,19 +4,25 @@
 //   npm run build
 //   PLAYWRIGHT_CORE=/path/to/node_modules/playwright-core \
 //   CHROMIUM=/path/to/chrome \
-//   [OPENALEX_API_KEY=…] [STORE_LANG=ko|en] [HIDE_UNANSWERED=1] \
+//   [STORE_LANG=ko|en] [FIXTURES=record [OPENALEX_API_KEY=…]] \
 //   node artifact/chrome-web-store/tools/capture.cjs
 //
 // STORE_LANG picks the extension's language and the sample project names
-// (default ko); the screens go to raw/<lang>/. HIDE_UNANSWERED leaves out a
-// paper-strip field whose database did not answer, instead of its ⚠.
+// (default ko); the screens go to raw/<lang>/.
 //
-// OPENALEX_API_KEY (optional, your own) is saved in the throwaway profile's
-// settings, so the shots do not depend on the keyless daily budget.
+// The paper databases (OpenAlex, Crossref, arXiv's API, Semantic Scholar) are
+// not asked: their answers come from fixtures/papers.json, so every run shows
+// the same venues, citations and references whatever the daily budgets. A
+// request with no fixture fails the run. FIXTURES=record asks the databases
+// for the requests the file has no answer to and rewrites it with the answers
+// this run used (a rate limit or server error fails the run rather than
+// being recorded);
+// OPENALEX_API_KEY (your own, never stored) spares the keyless OpenAlex
+// budget while recording. Delete the file to record from scratch.
 //
 // Writes artifact/chrome-web-store/tools/raw/<lang>/*.png (git-ignored); compose.cjs
 // turns them into the listing images. Every paper shown is CC BY 4.0 (see
-// ../README.md). Needs the network: arXiv, PLOS and the paper databases.
+// ../README.md). Needs the network for the PDFs (arXiv, PLOS).
 
 const fs = require('fs');
 const os = require('os');
@@ -26,6 +32,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_CORE || 'playwright-core');
 const ROOT = path.resolve(__dirname, '../../..');
 const LANG = process.env.STORE_LANG === 'en' ? 'en' : 'ko';
 const RAW = path.join(__dirname, 'raw', LANG);
+const FIXTURE_FILE = path.join(__dirname, 'fixtures', 'papers.json');
+const RECORD = process.env.FIXTURES === 'record';
+const DATABASES = /^https:\/\/(api\.openalex\.org|api\.crossref\.org|export\.arxiv\.org|api\.semanticscholar\.org)\//u;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const PAPERS = {
@@ -73,6 +82,37 @@ function extensionCopy() {
     locale: NAMES.locale,
     args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`, '--headless=new', `--lang=${NAMES.locale}`],
   });
+  // Paper-database answers: replayed, or recorded (see the top).
+  const fixtures = fs.existsSync(FIXTURE_FILE) ? JSON.parse(fs.readFileSync(FIXTURE_FILE, 'utf8')) : {};
+  if (!RECORD && Object.keys(fixtures).length === 0) throw new Error(`no fixtures at ${FIXTURE_FILE}: run once with FIXTURES=record`);
+  const problems = [];
+  const used = new Set();
+  /** The request as a fixture key: no key or contact parameters, parameters in order. */
+  const fixtureKey = (request) => {
+    const url = new URL(request.url());
+    url.searchParams.delete('api_key');
+    url.searchParams.delete('mailto');
+    url.searchParams.sort();
+    return `${request.method()} ${url}`;
+  };
+  await ctx.route(DATABASES, async (route) => {
+    const key = fixtureKey(route.request());
+    used.add(key);
+    const hit = fixtures[key];
+    if (hit) return route.fulfill({ status: hit.status, contentType: hit.contentType, body: hit.body, headers: { 'access-control-allow-origin': '*' } });
+    if (!RECORD) { problems.push(`no fixture: ${key}`); return route.abort('failed'); }
+    const url = new URL(route.request().url());
+    if (process.env.OPENALEX_API_KEY && url.hostname === 'api.openalex.org') url.searchParams.set('api_key', process.env.OPENALEX_API_KEY);
+    for (let attempt = 0; ; attempt += 1) {
+      const response = await route.fetch({ url: url.toString() });
+      // Semantic Scholar without a key often says 429 for a while.
+      if (response.status() === 429 && attempt < 6) { await sleep(5000 * (attempt + 1)); continue; }
+      const body = await response.text();
+      if (response.status() === 429 || response.status() >= 500) problems.push(`not recorded (${response.status()}): ${key}`);
+      else fixtures[key] = { status: response.status(), contentType: response.headers()['content-type'] ?? 'application/json', body };
+      return route.fulfill({ response, body });
+    }
+  });
   let [sw] = ctx.serviceWorkers();
   if (!sw) sw = await ctx.waitForEvent('serviceworker');
   const id = new URL(sw.url()).host;
@@ -83,25 +123,17 @@ function extensionCopy() {
     for (const doc of docs) params.append('f', PAPERS[doc]);
     return `chrome-extension://${id}/pdf-hub.html?${params}`;
   };
+  const VIEWER_FRAME = '#rpdf-frames iframe[src*="pdf-viewer.html"]:not([hidden])';
   const shot = async (page, name) => {
-    // A ⚠ in the paper strip means a database did not answer (rate limit, spent budget).
-    const strip = page.frameLocator('#rpdf-frames iframe:not([hidden])').first().locator('#vocab-t-pdf-paper:not([hidden])');
-    const warnings = await strip.locator('.vt-warn, .vt-warn-inline').count().catch(() => 0);
-    if (process.env.HIDE_UNANSWERED) {
-      // Leave out what has no answer rather than show its ⚠: strip fields, and
-      // in the reference list the "not found / daily limit" notes.
-      await strip.evaluate((el) => {
-        for (const seg of el.querySelectorAll('.vt-paper-seg')) if (seg.querySelector('.vt-warn, .vt-warn-inline')) seg.style.display = 'none';
-        for (const note of el.ownerDocument.querySelectorAll('.vt-refs-note')) note.style.display = 'none';
-        for (const stats of el.ownerDocument.querySelectorAll('.vt-ref-stats')) if (/OpenAlex/u.test(stats.textContent)) stats.style.visibility = 'hidden';
-      }).catch(() => undefined);
-      await sleep(200);
-    }
+    // A database that did not answer already failed the run (no fixture); a ⚠
+    // left in the strip is the paper's own data (e.g. OpenAlex knowing only part
+    // of its citations), shown as the extension shows it.
+    const strip = page.frameLocator(VIEWER_FRAME).first().locator('#vocab-t-pdf-paper:not([hidden])');
+    const warnings = await strip.locator('.vt-warn, .vt-warn-inline').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label') ?? e.textContent)).catch(() => []);
     await page.screenshot({ path: path.join(RAW, `${name}.png`) });
-    const note = !warnings ? '' : process.env.HIDE_UNANSWERED ? `— ${warnings} field(s) without an answer left out` : `— ${warnings} ⚠ in the paper strip: retake once the databases answer (or HIDE_UNANSWERED=1)`;
-    console.log('captured', name, note);
+    console.log('captured', name, warnings.length ? `— ⚠ ${warnings.join(' / ')}` : '');
   };
-  const viewer = (page) => page.frameLocator('#rpdf-frames iframe:not([hidden])').first();
+  const viewer = (page) => page.frameLocator(VIEWER_FRAME).first();
   /** Shows every tab once so each document loads and its paper is looked up. */
   const visitTabs = async (page, wait = 20_000) => {
     const count = await page.locator('.rpdf-tab-main').count();
@@ -119,17 +151,6 @@ function extensionCopy() {
     await chrome.storage.local.set({ rpdfLanguage: lang });
   }, LANG);
   await popup.close();
-
-  if (process.env.OPENALEX_API_KEY) {
-    const settings = await ctx.newPage();
-    await settings.goto(`chrome-extension://${id}/pdf-hub.html?s=settings`);
-    await sleep(1500);
-    const form = settings.frameLocator('#rpdf-settings iframe');
-    await form.locator('#openalex-api-key-input').fill(process.env.OPENALEX_API_KEY);
-    await form.locator('#openalex-api-key-save').click();
-    await sleep(800);
-    await settings.close();
-  }
 
   // Projects, their folder and looks — as the user would have set them up.
   const setup = await ctx.newPage();
@@ -185,7 +206,7 @@ function extensionCopy() {
   await sleep(800);
   await v.locator('#vt-annotate-toggle').click();
   await sleep(500);
-  const frameBox = await main.locator('#rpdf-frames iframe:not([hidden])').first().boundingBox();
+  const frameBox = await main.locator(VIEWER_FRAME).first().boundingBox();
   /** A line of page 1's text, in page coordinates (its word spans have no box of their own). */
   const lineBox = async (text) => {
     const r = await v.locator('.page[data-page-number="1"] .textLayer').evaluate((layer, wanted) => {
@@ -251,7 +272,7 @@ function extensionCopy() {
   await shot(main, '4-projects');
   await main.keyboard.press('Escape');
 
-  // 5. Figure capture, auto-detect mode (S twice), on the ReAct paper's Figure 1 (page 2).
+  // 5. Figure capture mode (S), on the ReAct paper's Figure 1 (page 2).
   await main.locator('.rpdf-tab-main').nth(2).click();
   await sleep(4000);
   const r = viewer(main);
@@ -260,10 +281,12 @@ function extensionCopy() {
   await sleep(2500);
   await r.locator('#viewerContainer').click({ position: { x: 30, y: 300 } });
   await main.keyboard.press('s');
-  await sleep(300);
-  await main.keyboard.press('s');
-  await sleep(15_000);
-  console.log('figure boxes:', await r.locator('.vt-figure-box').count());
+  // The layout model loads on first use, then outlines the pages shown.
+  for (let waited = 0; waited < 30_000 && !(await r.locator('.vt-figure-box').count()); waited += 500) await sleep(500);
+  await sleep(1000);
+  const boxes = await r.locator('.vt-figure-box').count();
+  if (!boxes) problems.push('5-figures: no figure outlined');
+  console.log('figure boxes:', boxes);
   const box = r.locator('.vt-figure-box').first();
   if (await box.count()) { await box.hover(); await sleep(500); }
   await shot(main, '5-figures');
@@ -279,6 +302,17 @@ function extensionCopy() {
 
   await ctx.close();
   fs.rmSync(ext, { recursive: true, force: true });
+  if (RECORD) {
+    // Only what this run asked for: answers no screen needs any more drop out.
+    const sorted = Object.fromEntries([...used].filter((k) => fixtures[k]).sort().map((k) => [k, fixtures[k]]));
+    fs.mkdirSync(path.dirname(FIXTURE_FILE), { recursive: true });
+    fs.writeFileSync(FIXTURE_FILE, `${JSON.stringify(sorted, null, 1)}\n`);
+    console.log(`recorded ${Object.keys(sorted).length} answers in ${path.relative(ROOT, FIXTURE_FILE)}`);
+  }
+  if (problems.length) {
+    console.error(`\n${problems.length} problem(s):\n${problems.join('\n')}`);
+    process.exit(1);
+  }
 })().catch((error) => {
   console.error(error);
   process.exit(1);

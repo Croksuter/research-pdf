@@ -48,7 +48,7 @@ const SCREENS_KO = [
     raw: '5-figures', out: '05-figure-capture',
     tag: '그림 캡처',
     title: '그림·표를 자동으로 찾아 클릭 한 번에 복사',
-    sub: 'S 키를 두 번 누르면 페이지의 그림과 표가 표시되고, 누르면 출처와 함께 이미지로 복사됩니다.',
+    sub: 'S 키를 누르면 페이지의 그림과 표가 표시되고, 누르면 출처와 함께 이미지로 복사됩니다.',
   },
 ];
 
@@ -81,7 +81,7 @@ const SCREENS_EN = [
     raw: '5-figures', out: '05-figure-capture',
     tag: 'Figure capture',
     title: 'Find figures and tables, copy one with a click',
-    sub: 'Press S twice to outline every figure and table on the page; click one to copy it as an image, with its source.',
+    sub: 'Press S to outline every figure and table on the page; click one to copy it as an image, with its source.',
   },
 ];
 

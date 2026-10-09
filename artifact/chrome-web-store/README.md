@@ -40,7 +40,7 @@ PLAYWRIGHT_CORE=/path/to/node_modules/playwright-core CHROMIUM=/path/to/chrome S
 - 앱 아이콘의 정본은 Penpot `ResearchPDF` 파일 `component` 페이지의 `app-icon`(512px, 크림 바탕에 Fraunces 600 R, 노란 형광펜 띠)입니다. `docs/icon-512.png`는 그것을 그대로 내보낸 것이고, `src/icons/icon-{16…256}.png`는 그 512px를 `magick -filter Lanczos -resize`로 줄인 것입니다. 아이콘을 바꾸면 `compose.cjs`를 다시 돌려 스토어 아이콘과 타일에 반영합니다.
 - `capture.cjs`는 원본 화면을 `tools/raw/<언어>/`(git 제외)에 저장합니다. 확장 프로그램 언어와 예시 프로젝트 이름(`LLM 추론` / `LLM reasoning` 등)을 `STORE_LANG`에 맞추고, 프로젝트·폴더·아이콘을 미리 만들어 두고 논문을 엽니다.
 - `compose.cjs`는 원본 화면에 그 언어의 제목·설명을 얹어 1280×800 스크린샷, 프로모션 타일, 여백을 둔 스토어 아이콘을 만듭니다. 출력은 알파 없는 PNG입니다(아이콘만 투명 여백 때문에 RGBA).
-- 논문 정보는 OpenAlex·Semantic Scholar에서 실시간으로 가져옵니다. OpenAlex는 키 없이 쓰면 IP당 하루 한도가 있어(자정 UTC = 09:00 KST 초기화), 한도가 바닥나면 "최근 2년 인용"과 연도별 그래프 자리에 ⚠가 나옵니다. `capture.cjs`는 그런 화면을 찍으면 `⚠ in the paper strip`이라고 알려 줍니다. 한도가 풀린 뒤 다시 찍거나, 본인 키를 `OPENALEX_API_KEY=…`로 넘기면(임시 프로필에만 저장) 한도와 상관없이 찍힙니다. 급하면 `HIDE_UNANSWERED=1`로 찍어 답이 없는 칸(⚠)과 참고문헌의 "OpenAlex에서 못 찾음"·한도 안내를 빼고 찍을 수 있습니다(현재 영어 이미지가 이렇게 찍혔습니다).
+- 논문 정보(게재처, 인용, 참고문헌)는 학술 DB에 묻지 않고 `tools/fixtures/papers.json`에 저장해 둔 응답으로 채웁니다. 그래서 OpenAlex 하루 한도나 Semantic Scholar 429와 상관없이 매번 같은 화면이 나옵니다. 저장된 응답이 없는 요청이 생기면 캡처가 실패합니다. 화면에 나오는 논문을 바꿨으면 `FIXTURES=record`로 한 번 찍습니다. 저장된 응답은 그대로 쓰고 없는 요청만 실제로 묻습니다(본인 OpenAlex 키가 있으면 `OPENALEX_API_KEY=…`, 기록할 때만 쓰고 저장하지 않음). 한도 초과나 서버 오류 응답은 기록하지 않고 실패로 알립니다. 처음부터 다시 기록하려면 파일을 지우고 찍습니다.
 
 ## 화면에 나오는 논문 (모두 CC BY 4.0)
 
@@ -59,7 +59,7 @@ PLAYWRIGHT_CORE=/path/to/node_modules/playwright-core CHROMIUM=/path/to/chrome S
 
 ## 등록 전 확인
 
-- [ ] 스크린샷 1·2·3·5에 ⚠ 표시가 없는지 (OpenAlex 한도), 한국어·영어 모두
+- [ ] `capture.cjs`가 문제 없이 끝났는지 (⚠·저장 안 된 요청이 있으면 실패로 끝납니다), 한국어·영어 모두
 - [ ] 패키지 요약이 등록정보와 맞는지 (`src/_locales/ko|en/messages.json`의 `appDescription`)
 - [ ] 홈페이지(`docs/index.html`)에 프로젝트·그림 캡처 등 최신 기능이 반영됐는지
 - [ ] 개인정보처리방침 URL이 열리는지
