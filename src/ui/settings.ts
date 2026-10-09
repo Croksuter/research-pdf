@@ -387,6 +387,8 @@ for (const control of [displayTitle, displaySubtitle, displayKinds, displayFavic
 
 const capture = {
   copy: byId<HTMLSelectElement>('capture-copy'),
+  result: byId<HTMLSelectElement>('capture-result'),
+  dismiss: byId<HTMLSelectElement>('capture-dismiss'),
   embed: byId<HTMLInputElement>('capture-embed'),
   style: byId<HTMLSelectElement>('capture-style'),
   prefix: byId<HTMLSelectElement>('capture-prefix'),
@@ -401,6 +403,10 @@ const captureChannel = new BroadcastChannel(FIGURE_COPY_OPTIONS_CHANNEL);
 
 function reflectCapture(o: FigureCopyOptions): void {
   capture.copy.value = o.copy;
+  capture.result.value = o.result;
+  capture.dismiss.value = o.dismiss;
+  // Closing applies to the notices only.
+  capture.dismiss.disabled = o.result === 'panel';
   capture.embed.checked = o.embed;
   capture.style.value = o.style;
   capture.prefix.value = o.prefix;
@@ -418,6 +424,8 @@ async function renderCapture(): Promise<void> {
 function saveCapture(): void {
   const options = normalizeFigureCopyOptions({
     copy: capture.copy.value,
+    result: capture.result.value,
+    dismiss: capture.dismiss.value,
     embed: capture.embed.checked,
     style: capture.style.value,
     prefix: capture.prefix.value,
@@ -429,6 +437,7 @@ function saveCapture(): void {
   });
   void setSetting(FIGURE_COPY_OPTIONS_SETTING_KEY, options);
   captureChannel.postMessage(options);
+  capture.dismiss.disabled = options.result === 'panel';
 }
 
 for (const control of Object.values(capture)) control.addEventListener('change', saveCapture);

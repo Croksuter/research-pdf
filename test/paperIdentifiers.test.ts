@@ -25,7 +25,9 @@ import {
   recentTwoYearCitations,
   scholarLinks,
   titleMatchConfirmed,
+  openAlexSearchText,
   titleSimilarity,
+  twoYearCell,
 } from '../src/shared/paperIdentifiers';
 
 describe('identifiersFromUrl', () => {
@@ -75,6 +77,14 @@ describe('normalizeDoi / normalizeArxivId / arxivIdFromDoi / mergeIdentifiers', 
 
   it('merges with first-wins precedence', () => {
     expect(mergeIdentifiers({ doi: 'a' }, { doi: 'b', arxivId: 'x' })).toEqual({ doi: 'a', arxivId: 'x' });
+  });
+});
+
+describe('OpenAlex search text', () => {
+  it('drops the characters OpenAlex reads as wildcards', () => {
+    expect(openAlexSearchText('Can rationalization improve robustness? NAACL')).toBe('Can rationalization improve robustness NAACL');
+    expect(openAlexSearchText('Did aristotle use a laptop? A question answering benchmark')).toBe('Did aristotle use a laptop A question answering benchmark');
+    expect(openAlexSearchText('  Attention*is all you need ')).toBe('Attention is all you need');
   });
 });
 
@@ -208,6 +218,23 @@ describe('derived values', () => {
     expect(recentTwoYearCitations(META, new Date(2026, 8, 1))).toBe(7769 + 3661);
     expect(recentTwoYearCitations(META, new Date(2030, 0, 1))).toBe(0);
     expect(recentTwoYearCitations({ ...META, citationsByYear: [] })).toBeNull();
+  });
+
+  it('gives the 2-year cell a value, a spinner, a ⚠ or leaves it out', () => {
+    const at = new Date(2026, 8, 1);
+    const settled = { pending: false, budgetSpent: false };
+    expect(twoYearCell(META, settled, at)).toEqual({ kind: 'value', count: 7769 + 3661 });
+    // OpenAlex knows 5,000 of 22,699 (22 %): no 2-year figure, said why — whether or not the others are still asked.
+    const famous = { ...META, citations: { openalex: 5000, crossref: null, semanticScholar: 22699 } };
+    expect(twoYearCell(famous, settled, at)).toEqual({ kind: 'hidden', openAlexShare: 5000 / 22699 });
+    expect(twoYearCell(famous, { pending: true, budgetSpent: false }, at).kind).toBe('hidden');
+    // No per-year counts: still arriving, then left out — or missing when OpenAlex's budget ran out.
+    const noYears = { ...META, citationsByYear: [] };
+    expect(twoYearCell(noYears, { pending: true, budgetSpent: false }, at)).toEqual({ kind: 'loading' });
+    expect(twoYearCell(noYears, settled, at)).toEqual({ kind: 'hidden', openAlexShare: null });
+    expect(twoYearCell(noYears, { pending: false, budgetSpent: true }, at)).toEqual({ kind: 'missing' });
+    // Under two years old, every citation is a recent one.
+    expect(twoYearCell({ ...noYears, year: 2025 }, settled, at)).toEqual({ kind: 'value', count: 75398 });
   });
 
   it('lists external links in a stable order', () => {

@@ -126,8 +126,9 @@ describe('shortAuthors / options', () => {
 
   it('normalizes stored options', () => {
     expect(normalizeFigureCopyOptions(undefined)).toEqual(DEFAULT_FIGURE_COPY_OPTIONS);
-    expect(normalizeFigureCopyOptions({ dpi: 123, copy: 'source', prefix: '출처:', annotations: true, continuous: true, autoDetect: 'no' }))
-      .toEqual({ ...DEFAULT_FIGURE_COPY_OPTIONS, copy: 'source', prefix: '출처:', annotations: true, continuous: true });
+    expect(normalizeFigureCopyOptions({ dpi: 123, copy: 'source', prefix: '출처:', annotations: true, continuous: true, autoDetect: 'no', result: 'bar', dismiss: 'manual' }))
+      .toEqual({ ...DEFAULT_FIGURE_COPY_OPTIONS, copy: 'source', prefix: '출처:', annotations: true, continuous: true, result: 'bar', dismiss: 'manual' });
+    expect(normalizeFigureCopyOptions({ result: 'popup', dismiss: 'later' })).toMatchObject({ result: 'card', dismiss: 'auto' });
   });
 
   it('reads the single `source` option older builds stored', () => {

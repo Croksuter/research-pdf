@@ -24,16 +24,16 @@ import {
   formatBibtex,
   formatCount,
   recentCitationSeries,
-  recentTwoYearCitations,
   scholarLinks,
   tidyPaperMeta,
   titleMatchConfirmed,
+  twoYearCell,
 } from '../../shared/paperIdentifiers';
 import { byId, el } from './dom';
 import { OPENALEX_BUDGET_REASON, openAlexBudgetSpent } from './openAlexAccess';
 import { buildCitationChart } from './paperChart';
 import { paperCacheKey, paperEvidence } from './paperEvidence';
-import { ReferenceList } from './paperRefs';
+import { ReferenceList, loadingMark } from './paperRefs';
 import { dropCachedMeta, enrich, loadPaperSettings, readCachedMeta, resolvePrimary, s2Unavailable, writeCachedMeta } from './paperResolve';
 import { crossrefBibtex, newLookup, s2Headers } from './paperSources';
 import { pdfReferences } from './pdfText';
@@ -58,6 +58,15 @@ const kindTitles = (): Record<string, string> => ({
 
 // ─── UI ───
 
+// Missing data is never rendered as 0 or a default: a ⚠︎ with a one-line
+// reason on hover takes the value's place — once nothing is still asking for
+// it; until then a spinner does.
+function warnMark(reason: string): HTMLElement {
+  const w = el('span', { className: 'vt-warn', tabindex: '0', role: 'img', 'aria-label': S.noInfo(reason) }, ['⚠︎']);
+  w.append(el('span', { className: 'vt-warn-pop', textContent: reason }));
+  return w;
+}
+
 export class PaperStrip {
   private readonly root = byId<HTMLElement>('vocab-t-pdf-paper');
   private readonly body = byId<HTMLDivElement>('vt-paper-body');
@@ -70,6 +79,10 @@ export class PaperStrip {
   private meta: PaperMeta | null = null;
   private bibtexCache: string | null = null;
   private readonly refs = new ReferenceList();
+  /** The reference count cell, what it shows (a database's count, or the PDF's list when longer), and whether the list is still loading. */
+  private refsValue: HTMLElement | null = null;
+  private refsCount: number | null = null;
+  private refsLoading = false;
 
   /**
    * @param onLayoutChange called whenever the strip appears/disappears; the
@@ -108,7 +121,20 @@ export class PaperStrip {
 
   /** Kicks off the background reference lookup for a fully resolved meta. */
   private startReferences(meta: PaperMeta, key: string): void {
-    void this.loadReferences(meta, key, this.generation);
+    const gen = this.generation;
+    this.refsLoading = true;
+    this.fillReferenceCount(false);
+    void this.loadReferences(meta, key, gen).finally(() => {
+      if (gen !== this.generation) return;
+      this.refsLoading = false;
+      this.fillReferenceCount(false);
+    });
+  }
+
+  /** The count, a spinner while something may still give one, else ⚠︎. */
+  private fillReferenceCount(pending: boolean): void {
+    this.refsValue?.replaceChildren(this.refsCount !== null ? formatCount(this.refsCount)
+      : pending || this.refsLoading ? loadingMark() : warnMark(S.noReferenceCount));
   }
 
   /**
@@ -155,6 +181,7 @@ export class PaperStrip {
     this.hide();
     this.meta = null;
     this.bibtexCache = null;
+    this.refsLoading = false;
     if (this.dismissed.has(doc.fingerprints[0] ?? '')) return;
     try {
       if (!(await loadPaperSettings())) {
@@ -214,7 +241,8 @@ export class PaperStrip {
         return;
       }
       this.meta = tidyPaperMeta(primary.meta);
-      this.render(this.meta);
+      // Semantic Scholar, Crossref and the venue are still being asked.
+      this.render(this.meta, true);
       const raw = await enrich(ctx, primary);
       const enriched = tidyPaperMeta(raw);
       if (s2Unavailable.has(raw)) s2Unavailable.add(enriched);
@@ -257,20 +285,15 @@ export class PaperStrip {
     if (wasHidden) this.onLayoutChange();
   }
 
-  private render(meta: PaperMeta): void {
+  /** `pending`: the record is the first answer, the other databases are still being asked. */
+  private render(meta: PaperMeta, pending = false): void {
     if (meta.title.trim()) this.onPaperMeta?.(meta);
     this.body.replaceChildren();
     const segment = (label: string, children: Array<Node | string>, title?: string) => el('span', { className: 'vt-paper-seg', title }, [
       el('span', { className: 'vt-paper-label', textContent: label }),
       el('span', { className: 'vt-paper-value' }, children),
     ]);
-    // Missing data is never rendered as 0 or a default: a ⚠︎ with a one-line
-    // reason on hover takes the value's place.
-    const warn = (reason: string) => {
-      const w = el('span', { className: 'vt-warn', tabindex: '0', role: 'img', 'aria-label': S.noInfo(reason) }, ['⚠︎']);
-      w.append(el('span', { className: 'vt-warn-pop', textContent: reason }));
-      return w;
-    };
+    const warn = (reason: string) => (pending ? loadingMark() : warnMark(reason));
     const join = (parts: Array<Node | string | null>, sep = ' · ') => {
       const out: Array<Node | string> = [];
       for (const part of parts) { if (part === null) continue; if (out.length) out.push(sep); out.push(part); }
@@ -293,32 +316,30 @@ export class PaperStrip {
     }
     this.body.append(info);
 
-    // ── 2년/전체 인용수 + sparkline (hover → detailed chart)
+    // ── 2년/전체 인용수 + sparkline (hover → detailed chart); see twoYearCell.
     const total = bestCitationCount(meta);
-    // The 2-year figure comes from OpenAlex's per-year counts. When OpenAlex
-    // knows only a small share of the citations (an arXiv-only record of a
-    // famous paper) it would sit next to another source's total as nonsense.
-    const openAlexShare = total && typeof meta.citations.openalex === 'number' ? meta.citations.openalex / total : null;
-    const partial = openAlexShare !== null && openAlexShare < 0.5;
-    const recent = meta.year !== null && meta.year >= new Date().getFullYear() - 1;
-    // A paper under two years old: every citation is a recent one.
-    const twoYear = partial ? null : recentTwoYearCitations(meta) ?? (recent ? total : null);
-    const twoYearWarning = openAlexBudgetSpent() ? OPENALEX_BUDGET_REASON
-      : partial ? S.twoYearPartial(Math.round((openAlexShare ?? 0) * 100))
-        : S.twoYearNoHistory;
+    const two = twoYearCell(meta, { pending, budgetSpent: openAlexBudgetSpent() });
+    const twoYearNode: Node | string | null = two.kind === 'value' ? formatCount(two.count)
+      : two.kind === 'loading' ? loadingMark()
+        : two.kind === 'missing' ? warnMark(OPENALEX_BUDGET_REASON)
+          : null;
+    const twoYearWhy = two.kind === 'hidden' && two.openAlexShare !== null ? S.twoYearPartial(Math.round(two.openAlexShare * 100)) : S.twoYearNoHistory;
+    // OpenAlex's years drawn next to a total it mostly does not know would mislead too.
+    const partial = two.kind === 'hidden' && two.openAlexShare !== null;
     const history = citationHistory(meta);
     const sourcesDetail = [
       typeof meta.citations.semanticScholar === 'number' ? `Semantic Scholar ${formatCount(meta.citations.semanticScholar)}` : null,
       typeof meta.citations.openalex === 'number' ? `OpenAlex ${formatCount(meta.citations.openalex)}` : null,
       typeof meta.citations.crossref === 'number' ? `Crossref ${formatCount(meta.citations.crossref)}` : null,
     ].filter(Boolean).join(' · ');
-    const cites = segment(S.citesLabel, [
-      twoYear === null ? warn(twoYearWarning) : formatCount(twoYear),
-      '/',
-      total === null ? warn(S.noCitationCount) : formatCount(total),
-      ...(s2Unavailable.has(meta) ? [' ', warn(S.s2RateLimited)] : []),
-    ], total === null ? undefined : S.citesTooltip(sourcesDetail));
-    if (history.some((p) => p.count > 0)) {
+    const totalCell = total === null ? warn(S.noCitationCount) : formatCount(total);
+    const cites = segment(twoYearNode === null ? S.citesTotalLabel : S.citesLabel, [
+      ...(twoYearNode === null ? [] : [twoYearNode, '/']),
+      totalCell,
+      ...(s2Unavailable.has(meta) ? [' ', warnMark(S.s2RateLimited)] : []),
+    ], total === null ? undefined
+      : twoYearNode === null ? S.citesTotalTooltip(sourcesDetail, twoYearWhy) : S.citesTooltip(sourcesDetail));
+    if (!partial && history.some((p) => p.count > 0)) {
       const series = recentCitationSeries(meta);
       const max = Math.max(...series.map((p) => p.count));
       const spark = el('span', { className: 'vt-spark', tabindex: '0', 'aria-label': S.citationChartLabel });
@@ -335,14 +356,17 @@ export class PaperStrip {
 
     // ── 참고문헌 (hover → resolved reference list)
     const references = bestReferenceCount(meta);
-    const refs = segment(S.referencesLabel, [references === null ? warn(S.noReferenceCount) : formatCount(references)]);
+    const refs = segment(S.referencesLabel, []);
+    this.refsValue = refs.querySelector<HTMLElement>('.vt-paper-value');
+    this.refsCount = references;
+    this.fillReferenceCount(pending);
     // No database count: the PDF's own list gives it, once read.
     // No publisher count: the PDF's own list gives it, once read, when it is
     // more than the indexes know.
     this.refs.onPdfCount = meta.references.crossref ? null : (count) => {
-      const value = refs.querySelector('.vt-paper-value');
-      if (!value || this.meta !== meta || (references !== null && count <= references)) return;
-      value.replaceChildren(formatCount(count));
+      if (this.meta !== meta || (references !== null && count <= references)) return;
+      this.refsCount = count;
+      this.fillReferenceCount(false);
       refs.title = S.referencesCountedFromPdf;
     };
     refs.classList.add('vt-paper-refs');

@@ -287,7 +287,13 @@ of ten colors) and its place in the list (folder + order key). Folders are
   after the preprint; then its venue and year replace the preprint's.
 - **Citations**: total = the largest source; "2년" from OpenAlex's per-year
   counts only when OpenAlex knows at least half of them (under two years old:
-  the total).
+  the total). Otherwise, as with no per-year counts, the 2-year cell and the
+  per-year chart are left out and the tooltip says why (`twoYearCell`); only
+  OpenAlex's spent budget leaves a ⚠.
+- **Loading**: a value still being asked for (the other databases after the
+  first answer, the reference count until the reference list settles, an
+  entry of that list still being linked) shows a spinner, never a ⚠ or "not
+  found"; those come once nothing is still asking.
 - **References**: OpenAlex's list, Semantic Scholar's, else the list printed
   in the PDF (section after the last References heading, numbered or
   author–year, margin line numbers dropped), linked to OpenAlex by DOI or arXiv
