@@ -180,15 +180,22 @@ function extensionCopy() {
   const library = await sw.evaluate(() => chrome.storage.local.get('rpdfLibrary').then((r) => Object.values(r.rpdfLibrary ?? {}).map((e) => [e.title ?? e.fileName, e.paperKind])));
   console.log('library:', JSON.stringify(library));
 
-  // 1. The paper in front, its citation history open (hover on the sparkline).
+  // 1. A paper with its citation history open (hover on the sparkline): the
+  // PLOS one, whose citations OpenAlex knows nearly all of — the LLM preprints'
+  // it knows a tenth of, so their strip leaves the 2-year figure and chart out.
+  const reading = hubs.preadinglist;
+  await reading.bringToFront();
+  await reading.locator('.rpdf-tab-main').nth(0).click();
+  await sleep(4000);
+  const plos = viewer(reading);
+  if (!(await plos.locator('.vt-spark').count())) problems.push('1-paper: no citation chart');
+  await plos.locator('.vt-spark').first().hover();
+  await sleep(800);
+  await shot(reading, '1-paper');
+  await main.bringToFront();
   await main.locator('.rpdf-tab-main').nth(0).click();
   await sleep(4000);
   const cot = viewer(main);
-  if (await cot.locator('.vt-spark').count()) {
-    await cot.locator('.vt-spark').first().hover();
-    await sleep(800);
-  }
-  await shot(main, '1-paper');
 
   // 2. The reference list (hover on References).
   if (await cot.locator('.vt-paper-refs').count()) {
