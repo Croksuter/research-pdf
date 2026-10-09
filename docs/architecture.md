@@ -60,7 +60,11 @@ no longer scatter across tabs that look like web pages.
   loading, discarded by Chrome, or frozen in the background and not answering
   yet — a frozen hub gets the message when it wakes, and the queue covers
   Chrome discarding it first). A tab that handed its documents over goes
-  back to its page, or closes if it has none. The hub (and its window) is brought forward only
+  back to its page, or closes if it has none. One that hands the same
+  documents over again within 30 s of going back — its page sent it on to
+  the PDF by itself, as publishers' download pages do — closes instead and
+  does not bring the hub forward again (`rpdfHandedBack`, session storage);
+  otherwise the two would loop. The hub (and its window) is brought forward only
   when the PDF opened in the foreground. The registry is project → tab, so a
   hub dragged to another window stays that project's hub.
 - An embedded PDF gets the viewer inline, unless its frame fills the tab

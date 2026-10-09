@@ -315,6 +315,34 @@ describe('hub claims', () => {
     expect(fake.tabs.get(1)?.active).toBe(false);
   });
 
+  it('closes a tab that hands the same PDF over again right after going back (a page that forwards to it by itself)', async () => {
+    // The project's PDF tab in window 7; window 8 opens one of its PDFs over a page.
+    fake.addTab({ id: 1, windowId: 7, index: 0, active: true });
+    expect(await claim([doc(A)], false, 1)).toMatchObject({ role: 'hub' });
+    fake.hubInboxes.set(1, []);
+    fake.addTab({ id: 2, windowId: 8, index: 0, active: true });
+    expect(await claim([doc(B)], true, 2)).toEqual({ success: true, role: 'forwarded', dispose: 'back' });
+    expect(fake.hubInboxes.get(1)?.[0]).toEqual({ docs: [doc(B)], activate: true });
+    // Back on its page, which sends it to the PDF again: it closes, and the PDF tab is not brought forward.
+    fake.tabs.get(1)!.active = false;
+    expect(await claim([doc(B, '#page=2')], true, 2)).toEqual({ success: true, role: 'forwarded', dispose: 'close' });
+    expect(fake.hubInboxes.get(1)?.[1]).toEqual({ docs: [doc(B, '#page=2')], activate: false });
+    expect(fake.tabs.get(1)?.active).toBe(false);
+    // Another PDF from the same tab is a hand-over like any other.
+    fake.addTab({ id: 3, windowId: 8, index: 1, active: true });
+    expect(await claim([doc(A)], true, 3)).toEqual({ success: true, role: 'forwarded', dispose: 'back' });
+    expect(await claim([doc(LOCAL)], true, 3)).toEqual({ success: true, role: 'forwarded', dispose: 'back' });
+  });
+
+  it('tells a hand-over repeated moments after going back from a later one, purely', () => {
+    const key = hub.handOverKey([doc(B, '#page=2'), doc(A)]);
+    expect(key).toBe(hub.handOverKey([doc(A), doc(B)]));
+    expect(hub.handsOverAgain(undefined, key, 1_000)).toBe(false);
+    expect(hub.handsOverAgain({ docs: key, at: 1_000 }, key, 1_000 + hub.HANDED_BACK_MS - 1)).toBe(true);
+    expect(hub.handsOverAgain({ docs: key, at: 1_000 }, key, 1_000 + hub.HANDED_BACK_MS)).toBe(false);
+    expect(hub.handsOverAgain({ docs: key, at: 1_000 }, hub.handOverKey([doc(A)]), 1_500)).toBe(false);
+  });
+
   it('keeps a web tab a web tab: the first PDF opened over a page gets a clean hub tab next to it', async () => {
     fake.addTab({ id: 1, windowId: 7, index: 4, active: true });
     expect(await claim([doc(A, '#page=3')], true, 1)).toEqual({ success: true, role: 'forwarded', dispose: 'back' });
