@@ -1,6 +1,6 @@
 {
   "name": "research-pdf",
-  "version": "0.2.0",
+  "version": "0.30.0",
   "description": "PDF viewer for papers: drawings and reading position follow you across every Chrome profile and device through your own Google Drive.",
   "private": true,
   "type": "commonjs",
