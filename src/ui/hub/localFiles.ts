@@ -4,13 +4,16 @@
 // kept (IndexedDB, per hub tab session: sessionStorage names the session)
 // while a tab or a recently-closed entry of this hub tab refers to it, in
 // any of the projects it showed. A reload (a new language), a project switch
-// in place and a browser restart that restores the tab bring them back.
+// in place and a browser restart that restores the tab bring them back. A
+// local file moved to another project is handed over: its bytes go to the
+// same store under `handoff:<project>`, and that project's hub takes them in
+// (at once if it is open, else when it opens, in any tab).
 
 import { fileIdentity, parseClosedTabs, parseLocalTabs, type HubLocalTab } from '../../shared/hubTabs';
 import { S } from '../pdfHub.strings';
 import { type HubTab, activeKey, isHub, projectId, tabs } from './store';
 import { showToast } from './uiKit';
-import { createTab, insertTab, updateTabLabel } from './tabStrip';
+import { addDocs, createTab, insertTab, updateTabLabel } from './tabStrip';
 import { CLOSED_STORAGE_KEY, closed } from './session';
 
 export const LOCAL_TABS_KEY = 'rpdfLocalTabs';
@@ -218,3 +221,54 @@ export function restoreLocalTabs(): HubTab | null {
   if (missing) showToast(S.localFilesLost(missing));
   return front;
 }
+
+// ─── Handing a local file to another project ───
+
+const handoffKeys = (project: string) => IDBKeyRange.bound(`handoff:${project}:`, `handoff:${project}:\uffff`);
+const handoffChannel = new BroadcastChannel('rpdf-hub-handoff');
+
+interface HandedOverFile extends StoredLocalFile { title: string; paperTitle: string | null; activate: boolean }
+
+/** Gives the tab's file to `project` (`activate`: shown in front there). Returns the copy's key, for undo. */
+export async function handOver(project: string, tab: HubTab, activate: boolean): Promise<string | null> {
+  if (!tab.file) return null;
+  const key = `handoff:${project}:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  // Not this session's: pruning leaves it, and copies nobody takes go with age like any other.
+  const record: HandedOverFile = { session: `handoff:${project}`, file: tab.file, touchedAt: Date.now(), title: tab.title, paperTitle: tab.paperTitle, activate };
+  await withFiles('readwrite', (store) => store.put(record, key));
+  handoffChannel.postMessage({ project });
+  return key;
+}
+
+/** Takes back a copy not taken in yet (undo). */
+export function withdrawHandOver(key: string): Promise<unknown> {
+  return withFiles('readwrite', (store) => store.delete(key)).catch(() => undefined);
+}
+
+/** Opens here the local files handed to this hub's project. */
+export async function claimHandedOver(): Promise<void> {
+  if (!isHub) return;
+  const records: HandedOverFile[] = [];
+  await withFiles('readwrite', (store) => {
+    const cursor = store.openCursor(handoffKeys(projectId));
+    cursor.onsuccess = () => {
+      const c = cursor.result;
+      if (!c) return;
+      const record = c.value as HandedOverFile;
+      if (record?.file instanceof File) records.push(record);
+      c.delete();
+      c.continue();
+    };
+  }).catch(() => undefined);
+  for (const record of records) {
+    const [tab] = addDocs([{ url: null, hash: '', file: record.file }], record.activate);
+    if (!tab) continue;
+    tab.title = record.title;
+    tab.paperTitle = record.paperTitle;
+    updateTabLabel(tab);
+  }
+}
+
+handoffChannel.onmessage = (e: MessageEvent) => {
+  if (isHub && (e.data as { project?: unknown } | null)?.project === projectId) void claimHandedOver();
+};

@@ -177,6 +177,20 @@ export function moveInOrder<T>(list: readonly T[], moved: T, target: T | null, a
   return rest;
 }
 
+/**
+ * The tabs whose documents left the hub's project since `before` (moved in
+ * another hub or on another device, a move undone): not pinned — pins follow
+ * the project's own record.
+ */
+export function tabsThatLeft<T extends { docId: string | null; libraryId: string | null; pinned: boolean }>(
+  tabs: readonly T[], before: ReadonlySet<string>, now: ReadonlySet<string>,
+): T[] {
+  return tabs.filter((t) => {
+    const docId = t.docId ?? t.libraryId;
+    return !!docId && !t.pinned && before.has(docId) && !now.has(docId);
+  });
+}
+
 // ─── Home ───
 
 /** The selected ids still on screen: a filter, search, page or pin hides the rest, and an action must never reach a row nobody sees. */

@@ -179,14 +179,13 @@ const figureCapture = new FigureCapture({
   eventBus,
   getDoc: () => currentDoc,
   getSource: () => ({ meta: paperStrip.paperMeta, docTitle: paperTitle ?? docTitle }),
-  onModeChange: (mode) => {
-    captureBtn.classList.toggle('is-active', mode !== 'off');
-    captureBtn.dataset.mode = mode;
-    captureBtn.setAttribute('aria-pressed', String(mode !== 'off'));
+  onActiveChange: (active) => {
+    captureBtn.classList.toggle('is-active', active);
+    captureBtn.setAttribute('aria-pressed', String(active));
   },
 });
 captureBtn.title = S.captureTitle(/Mac/u.test(navigator.platform) ? '⌘⇧X' : 'Ctrl+Shift+X');
-captureBtn.addEventListener('click', () => figureCapture.cycleMode());
+captureBtn.addEventListener('click', () => figureCapture.toggle());
 // Drawings persist per document identity and come back on reopen; when the
 // file itself also carries annotations the user resolves it in a dialog.
 // Its previews scroll the document; that is not the reader moving, so no
@@ -687,7 +686,7 @@ document.addEventListener('keydown', (e) => {
   if (!typing && !e.altKey && !presentation.active
     && ((!mod && !e.shiftKey && e.code === 'KeyS') || (mod && e.shiftKey && e.code === 'KeyX'))) {
     e.preventDefault();
-    figureCapture.cycleMode();
+    figureCapture.toggle();
     return;
   }
   if (mod && !e.altKey) {

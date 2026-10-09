@@ -1,12 +1,14 @@
 // ─── Figure copy: drag a region of a page, get a clean image and its source ───
 //
-// The capture key (`S`, ⌘/Ctrl+Shift+X, the toolbar button) cycles three
-// states: free capture (drag a region), auto-detect (the figures and tables
-// of each rendered page are outlined, shared/figureDetect.ts — one click
-// copies one, and dragging still works), and off. Alt+drag works anytime.
-// The region is copied at once with the remembered options and a small panel
-// opens beside it: the source line (editable), copy image / copy source /
-// save PNG, and the options.
+// The capture key (`S`, ⌘/Ctrl+Shift+X, the toolbar button) turns capture
+// mode on and off. In it the figures and tables of each rendered page are
+// outlined as they are found (shared/figureDetect.ts, layoutDetect.ts) and a
+// click copies one; a drag anywhere, outlines included, selects a region
+// instead — once the press moves, the outlines step aside until it ends.
+// Alt+drag works anytime. A capture does with the clipboard what the options
+// say and opens a small panel beside the region: the source line (editable),
+// copy image / copy source / save PNG, and the options. Capture mode ends
+// after a capture unless it is continuous.
 //
 // The image is not a screenshot: the region is rendered again by PDF.js at the
 // chosen DPI, so it is sharp at any zoom, and the reader's drawings go in or
@@ -15,10 +17,11 @@
 //
 // Clipboard: the web clipboard holds image/png, text/plain and text/html. By
 // default only the image is written (slides would otherwise pick the text or
-// the HTML), and the source is a second copy; "together" writes all three for
-// documents that paste an image with its caption; "embed" draws the source
-// under the image. The item's blobs are promises so the write starts inside
-// the gesture while the rendering finishes.
+// the HTML), and the source is a second copy; "image-source" writes all three
+// for documents that paste an image with its caption; "source" the text
+// alone; "none" nothing until a button asks. "embed" draws the source under
+// the image. The item's blobs are promises so the write starts inside the
+// gesture while the rendering and the caption search finish.
 
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import { AnnotationMode, OPS, Util } from 'pdfjs-dist';
@@ -27,6 +30,7 @@ import { getSetting, setSetting } from '../../db/settingsRepository';
 import {
   DEFAULT_FIGURE_COPY_OPTIONS,
   DPI_CHOICES,
+  FIGURE_COPY_OPTIONS_CHANNEL,
   FIGURE_COPY_OPTIONS_SETTING_KEY,
   type FigureCopyOptions,
   type FigureLabel,
@@ -62,10 +66,6 @@ interface PageViewLike {
   };
 }
 
-export type CaptureMode = 'off' | 'free' | 'auto';
-
-const hintFor = (mode: Exclude<CaptureMode, 'off'>): string => (mode === 'free' ? S.captureHintFree : S.captureHintAuto);
-
 /** A captured region, in PDF points of its page. */
 interface Region {
   pageNumber: number;
@@ -80,12 +80,17 @@ export interface FigureCaptureDeps {
   eventBus: EventBus;
   getDoc: () => PDFDocumentProxy | null;
   getSource: () => { meta: PaperMeta | null; docTitle: string };
-  onModeChange: (mode: CaptureMode) => void;
+  onActiveChange: (active: boolean) => void;
 }
 
 export class FigureCapture {
   private options: FigureCopyOptions = DEFAULT_FIGURE_COPY_OPTIONS;
-  private mode: CaptureMode = 'off';
+  private active = false;
+  /** Pages whose figures are being looked for right now. */
+  private detecting = 0;
+  /** Ends the press or drag in progress, if one is. */
+  private cancelDrag: (() => void) | null = null;
+  private readonly channel = new BroadcastChannel(FIGURE_COPY_OPTIONS_CHANNEL);
   /** Detected figures per page of `linesDoc`, in PDF points. */
   private detected = new Map<number, Promise<Array<DetectedFigure & { pdf: [number, number, number, number] }> | null>>();
   /** Pages outlined (or being outlined) in this auto-detect session. */
@@ -107,7 +112,8 @@ export class FigureCapture {
     annotations: el('input', { type: 'checkbox' }),
     dpi: select(DPI_CHOICES.map((dpi) => [String(dpi), `${dpi} dpi`])),
     background: select([['white', S.captureWhite], ['transparent', S.captureTransparent]]),
-    source: select([['separate', S.captureSeparate], ['together', S.captureTogether], ['embed', S.captureEmbed]]),
+    copy: select([['none', S.captureCopyNone], ['image', S.captureCopyImageOnly], ['image-source', S.captureCopyImageSource], ['source', S.captureCopySourceOnly]]),
+    embed: el('input', { type: 'checkbox' }),
     style: select([['short', S.captureShort], ['apa', S.captureApa]]),
     prefix: select([['Source:', 'Source:'], ['출처:', '출처:'], ['', S.captureNone]]),
   };
@@ -116,8 +122,10 @@ export class FigureCapture {
     this.buildPanel();
     document.body.append(this.hint, this.panel);
     void getSetting<unknown>(FIGURE_COPY_OPTIONS_SETTING_KEY, null)
-      .then((raw) => { this.options = normalizeFigureCopyOptions(raw); this.reflectOptions(); })
+      .then((raw) => this.applyOptions(normalizeFigureCopyOptions(raw)))
       .catch(() => { /* defaults */ });
+    // Changed in another viewer or on the settings page.
+    this.channel.onmessage = (e: MessageEvent) => this.applyOptions(normalizeFigureCopyOptions(e.data));
     this.reflectOptions();
 
     deps.container.addEventListener('pointerdown', (e) => this.onPointerDown(e), { capture: true });
@@ -135,32 +143,52 @@ export class FigureCapture {
       if (doc && this.wantsOutline(doc, evt.pageNumber)) this.outlineSoon(evt.pageNumber);
     });
     deps.eventBus.on('updateviewarea', () => this.outlineRenderedPages());
-    deps.eventBus.on('pagesdestroy', () => { this.setMode('off'); this.detected.clear(); });
+    deps.eventBus.on('pagesdestroy', () => { this.setActive(false); this.detected.clear(); });
   }
 
-  /** The capture key: free → auto-detect → off. */
-  cycleMode(): void {
-    this.setMode(this.mode === 'off' ? 'free' : this.mode === 'free' ? 'auto' : 'off');
+  /** The capture key: capture mode on or off. */
+  toggle(): void {
+    this.setActive(!this.active);
   }
 
-  setMode(mode: CaptureMode): void {
-    if (mode !== 'off' && !this.deps.getDoc()) return;
-    this.mode = mode;
-    if (mode !== 'off') this.close();
-    this.hint.hidden = mode === 'off';
-    this.hint.textContent = mode === 'off' ? '' : hintFor(mode);
-    document.body.classList.toggle('vt-capturing', mode !== 'off');
-    document.body.classList.toggle('vt-capture-auto', mode === 'auto');
+  setActive(active: boolean): void {
+    if (active && !this.deps.getDoc()) return;
+    this.cancelDrag?.();
+    this.active = active;
+    if (active) this.close();
+    document.body.classList.toggle('vt-capturing', active);
     this.clearOutlines();
-    if (mode === 'auto') this.outlineRenderedPages();
-    this.deps.onModeChange(mode);
+    if (active) this.outlineRenderedPages();
+    this.updateHint();
+    this.deps.onActiveChange(active);
   }
 
-  /** Esc: leaves capture mode, else closes the panel. True when it did something. */
+  /** Esc: ends a drag, else closes the panel, else leaves capture mode. True when it did something. */
   handleEscape(): boolean {
-    if (this.mode !== 'off') { this.setMode('off'); return true; }
+    if (this.cancelDrag) { this.cancelDrag(); return true; }
     if (this.region) { this.close(); return true; }
+    if (this.active) { this.setActive(false); return true; }
     return false;
+  }
+
+  /** The line over the page: what a click or a drag does, and how the search for figures goes. */
+  private updateHint(): void {
+    this.hint.hidden = !this.active;
+    if (!this.active) { this.hint.textContent = ''; return; }
+    if (!this.options.autoDetect) { this.hint.textContent = S.captureHintDrag; return; }
+    const found = this.deps.container.querySelectorAll('.vt-figure-box').length;
+    this.hint.textContent = this.detecting > 0 ? S.captureHintFinding : found > 0 ? S.captureHintFound(found) : S.captureHintNone;
+  }
+
+  private applyOptions(next: FigureCopyOptions): void {
+    const detectChanged = next.autoDetect !== this.options.autoDetect;
+    this.options = next;
+    this.reflectOptions();
+    if (this.active && detectChanged) {
+      this.clearOutlines();
+      this.outlineRenderedPages();
+    }
+    this.updateHint();
   }
 
   // ─── Auto-detect ───
@@ -168,7 +196,7 @@ export class FigureCapture {
   /** Outlines the rendered pages on screen that have none yet. */
   private outlineRenderedPages(): void {
     const doc = this.deps.getDoc();
-    if (this.mode !== 'auto' || !doc) return;
+    if (!this.active || !this.options.autoDetect || !doc) return;
     for (let i = 0; i < doc.numPages; i += 1) {
       if (this.outlined.has(i + 1) || !this.wantsOutline(doc, i + 1)) continue;
       const view = this.deps.pdfViewer.getPageView(i) as unknown as PageViewLike | undefined;
@@ -177,7 +205,11 @@ export class FigureCapture {
   }
 
   private outlineSoon(pageNumber: number): void {
-    void this.outlinePage(pageNumber).catch((error: unknown) => debugLog('viewer', 'outline failed', () => ({ error: String(error) })));
+    this.detecting += 1;
+    this.updateHint();
+    void this.outlinePage(pageNumber)
+      .catch((error: unknown) => debugLog('viewer', 'outline failed', () => ({ error: String(error) })))
+      .finally(() => { this.detecting -= 1; this.updateHint(); });
   }
 
   private clearOutlines(): void {
@@ -223,9 +255,9 @@ export class FigureCapture {
     return found;
   }
 
-  /** Auto-detect is on for this document and the page is on screen. */
+  /** Capture mode outlines this document and the page is on screen. */
   private wantsOutline(doc: PDFDocumentProxy, pageNumber: number): boolean {
-    if (this.mode !== 'auto' || this.deps.getDoc() !== doc) return false;
+    if (!this.active || !this.options.autoDetect || this.deps.getDoc() !== doc) return false;
     const visible = (this.deps.pdfViewer as unknown as { _getVisiblePages?: () => { ids?: Set<number> } })._getVisiblePages?.().ids;
     return !visible || visible.has(pageNumber);
   }
@@ -233,9 +265,9 @@ export class FigureCapture {
   private async outlinePage(pageNumber: number): Promise<void> {
     this.outlined.add(pageNumber);
     const figures = await this.detect(pageNumber);
-    debugLog('viewer', 'outline page', () => ({ pageNumber, figures: figures?.length ?? 'skipped', mode: this.mode }));
+    debugLog('viewer', 'outline page', () => ({ pageNumber, figures: figures?.length ?? 'skipped', active: this.active }));
     if (!figures) { this.outlined.delete(pageNumber); return; }
-    if (this.mode !== 'auto') return;
+    if (!this.active || !this.options.autoDetect) return;
     const view = this.deps.pdfViewer.getPageView(pageNumber - 1) as unknown as PageViewLike | undefined;
     if (!view) return;
     view.div.querySelectorAll('.vt-figure-box').forEach((node) => node.remove());
@@ -259,6 +291,8 @@ export class FigureCapture {
       });
       box.dataset.page = String(pageNumber);
       box.dataset.pdf = figure.pdf.join(',');
+      // Enter or Space on a focused outline; a pointer goes through onPointerDown.
+      box.addEventListener('click', (e) => { if (e.detail === 0) this.captureOutline(box); });
       view.div.append(box);
     }
   }
@@ -269,11 +303,17 @@ export class FigureCapture {
     const pdf = (box.dataset.pdf ?? '').split(',').map(Number) as [number, number, number, number];
     const view = this.deps.pdfViewer.getPageView(pageNumber - 1) as unknown as PageViewLike | undefined;
     if (!view || pdf.length !== 4 || pdf.some((v) => !Number.isFinite(v))) return;
+    this.close(); // the previous capture, still open in continuous mode
     const rectEl = el('div', { className: 'vt-capture-rect' });
     Object.assign(rectEl.style, { left: box.style.left, top: box.style.top, width: box.style.width, height: box.style.height });
     view.div.append(rectEl);
-    this.setMode('off');
+    this.afterCapture();
     this.open({ pageNumber, pdf, rotation: view.viewport.rotation, rectEl });
+  }
+
+  /** Capture mode ends with a capture, unless it is continuous. */
+  private afterCapture(): void {
+    if (this.active && !this.options.continuous) this.setActive(false);
   }
 
   private pageLinesOf(doc: PDFDocumentProxy, pageNumber: number): Promise<TextLine[]> {
@@ -296,20 +336,17 @@ export class FigureCapture {
   // ─── Drawing the region ───
 
   private onPointerDown(e: PointerEvent): void {
-    if (e.button !== 0 || !(this.mode !== 'off' || e.altKey)) return;
-    const outline = this.mode === 'auto' ? (e.target as HTMLElement | null)?.closest<HTMLElement>('.vt-figure-box') : null;
-    if (outline) {
-      e.preventDefault();
-      e.stopPropagation();
-      this.captureOutline(outline);
-      return;
-    }
-    const pageEl = (e.target as HTMLElement | null)?.closest<HTMLElement>('.page');
+    if (e.button !== 0 || !(this.active || e.altKey)) return;
+    const target = e.target as HTMLElement | null;
+    // A press on an outline copies that figure, unless it turns into a drag.
+    const outline = this.active ? target?.closest<HTMLElement>('.vt-figure-box') ?? null : null;
+    const pageEl = target?.closest<HTMLElement>('.page');
     const pageNumber = Number(pageEl?.dataset.pageNumber);
     if (!pageEl || !Number.isFinite(pageNumber) || !this.deps.getDoc()) return;
     // Nothing underneath (text selection, annotation editors) sees this drag.
     e.preventDefault();
     e.stopPropagation();
+    this.cancelDrag?.();
     this.close();
     getSelection()?.removeAllRanges();
 
@@ -322,32 +359,44 @@ export class FigureCapture {
     const x0 = clamp(e.clientX - start.left, start.width);
     const y0 = clamp(e.clientY - start.top, start.height);
     const rectEl = el('div', { className: 'vt-capture-rect' });
-    pageEl.append(rectEl);
-    document.body.classList.add('vt-capture-dragging');
     let rect = { x: x0, y: y0, w: 0, h: 0 };
+    let dragging = false;
 
     const move = (ev: PointerEvent) => {
       const b = box();
       const x1 = clamp(ev.clientX - b.left, b.width);
       const y1 = clamp(ev.clientY - b.top, b.height);
+      if (!dragging) {
+        if (Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)) < MIN_DRAG_PX) return;
+        // A drag: the outlines step aside (CSS) until it ends.
+        dragging = true;
+        pageEl.append(rectEl);
+        document.body.classList.add('vt-capture-dragging');
+      }
       rect = { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
       Object.assign(rectEl.style, { left: `${rect.x}px`, top: `${rect.y}px`, width: `${rect.w}px`, height: `${rect.h}px` });
     };
-    const end = (ev: PointerEvent) => {
+    const stop = () => {
       window.removeEventListener('pointermove', move, true);
       window.removeEventListener('pointerup', end, true);
       window.removeEventListener('pointercancel', end, true);
       document.body.classList.remove('vt-capture-dragging');
-      if (ev.type === 'pointercancel' || rect.w < MIN_DRAG_PX || rect.h < MIN_DRAG_PX) {
-        rectEl.remove();
+      this.cancelDrag = null;
+    };
+    const end = (ev: PointerEvent) => {
+      stop();
+      if (ev.type === 'pointercancel') { rectEl.remove(); return; }
+      if (!dragging) {
+        if (outline?.isConnected) this.captureOutline(outline);
         return;
       }
+      if (rect.w < MIN_DRAG_PX || rect.h < MIN_DRAG_PX) { rectEl.remove(); return; }
       ev.preventDefault();
       const view = this.deps.pdfViewer.getPageView(pageNumber - 1) as unknown as PageViewLike | undefined;
       if (!view) { rectEl.remove(); return; }
       const [ax, ay] = view.viewport.convertToPdfPoint(rect.x, rect.y);
       const [bx, by] = view.viewport.convertToPdfPoint(rect.x + rect.w, rect.y + rect.h);
-      if (this.mode !== 'off') this.setMode('off');
+      this.afterCapture();
       this.open({
         pageNumber,
         pdf: [Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by)],
@@ -355,6 +404,8 @@ export class FigureCapture {
         rectEl,
       });
     };
+    // Esc mid-drag: no capture, the outlines come back.
+    this.cancelDrag = () => { stop(); rectEl.remove(); };
     window.addEventListener('pointermove', move, true);
     window.addEventListener('pointerup', end, true);
     window.addEventListener('pointercancel', end, true);
@@ -375,7 +426,16 @@ export class FigureCapture {
       this.label = label;
       if (!this.sourceEdited) this.sourceInput.value = this.sourceText();
     });
-    this.copyImage(labelReady);
+    this.copyAsOptioned(labelReady);
+  }
+
+  /** What a capture does with the clipboard (the options' `copy`). */
+  private copyAsOptioned(labelReady: Promise<void>): void {
+    switch (this.options.copy) {
+      case 'none': this.setStatus(S.captureNotCopied); return;
+      case 'source': this.copySource(labelReady); return;
+      default: this.copyImage(labelReady, this.options.copy === 'image-source');
+    }
   }
 
   private buildPanel(): void {
@@ -383,9 +443,9 @@ export class FigureCapture {
     closeBtn.innerHTML = '<svg><use href="#i-close"/></svg>';
     closeBtn.addEventListener('click', () => this.close());
     const copyImageBtn = el('button', { type: 'button', className: 'vt-btn vt-btn-text vt-btn-primary' }, [S.captureCopyImage]);
-    copyImageBtn.addEventListener('click', () => this.copyImage(Promise.resolve()));
+    copyImageBtn.addEventListener('click', () => this.copyImage(Promise.resolve(), this.options.copy === 'image-source'));
     const copySourceBtn = el('button', { type: 'button', className: 'vt-btn vt-btn-text' }, [S.captureCopySource]);
-    copySourceBtn.addEventListener('click', () => { void this.copySource(); });
+    copySourceBtn.addEventListener('click', () => this.copySource(Promise.resolve()));
     const saveBtn = el('button', { type: 'button', className: 'vt-btn vt-btn-text' }, [S.captureSavePng]);
     saveBtn.addEventListener('click', () => { void this.savePng(); });
     this.optionsBtn.addEventListener('click', () => {
@@ -395,13 +455,17 @@ export class FigureCapture {
     });
     this.sourceInput.addEventListener('input', () => { this.sourceEdited = true; });
 
-    const row = (label: string, control: HTMLElement) => el('label', { className: 'vt-capture-option' }, [el('span', { textContent: label }), control]);
+    const row = (label: string, control: HTMLElement, wide = false) =>
+      el('label', { className: wide ? 'vt-capture-option vt-capture-wide' : 'vt-capture-option' }, [el('span', { textContent: label }), control]);
+    const check = (control: HTMLInputElement, label: string) =>
+      el('label', { className: 'vt-capture-option vt-capture-check' }, [control, el('span', { textContent: label })]);
     const c = this.controls;
     this.optionsBox.append(
-      el('label', { className: 'vt-capture-option vt-capture-check' }, [c.annotations, el('span', { textContent: S.captureAnnotations })]),
+      row(S.captureCopyWhen, c.copy, true),
+      check(c.annotations, S.captureAnnotations),
+      check(c.embed, S.captureEmbed),
       row(S.captureDpi, c.dpi),
       row(S.captureBackground, c.background),
-      row(S.captureSource, c.source),
       row(S.captureStyle, c.style),
       row(S.capturePrefix, c.prefix),
     );
@@ -425,7 +489,8 @@ export class FigureCapture {
     c.annotations.checked = o.annotations;
     c.dpi.value = String(o.dpi);
     c.background.value = o.background;
-    c.source.value = o.source;
+    c.copy.value = o.copy;
+    c.embed.checked = o.embed;
     c.style.value = o.style;
     c.prefix.value = o.prefix;
   }
@@ -433,20 +498,25 @@ export class FigureCapture {
   private onOptionChange(key: keyof FigureCopyOptions): void {
     const c = this.controls;
     this.options = normalizeFigureCopyOptions({
+      ...this.options,
       annotations: c.annotations.checked,
       dpi: Number(c.dpi.value),
       background: c.background.value,
-      source: c.source.value,
+      copy: c.copy.value,
+      embed: c.embed.checked,
       style: c.style.value,
       prefix: c.prefix.value,
     });
     void setSetting(FIGURE_COPY_OPTIONS_SETTING_KEY, this.options).catch(() => { /* kept for this page */ });
+    this.channel.postMessage(this.options);
     if (key === 'style' || key === 'prefix') {
       this.sourceEdited = false;
       this.sourceInput.value = this.sourceText();
-      if (this.options.source === 'separate') return;
+      const o = this.options;
+      if (o.copy !== 'image-source' && o.copy !== 'source' && !o.embed) return;
     }
-    if (this.region) this.copyImage(Promise.resolve());
+    // The open capture is copied again as the options now say.
+    if (this.region) this.copyAsOptioned(Promise.resolve());
   }
 
   private placePanel(): void {
@@ -521,16 +591,17 @@ export class FigureCapture {
     return { blob, cssWidth: Math.round(out.width * CSS_DPI / Number(canvas.dataset.dpi)) };
   }
 
-  private copyImage(labelReady: Promise<void>): void {
+  /** The image (`withSource`: and the source line as text and HTML, for documents). */
+  private copyImage(labelReady: Promise<void>, withSource: boolean): void {
     const region = this.region;
     if (!region) return;
     const gen = this.generation;
-    const mode = this.options.source;
+    const embed = this.options.embed;
     this.setStatus(S.captureCopying, 'busy');
     const source = labelReady.then(() => this.currentSource());
-    const image = source.then((text) => this.render(region, mode === 'embed' ? text : null));
+    const image = source.then((text) => this.render(region, embed ? text : null));
     const items: Record<string, Promise<Blob>> = { 'image/png': image.then((r) => r.blob) };
-    if (mode === 'together') {
+    if (withSource) {
       items['text/plain'] = source.then((text) => new Blob([text], { type: 'text/plain' }));
       items['text/html'] = Promise.all([image, source]).then(async ([r, text]) => new Blob([
         `<img src="${await dataUrl(r.blob)}" width="${r.cssWidth}" alt="${escapeHtml(text)}"><p>${escapeHtml(text)}</p>`,
@@ -545,20 +616,29 @@ export class FigureCapture {
     void write.then(() => {
       if (gen !== this.generation) return;
       const what = formatFigureLabel(this.label, region.pageNumber);
-      this.setStatus(mode === 'separate' ? S.captureCopiedSeparate(what) : S.captureCopiedTogether(what));
+      this.setStatus(withSource ? S.captureCopiedTogether(what) : S.captureCopiedSeparate(what));
     }, (error: unknown) => {
       if (gen !== this.generation) return;
       this.setStatus(S.captureCopyFailed(error instanceof Error ? error.message : String(error)), 'error');
     });
   }
 
-  private async copySource(): Promise<void> {
+  /** The source line alone; it may wait for the caption, so the write starts now with a promised text. */
+  private copySource(labelReady: Promise<void>): void {
+    const gen = this.generation;
+    this.setStatus(S.captureCopying, 'busy');
+    const text = labelReady.then(() => new Blob([this.currentSource()], { type: 'text/plain' }));
+    let write: Promise<void>;
     try {
-      await navigator.clipboard.writeText(this.currentSource());
-      this.setStatus(S.captureSourceCopied);
+      write = navigator.clipboard.write([new ClipboardItem({ 'text/plain': text })]);
     } catch (error) {
-      this.setStatus(S.captureSourceCopyFailed(error instanceof Error ? error.message : String(error)), 'error');
+      write = Promise.reject(error);
     }
+    void write.then(() => {
+      if (gen === this.generation) this.setStatus(S.captureSourceCopied);
+    }, (error: unknown) => {
+      if (gen === this.generation) this.setStatus(S.captureSourceCopyFailed(error instanceof Error ? error.message : String(error)), 'error');
+    });
   }
 
   private async savePng(): Promise<void> {
@@ -566,7 +646,7 @@ export class FigureCapture {
     if (!region) return;
     this.setStatus(S.captureSaving, 'busy');
     try {
-      const { blob } = await this.render(region, this.options.source === 'embed' ? this.currentSource() : null);
+      const { blob } = await this.render(region, this.options.embed ? this.currentSource() : null);
       const url = URL.createObjectURL(blob);
       const a = el('a', { href: url, download: this.fileName(region) });
       a.click();

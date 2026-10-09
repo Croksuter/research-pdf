@@ -4,14 +4,14 @@ import { type HubClosedTab, visibleSelection } from '../../../shared/hubTabs';
 import { DEFAULT_PROJECT_ID, isDocInProject, pdfProjectTree, type PdfProject } from '../../../shared/pdfProjects';
 import { libraryEntryKind } from '../../../shared/pdfLibrary';
 import { S } from '../../pdfHub.strings';
-import { ask, entryName, folders, library, openTabFor, pendingPins, pinnedDocIds, projectId, projectName, projects, registered, sendProjectUpdate, succeeded, tabs, updateError } from '../store';
+import { folders, library, openTabFor, pendingPins, pinnedDocIds, projectId, projectName, projects, registered, sendProjectUpdate, succeeded, tabs, updateError } from '../store';
 import { home } from '../dom';
 import { type MenuEntry, copyUrl, el, showMenu, showToast } from '../uiKit';
-import { closeTab, closedEntry, removeTab, render, setPinnedById } from '../tabStrip';
+import { closeTab, closedEntry, setPinnedById } from '../tabStrip';
 import { openProject, reopenEntries } from '../session';
 import { openEntry, scheduleHomeRender } from './home';
 import { KIND_LABEL, showKindMenu } from '../looks';
-import { moveSource } from '../movePanel';
+import { docsLabel, moveDocs } from '../movePanel';
 
 // Selected rows; always a subset of the rows on screen (see renderHome).
 export let selected = new Set<string>();
@@ -30,37 +30,23 @@ export function projectChoices(docIds: string[]): Array<{ project: PdfProject; h
   return all.filter((p) => p.id !== projectId).map((project) => ({ project, holds: docIds.every((id) => isDocInProject(projects, project.id, id)) }));
 }
 
-export function docsLabel(docIds: string[]): string {
-  return docIds.length === 1 && library[docIds[0]] ? S.docsOne(entryName(library[docIds[0]])) : S.docsMany(docIds.length);
-}
-
 /** Registers the documents to `to` too (they stay where they are). */
 export function addDocsToProject(docIds: string[], to: string): void {
+  const added = docIds.filter((docId) => !isDocInProject(projects, to, docId));
   void Promise.all(docIds.map((docId) => sendProjectUpdate({ kind: 'member', id: to, docId, member: true }))).then((responses) => {
     const failed = responses.find((r) => !succeeded(r));
     if (failed) { showToast(updateError(failed, S.addFailed)); return; }
-    showToast(S.addedDocsTo(docsLabel(docIds), projectName(to)), { label: S.open, run: () => { void openProject(to); } });
+    showToast(
+      S.addedDocsTo(docsLabel(docIds), projectName(to)),
+      added.length ? { label: S.undo, run: () => { for (const docId of added) void sendProjectUpdate({ kind: 'member', id: to, docId, member: false }); } } : undefined,
+      { label: S.goTo(projectName(to)), run: () => { void openProject(to); } },
+    );
   });
 }
 
-/** Moves the documents to `to`: open tabs here go with them. */
-export async function moveDocsToProject(docIds: string[], to: string): Promise<void> {
-  let moved = 0;
-  for (const docId of docIds) {
-    if (isDocInProject(projects, to, docId)) continue;
-    const tab = openTabFor(docId);
-    const from = moveSource(docId);
-    if (from === to) continue;
-    const response = await ask<{ success?: boolean }>({
-      type: 'VOCAB_T_PDF_PROJECT_MOVE', docId, url: tab?.url ?? library[docId]?.urls[0] ?? null, from, to, keep: false,
-    });
-    if (!response?.success) continue;
-    moved += 1;
-    pendingPins.delete(docId);
-    if (tab && tabs.includes(tab)) removeTab(tab);
-  }
-  render();
-  showToast(moved ? S.movedDocs(moved, projectName(to)) : S.nothingToMove, moved ? { label: S.open, run: () => { void openProject(to); } } : undefined);
+/** Moves the documents to `to`: open tabs here go with them (movePanel.moveDocs). */
+export function moveDocsToProject(docIds: string[], to: string): Promise<void> {
+  return moveDocs(docIds.map((docId) => ({ docId, tab: openTabFor(docId) })), to);
 }
 
 /** What taking a document out of this project changed, so undo can put all of it back. */

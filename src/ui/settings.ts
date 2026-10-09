@@ -31,6 +31,7 @@ import { PDF_PROJECTS_STORAGE_KEY, parsePdfProjects } from '../shared/pdfProject
 import { isEmptyAnnotationCache, parsePdfAnnotationCache } from '../shared/pdfAnnotations';
 import { openAlexCheck, semanticScholarCheck, type ApiCheck } from '../shared/apiStatus';
 import { DISPLAY_PREFS_STORAGE_KEY, parseDisplayPrefs, type DisplayPrefs } from '../shared/displayPrefs';
+import { FIGURE_COPY_OPTIONS_CHANNEL, FIGURE_COPY_OPTIONS_SETTING_KEY, normalizeFigureCopyOptions, type FigureCopyOptions } from '../shared/figureSource';
 import { LANGUAGE_STORAGE_KEY, currentLanguage, localizeDocument, parseLanguagePref, saveLanguagePref } from '../shared/i18n';
 import { syncStatusErrorText } from '../shared/syncErrors';
 import { SHORTCUTS, SHORTCUT_GROUPS, shortcutLabel } from '../shared/shortcuts';
@@ -354,6 +355,7 @@ const displayTitle = byId<HTMLSelectElement>('display-tab-title');
 const displaySubtitle = byId<HTMLSelectElement>('display-tab-subtitle');
 const displayKinds = byId<HTMLSelectElement>('display-kind-icons');
 const displayFavicon = byId<HTMLInputElement>('display-project-favicon');
+const afterMove = byId<HTMLSelectElement>('after-move');
 
 async function readDisplay(): Promise<DisplayPrefs> {
   return parseDisplayPrefs((await chrome.storage.local.get(DISPLAY_PREFS_STORAGE_KEY))[DISPLAY_PREFS_STORAGE_KEY]);
@@ -365,6 +367,7 @@ async function renderDisplay(): Promise<void> {
   displaySubtitle.value = prefs.tabSubtitle;
   displayKinds.value = prefs.kindIcons;
   displayFavicon.checked = prefs.projectFavicon;
+  afterMove.value = prefs.afterMove;
 }
 
 function saveDisplay(): void {
@@ -373,11 +376,63 @@ function saveDisplay(): void {
     tabSubtitle: displaySubtitle.value,
     kindIcons: displayKinds.value,
     projectFavicon: displayFavicon.checked,
+    afterMove: afterMove.value,
   });
   void chrome.storage.local.set({ [DISPLAY_PREFS_STORAGE_KEY]: prefs });
 }
 
-for (const control of [displayTitle, displaySubtitle, displayKinds, displayFavicon]) control.addEventListener('change', saveDisplay);
+for (const control of [displayTitle, displaySubtitle, displayKinds, displayFavicon, afterMove]) control.addEventListener('change', saveDisplay);
+
+// ─── Figure capture (this device; open viewers follow at once) ───
+
+const capture = {
+  copy: byId<HTMLSelectElement>('capture-copy'),
+  embed: byId<HTMLInputElement>('capture-embed'),
+  style: byId<HTMLSelectElement>('capture-style'),
+  prefix: byId<HTMLSelectElement>('capture-prefix'),
+  dpi: byId<HTMLSelectElement>('capture-dpi'),
+  background: byId<HTMLSelectElement>('capture-background'),
+  annotations: byId<HTMLInputElement>('capture-annotations'),
+  autoDetect: byId<HTMLInputElement>('capture-auto-detect'),
+  continuous: byId<HTMLInputElement>('capture-continuous'),
+};
+// The viewers post their panel's changes here too.
+const captureChannel = new BroadcastChannel(FIGURE_COPY_OPTIONS_CHANNEL);
+
+function reflectCapture(o: FigureCopyOptions): void {
+  capture.copy.value = o.copy;
+  capture.embed.checked = o.embed;
+  capture.style.value = o.style;
+  capture.prefix.value = o.prefix;
+  capture.dpi.value = String(o.dpi);
+  capture.background.value = o.background;
+  capture.annotations.checked = o.annotations;
+  capture.autoDetect.checked = o.autoDetect;
+  capture.continuous.checked = o.continuous;
+}
+
+async function renderCapture(): Promise<void> {
+  reflectCapture(normalizeFigureCopyOptions(await getSetting<unknown>(FIGURE_COPY_OPTIONS_SETTING_KEY, null)));
+}
+
+function saveCapture(): void {
+  const options = normalizeFigureCopyOptions({
+    copy: capture.copy.value,
+    embed: capture.embed.checked,
+    style: capture.style.value,
+    prefix: capture.prefix.value,
+    dpi: Number(capture.dpi.value),
+    background: capture.background.value,
+    annotations: capture.annotations.checked,
+    autoDetect: capture.autoDetect.checked,
+    continuous: capture.continuous.checked,
+  });
+  void setSetting(FIGURE_COPY_OPTIONS_SETTING_KEY, options);
+  captureChannel.postMessage(options);
+}
+
+for (const control of Object.values(capture)) control.addEventListener('change', saveCapture);
+captureChannel.onmessage = (e: MessageEvent) => reflectCapture(normalizeFigureCopyOptions(e.data));
 
 // ─── Paper info and database keys ───
 
@@ -575,7 +630,7 @@ async function loadSettings(): Promise<void> {
   ]);
   paperInfoInput.checked = paperInfo;
   fileCacheInput.checked = fileCache;
-  await Promise.all([renderAccess(), renderDisplay(), ...keyFields.map(renderKey), renderStorage()]);
+  await Promise.all([renderAccess(), renderDisplay(), renderCapture(), ...keyFields.map(renderKey), renderStorage()]);
 }
 
 // The hub keeps this frame once made, so what it shows can go stale: look

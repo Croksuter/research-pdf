@@ -5,7 +5,7 @@
 // click elsewhere or the window losing focus closes it.
 
 import { S } from '../pdfHub.strings';
-import { menu, toast, toastAction, toastText } from './dom';
+import { menu, toast, toastActions, toastText } from './dom';
 
 export const TOAST_MS = 5_000;
 
@@ -102,11 +102,15 @@ export function hidePanels(): void {
 // ─── Toast ───
 
 export let toastTimer: ReturnType<typeof setTimeout> | null = null;
-export function showToast(message: string, action?: { label: string; run: () => void }): void {
+export interface ToastAction { label: string; run: () => void }
+/** A message with up to two actions (undo, go somewhere); an undefined action is left out. */
+export function showToast(message: string, ...actions: Array<ToastAction | undefined>): void {
   toastText.textContent = message;
-  toastAction.hidden = !action;
-  toastAction.textContent = action?.label ?? '';
-  toastAction.onclick = action ? () => { hideToast(); action.run(); } : null;
+  toastActions.replaceChildren(...actions.filter((a): a is ToastAction => !!a).map((action) => {
+    const button = el('button', { type: 'button', textContent: action.label });
+    button.addEventListener('click', () => { hideToast(); action.run(); });
+    return button;
+  }));
   toast.hidden = false;
   if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(hideToast, TOAST_MS);

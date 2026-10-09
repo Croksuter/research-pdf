@@ -664,6 +664,8 @@ body.is-dropping .rpdf-frames { box-shadow: inset 0 0 0 3px var(--hub-accent); }
   cursor: pointer;
 }
 .rpdf-toast button:hover { background: rgba(26, 115, 232, 0.1); }
+.rpdf-toast-actions { display: flex; flex: none; gap: 2px; }
+.rpdf-toast-actions:empty { display: none; }
 
 /* ── Projects: the switcher at the strip's left, "move to" at its right ── */
 .rpdf-project-btn,

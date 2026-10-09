@@ -1,6 +1,8 @@
 // Annotation toolbar: highlighter / pen / text, color, thickness, opacity,
 // delete, undo, redo. Drives PDF.js's AnnotationEditorUIManager, so the
-// drawn annotations are part of the document and survive "다운로드".
+// drawn annotations are part of the document and survive "다운로드". The
+// tool, colors, thickness and opacity last used come back in every document
+// (localStorage: this device).
 
 import { AnnotationEditorParamsType, AnnotationEditorType } from 'pdfjs-dist';
 import type { AnnotationEditorUIManager } from 'pdfjs-dist';
@@ -12,6 +14,18 @@ export const HIGHLIGHT_COLORS = 'yellow=#FFFF98,green=#53FFBC,blue=#80EBFF,pink=
 
 const INK_COLORS = ['#000000', '#e02424', '#1d4ed8', '#16a34a', '#f59e0b', '#7c3aed'];
 const HIGHLIGHT_SWATCHES = HIGHLIGHT_COLORS.split(',').map((pair) => pair.split('=')[1]);
+const TOOLS_STORAGE_KEY = 'rpdfAnnotateTools';
+
+interface ToolPrefs { tool: number; inkColor: string; highlightColor: string; thickness: number; opacity: number }
+
+function readToolPrefs(): Partial<Record<keyof ToolPrefs, unknown>> {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(TOOLS_STORAGE_KEY) ?? 'null');
+    return raw && typeof raw === 'object' ? raw as Partial<Record<keyof ToolPrefs, unknown>> : {};
+  } catch {
+    return {};
+  }
+}
 
 interface EditorStates {
   isEditing?: boolean;
@@ -37,6 +51,8 @@ export class AnnotationToolbar {
   /** Told when the bar opens or closes. */
   onOpenChange: ((open: boolean) => void) | null = null;
   private highlightColor = HIGHLIGHT_SWATCHES[0];
+  /** The tool the bar opens with: the one last used. */
+  private tool: number = AnnotationEditorType.HIGHLIGHT;
 
   constructor(private readonly pdfViewer: PDFViewer, eventBus: EventBus) {
     eventBus.on('annotationeditoruimanager', (evt: { uiManager: AnnotationEditorUIManager }) => {
@@ -59,6 +75,9 @@ export class AnnotationToolbar {
     this.deleteBtn.addEventListener('click', () => this.uiManager?.delete());
     this.thickness.addEventListener('input', () => this.pushParams());
     this.opacity.addEventListener('input', () => this.pushParams());
+    this.thickness.addEventListener('change', () => this.saveToolPrefs());
+    this.opacity.addEventListener('change', () => this.saveToolPrefs());
+    this.restoreToolPrefs();
     this.renderSwatches();
     this.applyStates({});
   }
@@ -89,7 +108,7 @@ export class AnnotationToolbar {
     this.toggleBtn.setAttribute('aria-pressed', String(open));
     document.body.classList.toggle('vt-annotating', open);
     if (!open) this.setMode(AnnotationEditorType.NONE);
-    else if (this.mode === AnnotationEditorType.NONE) this.setMode(AnnotationEditorType.HIGHLIGHT);
+    else if (this.mode === AnnotationEditorType.NONE) this.setMode(this.tool);
     this.onOpenChange?.(open);
   }
 
@@ -98,6 +117,36 @@ export class AnnotationToolbar {
     this.pdfViewer.annotationEditorMode = { mode };
     this.reflectMode(mode);
     this.pushParams();
+    if (mode !== AnnotationEditorType.NONE && mode !== this.tool) {
+      this.tool = mode;
+      this.saveToolPrefs();
+    }
+  }
+
+  private restoreToolPrefs(): void {
+    const saved = readToolPrefs();
+    const inRange = (input: HTMLInputElement, value: unknown) =>
+      typeof value === 'number' && value >= Number(input.min) && value <= Number(input.max);
+    if (typeof saved.inkColor === 'string' && INK_COLORS.includes(saved.inkColor)) this.inkColor = saved.inkColor;
+    if (typeof saved.highlightColor === 'string' && HIGHLIGHT_SWATCHES.includes(saved.highlightColor)) this.highlightColor = saved.highlightColor;
+    if (inRange(this.thickness, saved.thickness)) this.thickness.value = String(saved.thickness);
+    if (inRange(this.opacity, saved.opacity)) this.opacity.value = String(saved.opacity);
+    if (this.toolButtons.some((btn) => Number(btn.dataset.editorMode) === saved.tool)) this.tool = saved.tool as number;
+  }
+
+  private saveToolPrefs(): void {
+    const prefs: ToolPrefs = {
+      tool: this.tool,
+      inkColor: this.inkColor,
+      highlightColor: this.highlightColor,
+      thickness: Number(this.thickness.value),
+      opacity: Number(this.opacity.value),
+    };
+    try {
+      localStorage.setItem(TOOLS_STORAGE_KEY, JSON.stringify(prefs));
+    } catch {
+      /* this document only */
+    }
   }
 
   private reflectMode(mode: number): void {
@@ -132,6 +181,7 @@ export class AnnotationToolbar {
         if (isHighlight) this.highlightColor = color; else this.inkColor = color;
         this.renderSwatches();
         this.pushParams();
+        this.saveToolPrefs();
       });
       this.swatches.append(btn);
     }

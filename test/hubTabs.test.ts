@@ -16,6 +16,7 @@ import {
   visibleSelection,
   pickTabsToSleep,
   pushClosedTab,
+  tabsThatLeft,
   type HubClosedTab,
   type HubSleepCandidate,
 } from '../src/shared/hubTabs';
@@ -169,5 +170,19 @@ describe('gathering and local files', () => {
     const one = { name: 'a.pdf', size: 10, lastModified: 5 };
     expect(fileIdentity(one)).toBe(fileIdentity({ ...one }));
     expect(fileIdentity(one)).not.toBe(fileIdentity({ ...one, size: 11 }));
+  });
+});
+
+describe('tabs whose documents left the project', () => {
+  const t = (docId: string | null, libraryId: string | null = null, pinned = false) => ({ docId, libraryId, pinned });
+
+  it('drops the members that left, by identity or library row, but not pins', () => {
+    const tabs = [t('a'), t(null, 'b'), t('c'), t('d', null, true), t(null)];
+    const left = tabsThatLeft(tabs, new Set(['a', 'b', 'c', 'd']), new Set(['c']));
+    expect(left).toEqual([tabs[0], tabs[1]]);
+  });
+
+  it('keeps documents that were never members (just opened, not registered yet)', () => {
+    expect(tabsThatLeft([t('new')], new Set(['a']), new Set(['a']))).toEqual([]);
   });
 });

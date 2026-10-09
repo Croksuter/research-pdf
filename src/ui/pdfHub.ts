@@ -28,14 +28,16 @@ import { hubKeyAction } from '../shared/pdfHubProtocol';
 import { localizeDocument } from '../shared/i18n';
 import { S } from './pdfHub.strings';
 import { isHub, on, projectId, projects, tabs } from './hub/store';
+import { DEFAULT_PROJECT_ID } from '../shared/pdfProjects';
 import { listBtn, listPanel, menu, moveBtn, movePanel, projectBtn, projectsPanel, stylePanel } from './hub/dom';
 import { hideMenu } from './hub/uiKit';
-import { completePendingPins, onStripKey, reconcilePinned, step, updateTabLabel } from './hub/tabStrip';
+import { completePendingPins, dropTabsThatLeft, onStripKey, reconcilePinned, step, updateTabLabel } from './hub/tabStrip';
 import { boot, reloadInNewLanguage, rehome } from './hub/session';
 import { hideList } from './hub/tabList';
 import { hideStyle, renderStyle, updateFavicon } from './hub/looks';
 import { hideProjects, renderProjects, updateProjectLabel } from './hub/projectsPanel';
-import { hideMove, moveTarget, renderMove } from './hub/movePanel';
+import { hideMove, moveTarget, renderMove, takeMoveNotice } from './hub/movePanel';
+import { claimHandedOver } from './hub/localFiles';
 import { onPositionsChanged, scheduleHomeRender } from './hub/home/home';
 
 // The page's modules (src/ui/hub/):
@@ -61,11 +63,23 @@ function refreshPanels(): void {
 
 // ─── What changed elsewhere (the store's events) ───
 
-on('data', ({ library }) => {
+// This project's documents as last seen, to tell which left it. The default
+// project is left out: its membership is implicit, and it shows guests.
+let members: { project: string; ids: Set<string> } | null = null;
+function memberIds(): Set<string> {
+  return new Set((projects[projectId]?.members ?? []).filter((m) => m.member).map((m) => m.docId));
+}
+
+on('data', ({ library, projects: projectsChanged }) => {
   if (library) tabs.forEach(updateTabLabel); // kinds
   if (isHub) {
     // This project was deleted (here, in another hub, on another device).
     if (projects[projectId]?.deletedAt !== 0) { void rehome(); return; }
+    if (projectsChanged) {
+      const now = memberIds();
+      if (members?.project === projectId && projectId !== DEFAULT_PROJECT_ID) dropTabsThatLeft(members.ids, now);
+      members = { project: projectId, ids: now };
+    }
     completePendingPins();
     reconcilePinned();
     updateProjectLabel();
@@ -98,4 +112,10 @@ document.addEventListener('keydown', (e) => {
   if (tab && onStripKey(e, tab)) e.preventDefault();
 });
 
-void boot();
+void boot().then(async () => {
+  if (!isHub) return;
+  members = { project: projectId, ids: memberIds() };
+  // Local files and a note handed over by a move to this project.
+  await claimHandedOver();
+  await takeMoveNotice();
+});
