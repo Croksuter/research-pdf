@@ -260,6 +260,9 @@ html, body {
 .vt-paper-status { color: var(--vt-toolbar-muted); display: inline-flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; }
 .vt-paper-spinner { width: 12px; height: 12px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.25); border-top-color: var(--vt-accent); animation: vt-spin 0.9s linear infinite; flex: none; }
 @keyframes vt-spin { to { transform: rotate(360deg); } }
+/* In place of a value still being asked for (strip cells, the reference list). */
+.vt-paper-spinner-inline { display: inline-block; width: 9px; height: 9px; vertical-align: -1px; }
+.vt-refs-header .vt-paper-spinner-inline { margin-right: 6px; }
 .vt-paper-actions { margin-left: auto; display: inline-flex; gap: 6px; }
 .vt-paper-seg[tabindex] { cursor: default; border-radius: 6px; }
 .vt-paper-seg[tabindex]:focus-visible { outline: 2px solid var(--vt-accent); outline-offset: 2px; }

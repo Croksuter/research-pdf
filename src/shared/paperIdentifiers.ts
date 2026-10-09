@@ -536,6 +536,33 @@ export function recentTwoYearCitations(meta: PaperMeta, now = new Date()): numbe
     .reduce((sum, c) => sum + c.count, 0);
 }
 
+/**
+ * The strip's 2-year citation cell. The figure comes from OpenAlex's
+ * per-year counts, so when OpenAlex knows under half of the citations (an
+ * arXiv-only record of a famous paper) it would sit next to another source's
+ * total as nonsense: then, as with no per-year counts at all, the cell is
+ * left out (`hidden`, with OpenAlex's share when that is why). Not known yet
+ * while other databases are still asked (`loading`); OpenAlex's budget spent,
+ * it is `missing`. A paper under two years old: every citation is recent.
+ */
+export type TwoYearCell =
+  | { kind: 'value'; count: number }
+  | { kind: 'loading' }
+  | { kind: 'missing' }
+  | { kind: 'hidden'; openAlexShare: number | null };
+
+export function twoYearCell(meta: PaperMeta, state: { pending: boolean; budgetSpent: boolean }, now = new Date()): TwoYearCell {
+  const total = bestCitationCount(meta);
+  const share = total && typeof meta.citations.openalex === 'number' ? meta.citations.openalex / total : null;
+  const partial = share !== null && share < 0.5;
+  const recent = meta.year !== null && meta.year >= now.getFullYear() - 1;
+  const count = partial ? null : recentTwoYearCitations(meta, now) ?? (recent ? total : null);
+  if (count !== null) return { kind: 'value', count };
+  if (state.pending && !partial) return { kind: 'loading' };
+  if (state.budgetSpent) return { kind: 'missing' };
+  return { kind: 'hidden', openAlexShare: partial ? share : null };
+}
+
 /** Last N years of citation counts, oldest first, padded with zeros. */
 export function recentCitationSeries(meta: PaperMeta, years = 5, now = new Date()): Array<{ year: number; count: number }> {
   const thisYear = now.getFullYear();

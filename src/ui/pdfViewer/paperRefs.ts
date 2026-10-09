@@ -73,6 +73,11 @@ function shortId(id: string): string {
   return id.split('/').pop() ?? id;
 }
 
+/** In place of a value something is still asking for (a ⚠︎ or "not found" would be premature). */
+export function loadingMark(): HTMLElement {
+  return el('span', { className: 'vt-paper-spinner vt-paper-spinner-inline', role: 'img', 'aria-label': S.stillLoading });
+}
+
 export class ReferenceList {
   private readonly panel: HTMLElement;
   private readonly header: HTMLElement;
@@ -85,6 +90,8 @@ export class ReferenceList {
   /** The PDF's own list being shown (what title linking works on). */
   private pdf: { refs: PdfReference[]; cacheKey: string; idsLinked: boolean } | null = null;
   private linkingTitles = false;
+  /** This opening's title searches still to answer. */
+  private titleBatch = new Set<RefEntry>();
   /** Told how many references the PDF itself lists, when that is the source. */
   onPdfCount: ((count: number) => void) | null = null;
 
@@ -113,6 +120,7 @@ export class ReferenceList {
     this.sourceNote = null;
     this.pdf = null;
     this.linkingTitles = false;
+    this.titleBatch = new Set();
     this.list.replaceChildren();
     this.renderHeader();
   }
@@ -279,6 +287,8 @@ export class ReferenceList {
     if (todo.length === 0) return;
     const gen = this.generation;
     this.linkingTitles = true;
+    this.titleBatch = new Set(todo.map((i) => this.entries[i]));
+    this.renderAll();
     let found = 0;
     try {
       for (const i of todo) {
@@ -303,7 +313,11 @@ export class ReferenceList {
       void this.writeCache(pdf.cacheKey, { entries: this.entries, idsLinked: pdf.idsLinked });
       debugLog('paper', `references linked by title: ${found}/${todo.length}`);
     } finally {
-      if (gen === this.generation) this.linkingTitles = false;
+      if (gen === this.generation) {
+        this.linkingTitles = false;
+        this.titleBatch = new Set();
+        this.renderAll();
+      }
     }
   }
 
@@ -399,10 +413,11 @@ export class ReferenceList {
       return;
     }
     if (this.status === 'idle' || (this.status === 'loading' && n === 0 && this.expected === 0)) {
-      this.header.append(el('span', { textContent: this.status === 'idle' ? S.refsPreparing : S.refsSearching }));
+      this.header.append(loadingMark(), el('span', { textContent: this.status === 'idle' ? S.refsPreparing : S.refsSearching }));
       return;
     }
     const label = this.status === 'loading' ? S.refsLoadingLabel(n, this.expected) : S.refsDoneLabel(n);
+    if (this.status === 'loading' || this.linkingTitles) this.header.append(loadingMark());
     this.header.append(el('span', { textContent: S.refsHeader(label) }));
     if (this.status === 'done' && n < this.expected) {
       this.header.append(el('span', { className: 'vt-refs-note', textContent: S.refsMissingInOpenAlex(this.expected - n) }));
@@ -414,6 +429,8 @@ export class ReferenceList {
     this.renderHeader();
     this.list.replaceChildren();
     const sorted = [...this.entries].sort((a, b) => (b.citations ?? -1) - (a.citations ?? -1));
+    // Still being linked: the DOI / arXiv batches while loading, or this opening's title searches.
+    const linking = (e: RefEntry) => !!e.unlinked && (this.status === 'loading' || this.titleBatch.has(e));
     for (const e of sorted) {
       const meta = [
         e.authors.length ? (e.authors.length > 3 ? S.authorsEtAl(e.authors.slice(0, 3).join(', ')) : e.authors.join(', ')) : null,
@@ -421,7 +438,7 @@ export class ReferenceList {
         e.venue,
       ].filter(Boolean).join(' · ');
       const stats = el('span', { className: 'vt-ref-stats' }, [
-        el('span', { textContent: typeof e.citations === 'number' ? S.citedCount(formatCount(e.citations)) : e.unlinked ? S.notFoundInOpenAlex : S.noCitationCountShort }),
+        el('span', {}, [typeof e.citations === 'number' ? S.citedCount(formatCount(e.citations)) : linking(e) ? loadingMark() : e.unlinked ? S.notFoundInOpenAlex : S.noCitationCountShort]),
         el('span', { textContent: typeof e.impact === 'number' ? ` · IF≈${e.impact.toFixed(1)}` : '', title: typeof e.impact === 'number' ? S.venueMeanCitednessShort : '' }),
       ]);
       const link = el('a', { className: 'vt-ref', href: e.url, target: '_blank', rel: 'noopener noreferrer' }, [
