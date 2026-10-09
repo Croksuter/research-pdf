@@ -12,6 +12,7 @@ import {
   TITLE_MATCH_THRESHOLD,
   arxivIdFromDoi,
   normalizeDoi,
+  openAlexSearchText,
   titleSimilarity,
 } from '../../shared/paperIdentifiers';
 import { isOpenAlexUrl, noteOpenAlex429, openAlexBudgetSpent, openAlexUrl } from './openAlexAccess';
@@ -125,7 +126,7 @@ export async function openAlexByDoi(ctx: LookupContext, doi: string): Promise<Op
 export type AuthorCheck = (authors: string[], families?: Array<string | null>) => boolean;
 
 export async function openAlexByTitle(ctx: LookupContext, title: string, accept?: AuthorCheck): Promise<OpenAlexWork | null> {
-  const url = `${OPENALEX}/works?search=${encodeURIComponent(title)}&per-page=5&select=${encodeURIComponent(WORK_SELECT)}`;
+  const url = `${OPENALEX}/works?search=${encodeURIComponent(openAlexSearchText(title))}&per-page=5&select=${encodeURIComponent(WORK_SELECT)}`;
   const page = await fetchJson<{ results?: OpenAlexWork[] }>(ctx, url, OPENALEX_TIMEOUT_MS, false);
   const results = (page?.results ?? []).filter((w) => !accept || accept(openAlexAuthors(w)));
   return pickByTitle(title, results, (w) => w.display_name ?? '', (w) => w.cited_by_count ?? 0);

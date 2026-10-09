@@ -170,6 +170,11 @@ export function recordMatchesDocument(recordTitle: string, detectedTitles: reado
 
 // ─── Title matching ───
 
+/** A title as OpenAlex search text: `?` and `*` would be read as wildcards, which its default (stemmed) search refuses with a 400. */
+export function openAlexSearchText(title: string): string {
+  return title.replace(/[?*]/gu, ' ').replace(/\s+/gu, ' ').trim();
+}
+
 export function normalizeTitle(title: string): string {
   return title
     .normalize('NFKD')

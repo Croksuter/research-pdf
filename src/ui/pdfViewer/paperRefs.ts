@@ -8,7 +8,7 @@
 // the reader has the list open, a few per opening, each kept as it is found.
 
 import { debugLog } from '../../shared/debugLog';
-import { formatCount, titleSimilarity } from '../../shared/paperIdentifiers';
+import { formatCount, openAlexSearchText, titleSimilarity } from '../../shared/paperIdentifiers';
 import type { PdfReference } from '../../shared/pdfReferences';
 import { openAlexBudgetSpent } from './openAlexAccess';
 import { el } from './dom';
@@ -286,7 +286,7 @@ export class ReferenceList {
         const ref = pdf.refs[i];
         const title = ref.title ?? '';
         const page = await fetchJson<{ results?: RefWork[] }>(
-          `${OPENALEX}/works?search=${encodeURIComponent(title)}&per-page=3&select=${encodeURIComponent(WORK_SELECT)}`,
+          `${OPENALEX}/works?search=${encodeURIComponent(openAlexSearchText(title))}&per-page=3&select=${encodeURIComponent(WORK_SELECT)}`,
         );
         if (gen !== this.generation) return;
         const match = (page?.results ?? []).find((w) => titleSimilarity(title, w.display_name ?? '') >= TITLE_MATCH

@@ -25,6 +25,7 @@ import {
   recentTwoYearCitations,
   scholarLinks,
   titleMatchConfirmed,
+  openAlexSearchText,
   titleSimilarity,
 } from '../src/shared/paperIdentifiers';
 
@@ -75,6 +76,14 @@ describe('normalizeDoi / normalizeArxivId / arxivIdFromDoi / mergeIdentifiers', 
 
   it('merges with first-wins precedence', () => {
     expect(mergeIdentifiers({ doi: 'a' }, { doi: 'b', arxivId: 'x' })).toEqual({ doi: 'a', arxivId: 'x' });
+  });
+});
+
+describe('OpenAlex search text', () => {
+  it('drops the characters OpenAlex reads as wildcards', () => {
+    expect(openAlexSearchText('Can rationalization improve robustness? NAACL')).toBe('Can rationalization improve robustness NAACL');
+    expect(openAlexSearchText('Did aristotle use a laptop? A question answering benchmark')).toBe('Did aristotle use a laptop A question answering benchmark');
+    expect(openAlexSearchText('  Attention*is all you need ')).toBe('Attention is all you need');
   });
 });
 
