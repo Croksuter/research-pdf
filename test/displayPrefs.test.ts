@@ -9,6 +9,8 @@ describe('display preferences', () => {
     expect(parseDisplayPrefs(undefined)).toEqual(DEFAULT_DISPLAY_PREFS);
     expect(parseDisplayPrefs({ tabTitle: 'document', kindIcons: 'neon', projectFavicon: false }))
       .toEqual({ ...DEFAULT_DISPLAY_PREFS, tabTitle: 'document', projectFavicon: false });
+    expect(parseDisplayPrefs({ afterMove: 'follow' }).afterMove).toBe('follow');
+    expect(parseDisplayPrefs({ afterMove: 'jump' }).afterMove).toBe('stay');
   });
 
   it('names a tab by the paper with its venue, by default', () => {

@@ -6,7 +6,7 @@
 // state up to date after any change.
 
 import { APP_NAME } from '../../shared/brand';
-import { arxivVersionBadges, findOpenDoc, hubDocKey, moveInOrder, pushClosedTab, type HubClosedTab } from '../../shared/hubTabs';
+import { arxivVersionBadges, findOpenDoc, hubDocKey, moveInOrder, pushClosedTab, tabsThatLeft, type HubClosedTab } from '../../shared/hubTabs';
 import { PDF_HUB_MAX_DOCS, pdfDisplayName } from '../../shared/localPdf';
 import { DEFAULT_PROJECT_ID, applyPdfProjectUpdate, isDocInProject, projectsOfDoc, type PdfProjectUpdate } from '../../shared/pdfProjects';
 import { orderKeysBetween } from '../../shared/orderKey';
@@ -15,7 +15,7 @@ import { type PdfLibraryEntry } from '../../shared/pdfLibrary';
 import { HUB_MESSAGE_TAG, hubDocumentTitle, sameTitle, type HubKeyAction } from '../../shared/pdfHubProtocol';
 import { SETTINGS_SHOWN_MESSAGE } from '../openPdfTabs';
 import { S } from '../pdfHub.strings';
-import { HOME, type HubTab, type NewDoc, SETTINGS, activeKey, activeTab, currentProject, display, isLocal, isPage, library, libraryIdForUrl, pendingPins, pinnedDocIds, projectId, projectName, projects, registerDoc, registered, reloadProjects, sendProjectUpdate, succeeded, tabName, tabs, updateError, setActiveKey, setProjectsLocally } from './store';
+import { HOME, type HubTab, type NewDoc, SETTINGS, activeKey, activeTab, ask, currentProject, display, isLocal, isPage, library, libraryIdForUrl, pendingPins, pinnedDocIds, projectId, projectName, projects, registerDoc, registered, reloadProjects, sendProjectUpdate, succeeded, tabName, tabs, updateError, setActiveKey, setProjectsLocally } from './store';
 import { home, homeBtn, listBtn, listCount, moveBtn, settingsBtn, settingsView, tabList } from './dom';
 import { type MenuEntry, copyUrl, el, hidePanels, icon, showMenu, showToast } from './uiKit';
 import { enforceSleep, ensureFrame, loadWaiters, postToFrame, queuePrefetch, retireFrame } from './frames';
@@ -426,8 +426,8 @@ export function setPinnedById(docId: string, pinned: boolean): void {
   if (!library[docId]) return;
   if (pinned && !isDocInProject(projects, projectId, docId)) {
     if (projectId === DEFAULT_PROJECT_ID) {
-      const elsewhere = projectsOfDoc(projects, docId).map(projectName).join(', ');
-      showToast(S.inOtherProject(elsewhere));
+      const elsewhere = projectsOfDoc(projects, docId);
+      showToast(S.inOtherProject(elsewhere.map(projectName).join(', ')), { label: S.moveHereAndPin, run: () => { void moveHereAndPin(docId, elsewhere); } });
       return;
     }
     registered.add(docId); // pinning registers it
@@ -444,6 +444,23 @@ export function setPinnedById(docId: string, pinned: boolean): void {
   });
   reconcilePinned();
   scheduleHomeRender();
+}
+
+/** A document of other projects, pinned in the default one: out of those projects first. */
+async function moveHereAndPin(docId: string, from: string[]): Promise<void> {
+  for (const project of from) {
+    const response = await ask({ type: 'VOCAB_T_PDF_PROJECT_MOVE', docId, url: null, from: project, to: DEFAULT_PROJECT_ID, keep: false });
+    if (!succeeded(response)) { showToast(updateError(response, S.moveFailed)); return; }
+  }
+  await reloadProjects();
+  setPinnedById(docId, true);
+}
+
+/** Tabs whose documents left this project elsewhere leave its strip. */
+export function dropTabsThatLeft(before: Set<string>, now: Set<string>): void {
+  const leaving = tabsThatLeft(tabs, before, now);
+  for (const tab of leaving) removeTab(tab);
+  if (leaving.length) render();
 }
 
 export function setPinned(tab: HubTab, pinned: boolean): void {

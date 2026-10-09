@@ -168,22 +168,33 @@ export function formatFigureSource(input: SourceInput): string {
 
 // ─── Options ───
 
+/**
+ * What a capture puts on the clipboard at once: nothing (the panel's buttons
+ * copy), the image alone (slides would otherwise pick the text), the image
+ * with its source in one item (documents: Docs, Notion), or the source alone.
+ */
+export type FigureCopyAction = 'none' | 'image' | 'image-source' | 'source';
+export const COPY_ACTIONS: readonly FigureCopyAction[] = ['none', 'image', 'image-source', 'source'];
+
 export interface FigureCopyOptions {
   /** Draw the reader's highlights, pen and text notes into the image. */
   annotations: boolean;
   dpi: number;
   background: 'white' | 'transparent';
-  /**
-   * separate: the image alone (the source goes by its own button);
-   * together: image + source in one clipboard item (documents: Docs, Notion);
-   * embed: the source drawn under the image.
-   */
-  source: 'separate' | 'together' | 'embed';
+  copy: FigureCopyAction;
+  /** The source drawn under the image, copied or saved. */
+  embed: boolean;
   style: SourceStyle;
   prefix: string;
+  /** Capture mode outlines the figures and tables of the pages shown (the layout model runs on them). */
+  autoDetect: boolean;
+  /** Capture mode stays on after a copy. */
+  continuous: boolean;
 }
 
 export const FIGURE_COPY_OPTIONS_SETTING_KEY = 'figureCopyOptions';
+/** Every page that changes the options posts them here, so open viewers and the settings page follow. */
+export const FIGURE_COPY_OPTIONS_CHANNEL = 'rpdf-figure-copy-options';
 export const DPI_CHOICES = [150, 300, 600] as const;
 export const PREFIX_CHOICES = ['Source:', '출처:', ''] as const;
 
@@ -191,21 +202,30 @@ export const DEFAULT_FIGURE_COPY_OPTIONS: FigureCopyOptions = {
   annotations: false,
   dpi: 300,
   background: 'white',
-  source: 'separate',
+  copy: 'image',
+  embed: false,
   style: 'short',
   prefix: 'Source:',
+  autoDetect: true,
+  continuous: false,
 };
 
 /** Stored options, with anything missing or unknown back at its default. */
 export function normalizeFigureCopyOptions(raw: unknown): FigureCopyOptions {
-  const value = (raw && typeof raw === 'object' ? raw : {}) as Partial<Record<keyof FigureCopyOptions, unknown>>;
+  const value = (raw && typeof raw === 'object' ? raw : {}) as Partial<Record<keyof FigureCopyOptions | 'source', unknown>>;
   const d = DEFAULT_FIGURE_COPY_OPTIONS;
+  const bool = (v: unknown, fallback: boolean) => (typeof v === 'boolean' ? v : fallback);
+  // Before `copy` and `embed`, one `source` said both: separate | together | embed.
+  const legacyCopy: FigureCopyAction = value.source === 'together' ? 'image-source' : d.copy;
   return {
-    annotations: typeof value.annotations === 'boolean' ? value.annotations : d.annotations,
+    annotations: bool(value.annotations, d.annotations),
     dpi: (DPI_CHOICES as readonly number[]).includes(value.dpi as number) ? value.dpi as number : d.dpi,
     background: value.background === 'transparent' ? 'transparent' : 'white',
-    source: value.source === 'together' || value.source === 'embed' ? value.source : 'separate',
+    copy: COPY_ACTIONS.includes(value.copy as FigureCopyAction) ? value.copy as FigureCopyAction : legacyCopy,
+    embed: bool(value.embed, value.source === 'embed'),
     style: value.style === 'apa' ? 'apa' : 'short',
     prefix: (PREFIX_CHOICES as readonly string[]).includes(value.prefix as string) ? value.prefix as string : d.prefix,
+    autoDetect: bool(value.autoDetect, d.autoDetect),
+    continuous: bool(value.continuous, d.continuous),
   };
 }

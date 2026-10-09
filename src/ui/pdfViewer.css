@@ -712,7 +712,7 @@ body.vt-capture-dragging #viewerContainer .textLayer { user-select: none; }
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.18);
   pointer-events: none;
 }
-/* Auto-detect: an outline per figure / table; one click copies it. */
+/* Capture mode: an outline per figure / table; a click copies it, a drag hides them all until it ends. */
 .vt-figure-box {
   position: absolute;
   z-index: 29;
@@ -725,6 +725,7 @@ body.vt-capture-dragging #viewerContainer .textLayer { user-select: none; }
   font: inherit;
 }
 body.vt-capturing #viewerContainer .page .vt-figure-box { cursor: pointer !important; }
+body.vt-capture-dragging #viewerContainer .vt-figure-box { visibility: hidden; }
 .vt-figure-box:hover,
 .vt-figure-box:focus-visible {
   border-style: solid;
@@ -745,7 +746,6 @@ body.vt-capturing #viewerContainer .page .vt-figure-box { cursor: pointer !impor
   line-height: 16px;
   pointer-events: none;
 }
-#vt-capture[data-mode="auto"] { box-shadow: inset 0 0 0 2px var(--vt-accent); }
 .vt-capture-hint {
   position: fixed;
   top: calc(var(--vt-toolbar-height) + 12px);
@@ -806,4 +806,5 @@ body.vt-capturing #viewerContainer .page .vt-figure-box { cursor: pointer !impor
 .vt-capture-option { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--vt-toolbar-muted); }
 .vt-capture-option .vt-select { min-width: 0; height: 26px; font-size: 12px; }
 .vt-capture-check { grid-column: 1 / -1; justify-content: flex-start; color: var(--vt-toolbar-fg); }
+.vt-capture-wide { grid-column: 1 / -1; }
 @media (max-width: 480px) { .vt-capture-options { grid-template-columns: 1fr; } }

@@ -126,7 +126,15 @@ describe('shortAuthors / options', () => {
 
   it('normalizes stored options', () => {
     expect(normalizeFigureCopyOptions(undefined)).toEqual(DEFAULT_FIGURE_COPY_OPTIONS);
-    expect(normalizeFigureCopyOptions({ dpi: 123, source: 'embed', prefix: '출처:', annotations: true }))
-      .toEqual({ ...DEFAULT_FIGURE_COPY_OPTIONS, source: 'embed', prefix: '출처:', annotations: true });
+    expect(normalizeFigureCopyOptions({ dpi: 123, copy: 'source', prefix: '출처:', annotations: true, continuous: true, autoDetect: 'no' }))
+      .toEqual({ ...DEFAULT_FIGURE_COPY_OPTIONS, copy: 'source', prefix: '출처:', annotations: true, continuous: true });
+  });
+
+  it('reads the single `source` option older builds stored', () => {
+    expect(normalizeFigureCopyOptions({ source: 'separate' })).toMatchObject({ copy: 'image', embed: false });
+    expect(normalizeFigureCopyOptions({ source: 'together' })).toMatchObject({ copy: 'image-source', embed: false });
+    expect(normalizeFigureCopyOptions({ source: 'embed' })).toMatchObject({ copy: 'image', embed: true });
+    // Once stored in the new shape, the old field is ignored.
+    expect(normalizeFigureCopyOptions({ source: 'embed', copy: 'none', embed: false })).toMatchObject({ copy: 'none', embed: false });
   });
 });

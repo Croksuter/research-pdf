@@ -27,6 +27,8 @@
       <a href="#sync" data-i18n="chipSync">동기화</a>
       <a href="#open" data-i18n="chipOpen">PDF 열기</a>
       <a href="#display" data-i18n="chipDisplay">화면</a>
+      <a href="#projects" data-i18n="chipProjects">프로젝트</a>
+      <a href="#capture" data-i18n="chipCapture">그림 캡처</a>
       <a href="#paper" data-i18n="chipPaper">논문 정보</a>
       <a href="#storage" data-i18n="chipStorage">저장 공간</a>
       <a href="#keys" data-i18n="chipKeys">단축키</a>
@@ -153,6 +155,103 @@
           <p class="st-row-sub" data-i18n="projectFaviconSub">PDF 탭의 Chrome 탭 아이콘을 그 프로젝트의 아이콘으로 바꿔, 프로젝트별 탭을 한눈에 구분합니다.</p>
         </div>
         <input type="checkbox" id="display-project-favicon" class="st-switch" aria-label="Chrome 탭에 프로젝트 아이콘" data-i18n-aria-label="projectFavicon">
+      </div>
+    </section>
+
+    <section id="projects" class="st-card" aria-labelledby="projects-title">
+      <h2 id="projects-title"><span data-i18n="projectsTitle">프로젝트</span> <span class="st-optional" data-i18n="thisDeviceOnly">이 기기만</span></h2>
+      <div class="st-row" data-search="프로젝트 이동 옮기기 따라가기 머물기 project move follow stay">
+        <div class="st-row-text">
+          <p class="st-row-title" data-i18n="afterMove">다른 프로젝트로 옮긴 뒤</p>
+          <p class="st-row-sub" data-i18n="afterMoveSub">옮긴 뒤 뜨는 알림에서 되돌리거나 반대쪽으로 갈 수 있습니다.</p>
+        </div>
+        <select id="after-move" class="st-select" aria-label="다른 프로젝트로 옮긴 뒤" data-i18n-aria-label="afterMove">
+          <option value="stay" data-i18n="afterMoveStay">지금 프로젝트에 머물기</option>
+          <option value="follow" data-i18n="afterMoveFollow">옮긴 프로젝트로 따라가기</option>
+        </select>
+      </div>
+    </section>
+
+    <section id="capture" class="st-card" aria-labelledby="capture-title">
+      <h2 id="capture-title"><span data-i18n="captureTitle">그림 캡처</span> <span class="st-optional" data-i18n="thisDeviceOnly">이 기기만</span></h2>
+      <div class="st-row" data-search="캡처 클립보드 복사 이미지 출처 capture clipboard copy image source">
+        <div class="st-row-text">
+          <p class="st-row-title" data-i18n="captureCopy">캡처하면</p>
+          <p class="st-row-sub" data-i18n="captureCopySub">영역을 고르거나 그림·표를 누르면 바로 클립보드에 넣을 것입니다. 나머지는 캡처 옆 패널의 버튼으로 복사합니다.</p>
+        </div>
+        <select id="capture-copy" class="st-select" aria-label="캡처하면" data-i18n-aria-label="captureCopy">
+          <option value="none" data-i18n="captureCopyNone">복사 안 함</option>
+          <option value="image" data-i18n="captureCopyImage">이미지 (슬라이드)</option>
+          <option value="image-source" data-i18n="captureCopyImageSource">이미지와 출처 (문서)</option>
+          <option value="source" data-i18n="captureCopySource">출처만</option>
+        </select>
+      </div>
+      <div class="st-row" data-search="출처 이미지 아래 넣기 source below image embed">
+        <div class="st-row-text">
+          <p class="st-row-title" data-i18n="captureEmbed">이미지 아래에 출처 넣기</p>
+          <p class="st-row-sub" data-i18n="captureEmbedSub">복사하거나 저장하는 이미지에 출처 문구를 그려 넣습니다.</p>
+        </div>
+        <input type="checkbox" id="capture-embed" class="st-switch" aria-label="이미지 아래에 출처 넣기" data-i18n-aria-label="captureEmbed">
+      </div>
+      <div class="st-row" data-search="출처 형식 apa 짧게 인용 source format citation short">
+        <div class="st-row-text">
+          <p class="st-row-title" data-i18n="captureStyle">출처 형식</p>
+          <p class="st-row-sub" data-i18n="captureStyleSub">APA는 논문 정보 줄의 APA 복사와 같은 문구입니다.</p>
+        </div>
+        <select id="capture-style" class="st-select" aria-label="출처 형식" data-i18n-aria-label="captureStyle">
+          <option value="short" data-i18n="captureStyleShort">짧게</option>
+          <option value="apa" data-i18n="captureStyleApa">APA 전체</option>
+        </select>
+      </div>
+      <div class="st-row" data-search="출처 머리말 source prefix">
+        <div class="st-row-text">
+          <p class="st-row-title" data-i18n="capturePrefix">출처 머리말</p>
+        </div>
+        <select id="capture-prefix" class="st-select" aria-label="출처 머리말" data-i18n-aria-label="capturePrefix">
+          <option value="Source:">Source:</option>
+          <option value="출처:">출처:</option>
+          <option value="" data-i18n="capturePrefixNone">없음</option>
+        </select>
+      </div>
+      <div class="st-row" data-search="해상도 dpi resolution">
+        <div class="st-row-text">
+          <p class="st-row-title" data-i18n="captureDpi">해상도</p>
+        </div>
+        <select id="capture-dpi" class="st-select" aria-label="해상도" data-i18n-aria-label="captureDpi">
+          <option value="150">150 dpi</option>
+          <option value="300">300 dpi</option>
+          <option value="600">600 dpi</option>
+        </select>
+      </div>
+      <div class="st-row" data-search="배경 투명 흰색 background transparent white">
+        <div class="st-row-text">
+          <p class="st-row-title" data-i18n="captureBackground">배경</p>
+        </div>
+        <select id="capture-background" class="st-select" aria-label="배경" data-i18n-aria-label="captureBackground">
+          <option value="white" data-i18n="captureWhite">흰색</option>
+          <option value="transparent" data-i18n="captureTransparent">투명</option>
+        </select>
+      </div>
+      <div class="st-row" data-search="주석 필기 포함 annotations drawings include">
+        <div class="st-row-text">
+          <p class="st-row-title" data-i18n="captureAnnotations">주석·필기 포함</p>
+          <p class="st-row-sub" data-i18n="captureAnnotationsSub">형광펜·펜·텍스트 메모를 이미지에 함께 그립니다.</p>
+        </div>
+        <input type="checkbox" id="capture-annotations" class="st-switch" aria-label="주석·필기 포함" data-i18n-aria-label="captureAnnotations">
+      </div>
+      <div class="st-row" data-search="자동 인식 그림 표 모델 auto detect figures tables model">
+        <div class="st-row-text">
+          <p class="st-row-title" data-i18n="captureAutoDetect">그림·표 자동 인식</p>
+          <p class="st-row-sub" data-i18n="captureAutoDetectSub">캡처 모드에서 보이는 페이지의 그림·표를 찾아 표시합니다. 기기 안의 작은 모델이 페이지마다 돌아갑니다. 끄면 드래그로만 캡처합니다.</p>
+        </div>
+        <input type="checkbox" id="capture-auto-detect" class="st-switch" aria-label="그림·표 자동 인식" data-i18n-aria-label="captureAutoDetect">
+      </div>
+      <div class="st-row" data-search="연속 캡처 계속 continuous capture keep">
+        <div class="st-row-text">
+          <p class="st-row-title" data-i18n="captureContinuous">연속 캡처</p>
+          <p class="st-row-sub" data-i18n="captureContinuousSub">복사한 뒤에도 캡처 모드를 유지합니다. 끌 때는 S 또는 Esc.</p>
+        </div>
+        <input type="checkbox" id="capture-continuous" class="st-switch" aria-label="연속 캡처" data-i18n-aria-label="captureContinuous">
       </div>
     </section>
 

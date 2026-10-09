@@ -5,13 +5,16 @@ position follow you across every Chrome profile and device through your own
 Google Drive.
 
 - Opens local files and web PDFs in a bundled PDF.js viewer with pen,
-  highlight, text and stamp annotations.
+  highlight, text and stamp annotations; the tool, colors, thickness and
+  opacity last used come back in every document.
 - Collects PDFs into one tab per project with its own tab strip, so papers
   stop scattering among your web tabs (Alt+Shift+←/→ to switch, Alt+W to
   close one, Alt+Shift+T to reopen it). The same paper opened again goes to
   its existing tab; tabs you have not looked at for a while are unloaded.
 - Projects: every new PDF starts in the default project; move it to a named
-  one ("Move to project" / "프로젝트로 이동"). Close a project's tab and reopen it later with the
+  one ("Move to project" / "프로젝트로 이동"), local files included. After a
+  move you stay or go along (a setting); the notice can undo the move or take
+  you the other way. Close a project's tab and reopen it later with the
   same tabs; its other papers stay one click away. A paper open in two
   projects shows drawings made in either one live. Give a project an icon,
   an emoji or a color (its tab in Chrome shows it), and order projects or
@@ -29,9 +32,12 @@ Google Drive.
   for Semantic Scholar and OpenAlex (OpenAlex's keyless use is a daily budget
   shared per network).
 - Copies a figure or table as a sharp image for slides. The capture key (`S`,
-  ⌘+Shift+X / Ctrl+Shift+X or the toolbar button) cycles: drag a region → the
-  page's figures and tables outlined (one click copies one) → off; Alt+drag
-  works anytime. Detection runs a small layout model on the page, on the
+  ⌘+Shift+X / Ctrl+Shift+X or the toolbar button) turns capture mode on: the
+  page's figures and tables are outlined as they are found, a click copies
+  one, and a drag anywhere selects an area instead (the outlines step aside
+  while you drag); Alt+drag works anytime. What a capture puts on the
+  clipboard is a setting: nothing, the image, the image with its source, or
+  the source alone. Detection runs a small layout model on the page, on the
   device (PP-DocLayout-S, Apache-2.0, via ONNX Runtime Web; loaded on first
   use), and names and trims what it finds with the PDF's own captions and
   graphics. The region is rendered again at 150–600 dpi, with
@@ -49,8 +55,10 @@ Google Drive.
   access), gathering open PDFs, sync and a demo paper; settings → About shows
   it again.
 - One settings page, inside the PDF tab (⚙, or the popup's Settings): sync,
-  opening PDFs with the Chrome access each switch needs, display, paper-info
-  API keys with a check of what they allow, storage and shortcuts.
+  opening PDFs with the Chrome access each switch needs, display, where a
+  move leaves you, figure capture (clipboard, source, resolution, detection,
+  continuous capture), paper-info API keys with a check of what they allow,
+  storage and shortcuts.
 
 ## Keyboard shortcuts
 
@@ -73,7 +81,7 @@ step).
 | Ctrl+P | Print |
 | Ctrl+S | Download (with annotations) |
 | Ctrl+Z / Ctrl+Y | Undo / redo |
-| S / Ctrl+Shift+X | Capture an area → again: auto-detect figures and tables → again: turn off |
+| S / Ctrl+Shift+X | Capture on/off: click a figure or table, or drag an area |
 | Esc | Close capture, find, and annotation tools |
 
 Site and privacy policy: https://research-pdf.croksuter.com/

@@ -19,7 +19,7 @@ export const S = messages({
     print: '인쇄',
     download: '다운로드 (필기 포함)',
     undoRedo: '실행 취소·다시 실행',
-    capture: '영역 캡처 → 한 번 더: 그림·표 자동 인식 → 한 번 더: 끄기',
+    capture: '그림 캡처 켜기·끄기: 그림·표를 누르거나 영역을 드래그',
     escape: '캡처·찾기·필기 도구 닫기',
   },
   en: {
@@ -39,7 +39,7 @@ export const S = messages({
     print: 'Print',
     download: 'Download (with annotations)',
     undoRedo: 'Undo / redo',
-    capture: 'Capture an area → again: auto-detect figures and tables → again: turn off',
+    capture: 'Capture on/off: click a figure or table, or drag an area',
     escape: 'Close capture, find, and annotation tools',
   },
 });

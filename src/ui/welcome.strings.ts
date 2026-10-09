@@ -65,7 +65,7 @@ export const S = messages({
     tourNotesTitle: '필기',
     tourNotes: '펜 버튼으로 형광펜·펜·메모. 다운로드하면 PDF에 함께 저장됩니다.',
     tourFiguresTitle: '그림·표 캡처',
-    tourFigures: 'S: 영역 캡처 → 한 번 더: 그림·표 자동 인식. 누르면 출처와 함께 복사.',
+    tourFigures: 'S: 그림·표를 찾아 표시합니다. 누르면 복사되고, 드래그하면 원하는 영역을 복사합니다.',
     tourKeysTitle: '자주 쓰는 단축키',
 
     doneTitle: '준비 끝!',
@@ -138,7 +138,7 @@ export const S = messages({
     tourNotesTitle: 'Annotations',
     tourNotes: 'Highlighter, pen and notes from the pen button — saved into the PDF when you download it.',
     tourFiguresTitle: 'Figure capture',
-    tourFigures: 'S: capture a region → again: find figures and tables. Click to copy with the source.',
+    tourFigures: 'S: figures and tables are outlined. Click one to copy it, or drag to copy any area.',
     tourKeysTitle: 'Handy shortcuts',
 
     doneTitle: 'All set!',

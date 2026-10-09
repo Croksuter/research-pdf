@@ -222,7 +222,18 @@ of ten colors) and its place in the list (folder + order key). Folders are
   opens with; a hub that turns out to be gone is forgotten and the layout
   gets it, so a moved document never vanishes. "+" registers it there too and leaves it here. A document a
   project hub shows is registered to that project; the default hub shows a
-  document of a closed project as a guest without registering it.
+  document of a closed project as a guest without registering it. A local
+  file is handed over: its bytes go to the hub-files store under
+  `handoff:<project>`, and that project's hub takes them in (at once over the
+  `rpdf-hub-handoff` BroadcastChannel if it is open, else when it boots).
+  From home only the documents open here travel as tabs. Afterwards the hub
+  stays (the toast undoes — membership, pin and its place, the tab where it
+  stood — or goes there) or follows (`afterMove` in the display prefs): a
+  note in `chrome.storage.session` (`rpdfMoveNotice`, read within 20 s)
+  tells the destination's hub, in this tab after the in-place switch or in
+  its own, to bring the documents forward and offer undo and the way back.
+  A non-default hub drops the tabs whose documents left its project
+  elsewhere (another hub or device, an undone move).
 - **Caps**: 200 projects, 100 folders. Creating one at the cap is refused
   (`VOCAB_T_PDF_PROJECT_UPDATE` answers `{success:false, code:'project-limit'
   | 'folder-limit', limit, error}`). Live projects, folders and registered
