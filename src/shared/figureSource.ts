@@ -175,6 +175,13 @@ export function formatFigureSource(input: SourceInput): string {
  */
 export type FigureCopyAction = 'none' | 'image' | 'image-source' | 'source';
 export const COPY_ACTIONS: readonly FigureCopyAction[] = ['none', 'image', 'image-source', 'source'];
+/**
+ * What stays after a capture: the area and its panel (source to edit,
+ * options), or only a notice with a thumbnail and the copy buttons — a card
+ * at the bottom right or a bar at the bottom.
+ */
+export type FigureCaptureResult = 'panel' | 'card' | 'bar';
+export const CAPTURE_RESULTS: readonly FigureCaptureResult[] = ['panel', 'card', 'bar'];
 
 export interface FigureCopyOptions {
   /** Draw the reader's highlights, pen and text notes into the image. */
@@ -190,6 +197,9 @@ export interface FigureCopyOptions {
   autoDetect: boolean;
   /** Capture mode stays on after a copy. */
   continuous: boolean;
+  result: FigureCaptureResult;
+  /** The notice goes by itself after a while (held while pointed at or keyboard-focused), or only when closed. */
+  dismiss: 'auto' | 'manual';
 }
 
 export const FIGURE_COPY_OPTIONS_SETTING_KEY = 'figureCopyOptions';
@@ -208,6 +218,8 @@ export const DEFAULT_FIGURE_COPY_OPTIONS: FigureCopyOptions = {
   prefix: 'Source:',
   autoDetect: true,
   continuous: false,
+  result: 'card',
+  dismiss: 'auto',
 };
 
 /** Stored options, with anything missing or unknown back at its default. */
@@ -227,5 +239,7 @@ export function normalizeFigureCopyOptions(raw: unknown): FigureCopyOptions {
     prefix: (PREFIX_CHOICES as readonly string[]).includes(value.prefix as string) ? value.prefix as string : d.prefix,
     autoDetect: bool(value.autoDetect, d.autoDetect),
     continuous: bool(value.continuous, d.continuous),
+    result: CAPTURE_RESULTS.includes(value.result as FigureCaptureResult) ? value.result as FigureCaptureResult : d.result,
+    dismiss: value.dismiss === 'manual' ? 'manual' : 'auto',
   };
 }

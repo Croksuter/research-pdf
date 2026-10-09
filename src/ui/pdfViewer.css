@@ -760,7 +760,7 @@ body.vt-capture-dragging #viewerContainer .vt-figure-box { visibility: hidden; }
   z-index: 24;
   pointer-events: none;
 }
-.vt-capture-hint[hidden], .vt-capture-panel[hidden], .vt-capture-options[hidden] { display: none; }
+.vt-capture-hint[hidden], .vt-capture-panel[hidden], .vt-capture-options[hidden], .vt-capture-toast[hidden] { display: none; }
 .vt-capture-panel {
   position: fixed;
   z-index: 24;
@@ -808,3 +808,78 @@ body.vt-capture-dragging #viewerContainer .vt-figure-box { visibility: hidden; }
 .vt-capture-check { grid-column: 1 / -1; justify-content: flex-start; color: var(--vt-toolbar-fg); }
 .vt-capture-wide { grid-column: 1 / -1; }
 @media (max-width: 480px) { .vt-capture-options { grid-template-columns: 1fr; } }
+
+/* After a capture, instead of the panel: a card at the bottom right or a bar at the bottom. */
+.vt-capture-toast {
+  position: fixed;
+  z-index: 24;
+  box-sizing: border-box;
+  display: flex;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--vt-panel-bg);
+  border: 1px solid var(--vt-toolbar-border);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  color: var(--vt-toolbar-fg);
+  overflow: hidden;
+  animation: vt-toast-in 160ms ease-out;
+}
+.vt-capture-toast[data-variant="card"] { right: 16px; bottom: 16px; width: min(384px, calc(100vw - 32px)); }
+.vt-capture-toast[data-variant="bar"] { left: 50%; translate: -50% 0; bottom: 20px; max-width: calc(100vw - 32px); align-items: center; padding: 8px; }
+.vt-capture-toast-thumb {
+  flex: none;
+  width: 88px;
+  height: 62px;
+  border-radius: 4px;
+  background: #ffffff;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.vt-capture-toast-thumb canvas { max-width: 100%; max-height: 100%; }
+.vt-capture-toast-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.vt-capture-toast-title,
+.vt-capture-toast-source { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vt-capture-toast-title { padding-right: 24px; font-size: 13px; font-weight: 600; line-height: 18px; }
+.vt-capture-toast-title[data-kind="busy"] { color: var(--vt-toolbar-muted); font-weight: 400; }
+.vt-capture-toast-title[data-kind="error"] { color: #f28b82; }
+.vt-capture-toast-source { font-size: 12px; line-height: 16px; color: var(--vt-toolbar-muted); }
+.vt-capture-toast-actions { display: flex; gap: 6px; margin-top: 6px; }
+.vt-capture-toast-actions .vt-btn { height: 28px; padding: 0 10px; font-size: 12px; background: rgba(255, 255, 255, 0.08); }
+.vt-capture-toast-actions .vt-btn:hover { background: var(--vt-hover); }
+.vt-capture-toast .vt-capture-close { position: absolute; top: 6px; right: 6px; }
+/* The bar: one row, no source line. */
+.vt-capture-toast[data-variant="bar"] .vt-capture-toast-thumb { width: 46px; height: 32px; }
+.vt-capture-toast[data-variant="bar"] .vt-capture-toast-body { flex-direction: row; align-items: center; gap: 12px; }
+.vt-capture-toast[data-variant="bar"] .vt-capture-toast-title { padding-right: 0; }
+.vt-capture-toast[data-variant="bar"] .vt-capture-toast-source { display: none; }
+.vt-capture-toast[data-variant="bar"] .vt-capture-toast-actions { margin-top: 0; }
+.vt-capture-toast[data-variant="bar"] .vt-capture-close { position: static; }
+/* Going by itself: a line that runs out; pointing at the notice or reaching it by keyboard holds it
+   (a clicked button keeps focus, and must not hold it for good). */
+.vt-capture-toast-timer { display: none; }
+.vt-capture-toast[data-dismiss="auto"] .vt-capture-toast-timer {
+  display: block;
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 1px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--vt-accent);
+  transform-origin: left;
+  animation: vt-toast-timer 6s linear forwards;
+}
+.vt-capture-toast:hover .vt-capture-toast-timer,
+.vt-capture-toast:has(:focus-visible) .vt-capture-toast-timer { animation-play-state: paused; }
+@keyframes vt-toast-in { from { opacity: 0; transform: translateY(8px); } }
+@keyframes vt-toast-timer { to { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .vt-capture-toast { animation: none; }
+  /* Still timed, only not shown running out. */
+  .vt-capture-toast[data-dismiss="auto"] .vt-capture-toast-timer { visibility: hidden; }
+}
+@media (max-width: 480px) {
+  .vt-capture-toast[data-variant="bar"] .vt-capture-toast-body { flex-wrap: wrap; }
+}

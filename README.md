@@ -37,7 +37,10 @@ Google Drive.
   one, and a drag anywhere selects an area instead (the outlines step aside
   while you drag); Alt+drag works anytime. What a capture puts on the
   clipboard is a setting: nothing, the image, the image with its source, or
-  the source alone. Detection runs a small layout model on the page, on the
+  the source alone. Afterwards a notice (a card at the bottom right or a bar
+  at the bottom) shows a thumbnail with copy buttons and goes by itself or
+  when closed, or the area stays with a panel to edit the source line.
+  Detection runs a small layout model on the page, on the
   device (PP-DocLayout-S, Apache-2.0, via ONNX Runtime Web; loaded on first
   use), and names and trims what it finds with the PDF's own captions and
   graphics. The region is rendered again at 150–600 dpi, with
@@ -56,8 +59,9 @@ Google Drive.
   it again.
 - One settings page, inside the PDF tab (⚙, or the popup's Settings): sync,
   opening PDFs with the Chrome access each switch needs, display, where a
-  move leaves you, figure capture (clipboard, source, resolution, detection,
-  continuous capture), paper-info API keys with a check of what they allow,
+  move leaves you, figure capture (clipboard, what stays afterwards, source,
+  resolution, detection, continuous capture), paper-info API keys with a
+  check of what they allow,
   storage and shortcuts.
 
 ## Keyboard shortcuts

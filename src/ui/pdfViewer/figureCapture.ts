@@ -6,9 +6,12 @@
 // click copies one; a drag anywhere, outlines included, selects a region
 // instead — once the press moves, the outlines step aside until it ends.
 // Alt+drag works anytime. A capture does with the clipboard what the options
-// say and opens a small panel beside the region: the source line (editable),
-// copy image / copy source / save PNG, and the options. Capture mode ends
-// after a capture unless it is continuous.
+// say, then either keeps the area with a small panel beside it (the source
+// line to edit, copy image / copy source / save PNG, the options) or lets the
+// area go and shows a notice — a card at the bottom right or a bar at the
+// bottom — with a thumbnail, what was copied and the same three buttons; it
+// goes by itself after a while (held while pointed at or keyboard-focused)
+// or when closed. Capture mode ends after a capture unless it is continuous.
 //
 // The image is not a screenshot: the region is rendered again by PDF.js at the
 // chosen DPI, so it is sharp at any zoom, and the reader's drawings go in or
@@ -32,6 +35,7 @@ import {
   DPI_CHOICES,
   FIGURE_COPY_OPTIONS_CHANNEL,
   FIGURE_COPY_OPTIONS_SETTING_KEY,
+  type FigureCopyAction,
   type FigureCopyOptions,
   type FigureLabel,
   type PlacedText,
@@ -105,6 +109,11 @@ export class FigureCapture {
   private readonly hint = el('div', { className: 'vt-capture-hint', role: 'status', hidden: true });
   private readonly panel = el('div', { id: 'vocab-t-pdf-capture', className: 'vt-capture-panel', role: 'dialog', 'aria-label': S.captureDialog, hidden: true });
   private readonly status = el('span', { className: 'vt-capture-status', 'aria-live': 'polite' });
+  private readonly toast = el('div', { className: 'vt-capture-toast', role: 'group', 'aria-label': S.captureResult, hidden: true });
+  private readonly toastThumb = el('div', { className: 'vt-capture-toast-thumb' });
+  private readonly toastTitle = el('p', { className: 'vt-capture-toast-title', role: 'status' });
+  private readonly toastSource = el('p', { className: 'vt-capture-toast-source' });
+  private toastTimer: HTMLElement | null = null;
   private readonly sourceInput = el('textarea', { className: 'vt-capture-source', rows: '2', spellcheck: 'false', 'aria-label': S.captureSource });
   private readonly optionsBox = el('div', { className: 'vt-capture-options', hidden: true });
   private readonly optionsBtn = el('button', { type: 'button', className: 'vt-btn vt-btn-text', 'aria-expanded': 'false' }, [S.captureOptions]);
@@ -120,7 +129,8 @@ export class FigureCapture {
 
   constructor(private readonly deps: FigureCaptureDeps) {
     this.buildPanel();
-    document.body.append(this.hint, this.panel);
+    this.buildToast();
+    document.body.append(this.hint, this.panel, this.toast);
     void getSetting<unknown>(FIGURE_COPY_OPTIONS_SETTING_KEY, null)
       .then((raw) => this.applyOptions(normalizeFigureCopyOptions(raw)))
       .catch(() => { /* defaults */ });
@@ -131,10 +141,13 @@ export class FigureCapture {
     deps.container.addEventListener('pointerdown', (e) => this.onPointerDown(e), { capture: true });
     deps.container.addEventListener('scroll', () => this.placePanel(), { passive: true });
     window.addEventListener('resize', () => this.placePanel());
+    // A click elsewhere closes the panel; a notice stays until it goes or is closed.
     document.addEventListener('pointerdown', (e) => {
-      if (this.region && !this.panel.contains(e.target as Node)) this.close();
+      if (this.region && !this.panel.hidden && !this.panel.contains(e.target as Node)) this.close();
     }, { capture: true });
-    for (const name of ['scalechanging', 'rotationchanging', 'pagesdestroy']) deps.eventBus.on(name, () => this.close());
+    // The panel sits by the area on screen; a notice holds the area in PDF points and outlives a zoom.
+    for (const name of ['scalechanging', 'rotationchanging']) deps.eventBus.on(name, () => { if (!this.panel.hidden) this.close(); });
+    deps.eventBus.on('pagesdestroy', () => this.close());
     // Auto-detect outlines follow the pages as they render (scroll, zoom).
     // Only pages on screen: the model takes a while per page, and a page
     // rendered ahead is outlined when it scrolls into view.
@@ -163,11 +176,12 @@ export class FigureCapture {
     this.deps.onActiveChange(active);
   }
 
-  /** Esc: ends a drag, else closes the panel, else leaves capture mode. True when it did something. */
+  /** Esc: ends a drag, else closes the panel, else leaves capture mode, else closes the notice. True when it did something. */
   handleEscape(): boolean {
     if (this.cancelDrag) { this.cancelDrag(); return true; }
-    if (this.region) { this.close(); return true; }
+    if (this.region && !this.panel.hidden) { this.close(); return true; }
     if (this.active) { this.setActive(false); return true; }
+    if (!this.toast.hidden) { this.close(); return true; }
     return false;
   }
 
@@ -331,6 +345,7 @@ export class FigureCapture {
     this.region?.rectEl.remove();
     this.region = null;
     this.panel.hidden = true;
+    this.toast.hidden = true;
   }
 
   // ─── Drawing the region ───
@@ -411,7 +426,7 @@ export class FigureCapture {
     window.addEventListener('pointercancel', end, true);
   }
 
-  // ─── Panel ───
+  // ─── Panel and notice ───
 
   private open(region: Region): void {
     this.region = region;
@@ -419,12 +434,18 @@ export class FigureCapture {
     this.sourceEdited = false;
     const gen = ++this.generation;
     this.sourceInput.value = '';
-    this.panel.hidden = false;
-    this.placePanel();
+    if (this.options.result === 'panel') {
+      this.panel.hidden = false;
+      this.placePanel();
+    } else {
+      this.showToast(region, gen);
+    }
     const labelReady = this.findLabel(region).then((label) => {
       if (gen !== this.generation) return;
       this.label = label;
       if (!this.sourceEdited) this.sourceInput.value = this.sourceText();
+      this.toastSource.textContent = this.currentSource();
+      this.toastSource.title = this.toastSource.textContent;
     });
     this.copyAsOptioned(labelReady);
   }
@@ -432,10 +453,77 @@ export class FigureCapture {
   /** What a capture does with the clipboard (the options' `copy`). */
   private copyAsOptioned(labelReady: Promise<void>): void {
     switch (this.options.copy) {
-      case 'none': this.setStatus(S.captureNotCopied); return;
+      case 'none': {
+        const gen = this.generation;
+        void labelReady.then(() => { if (gen === this.generation) this.setStatus(this.done('none')); });
+        return;
+      }
       case 'source': this.copySource(labelReady); return;
       default: this.copyImage(labelReady, this.options.copy === 'image-source');
     }
+  }
+
+  /** What was done, worded for where it shows: the panel points at its buttons, the notice shows them beside it. */
+  private done(what: FigureCopyAction): string {
+    const label = formatFigureLabel(this.label, this.region?.pageNumber ?? 0);
+    const panel = this.options.result === 'panel';
+    switch (what) {
+      case 'image': return panel ? S.captureCopiedSeparate(label) : S.captureToastImage(label);
+      case 'image-source': return S.captureCopiedTogether(label);
+      case 'source': return panel ? S.captureSourceCopied : S.captureToastSource(label);
+      default: return panel ? S.captureNotCopied : S.captureToastNone(label);
+    }
+  }
+
+  private buildToast(): void {
+    const button = (label: string, run: () => void) => {
+      const b = el('button', { type: 'button', className: 'vt-btn vt-btn-text' }, [label]);
+      b.addEventListener('click', run);
+      return b;
+    };
+    const closeBtn = el('button', { type: 'button', className: 'vt-btn vt-icon-btn vt-capture-close', title: S.captureClose, 'aria-label': S.captureCloseAria });
+    closeBtn.innerHTML = '<svg><use href="#i-close"/></svg>';
+    closeBtn.addEventListener('click', () => this.close());
+    this.toast.append(
+      this.toastThumb,
+      el('div', { className: 'vt-capture-toast-body' }, [
+        this.toastTitle,
+        this.toastSource,
+        el('div', { className: 'vt-capture-toast-actions' }, [
+          button(S.captureCopyImage, () => this.copyImage(Promise.resolve(), this.options.copy === 'image-source')),
+          button(S.captureCopySource, () => this.copySource(Promise.resolve())),
+          button(S.captureSavePng, () => { void this.savePng(); }),
+        ]),
+      ]),
+      closeBtn,
+    );
+  }
+
+  /** The notice for a capture: the area itself does not stay on the page. */
+  private showToast(region: Region, gen: number): void {
+    region.rectEl.remove();
+    this.toast.dataset.variant = this.options.result;
+    this.toast.dataset.dismiss = this.options.dismiss;
+    this.toastSource.textContent = '';
+    this.toastThumb.replaceChildren();
+    // The timer is a line that runs out (CSS); pointing at the notice or keyboard focus in it holds it.
+    this.toastTimer?.remove();
+    this.toastTimer = el('span', { className: 'vt-capture-toast-timer' });
+    this.toastTimer.addEventListener('animationend', () => { if (gen === this.generation) this.close(); });
+    this.toast.append(this.toastTimer);
+    this.toast.hidden = false;
+    void this.thumbnail(region, gen).catch((error: unknown) => debugLog('viewer', 'capture thumbnail failed', () => ({ error: String(error) })));
+  }
+
+  /** The area again, small: about 176 px on its long side (the card shows it at half that). */
+  private async thumbnail(region: Region, gen: number): Promise<void> {
+    const doc = this.deps.getDoc();
+    if (!doc) return;
+    const page = await doc.getPage(region.pageNumber);
+    const longest = Math.max(region.pdf[2] - region.pdf[0], region.pdf[3] - region.pdf[1], 1);
+    const dpi = Math.min(150, Math.max(12, Math.round((176 * 72) / longest)));
+    const canvas = await renderRegion(doc, page, region, { ...this.options, dpi });
+    if (gen === this.generation) this.toastThumb.replaceChildren(canvas);
   }
 
   private buildPanel(): void {
@@ -537,8 +625,10 @@ export class FigureCapture {
   }
 
   private setStatus(text: string, kind: 'ok' | 'busy' | 'error' = 'ok'): void {
-    this.status.textContent = text;
-    this.status.dataset.kind = kind;
+    for (const node of [this.status, this.toastTitle]) {
+      node.textContent = text;
+      node.dataset.kind = kind;
+    }
   }
 
   // ─── Source line ───
@@ -615,8 +705,7 @@ export class FigureCapture {
     }
     void write.then(() => {
       if (gen !== this.generation) return;
-      const what = formatFigureLabel(this.label, region.pageNumber);
-      this.setStatus(withSource ? S.captureCopiedTogether(what) : S.captureCopiedSeparate(what));
+      this.setStatus(this.done(withSource ? 'image-source' : 'image'));
     }, (error: unknown) => {
       if (gen !== this.generation) return;
       this.setStatus(S.captureCopyFailed(error instanceof Error ? error.message : String(error)), 'error');
@@ -635,7 +724,7 @@ export class FigureCapture {
       write = Promise.reject(error);
     }
     void write.then(() => {
-      if (gen === this.generation) this.setStatus(S.captureSourceCopied);
+      if (gen === this.generation) this.setStatus(this.done('source'));
     }, (error: unknown) => {
       if (gen === this.generation) this.setStatus(S.captureSourceCopyFailed(error instanceof Error ? error.message : String(error)), 'error');
     });
