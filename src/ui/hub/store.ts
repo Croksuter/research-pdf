@@ -43,6 +43,8 @@ export interface HubTab {
   /** Move to another project as soon as the document's identity is known. */
   pendingMove: { to: string; keep: boolean; since: number } | null;
   frame: HTMLIFrameElement | null;
+  /** A second view of the document while split view shows it in both halves (hub/split.ts). */
+  mirror: HTMLIFrameElement | null;
   /** The frame reported its document (the viewer says `doc` once the PDF opened). */
   loaded: boolean;
   /** The fragment a frame nobody has looked at was opened with (a gathered tab's zoom): given back if it sleeps unseen. */

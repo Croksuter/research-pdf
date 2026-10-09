@@ -15,6 +15,7 @@ import { flushLocalFiles, localFiles, restoreLocalFiles, restoreLocalTabs, saveL
 import { renderList } from './tabList';
 import { scheduleHomeRender, showHome, initHomeView } from './home/home';
 import { updateProjectLabel } from './projectsPanel';
+import { restoreSplit, saveSplit } from './split';
 
 export const CLOSED_STORAGE_KEY = 'rpdfClosed';
 
@@ -98,6 +99,7 @@ export function hubState(): { urls: string[]; active: number; show: string | nul
 export function persistState(): void {
   if (!isHub) return;
   saveLocalTabs();
+  saveSplit();
   const { urls, active, show } = hubState();
   // A reload keeps settings in front; the project's saved state does not.
   const canonical = buildPdfHubUrl(urls, active, hubBase, activeKey === SETTINGS ? PDF_HUB_SHOW_SETTINGS : show, projectId);
@@ -274,6 +276,7 @@ export async function boot(): Promise<void> {
   if (front) activate(front.key);
   else if (initial.show === PDF_HUB_SHOW_SETTINGS) showSettings();
   else showHome(false);
+  restoreSplit();
   const handedOver = response?.docs ?? [];
   if (handedOver.length) addDocs(handedOver.map((doc) => ({ ...doc, file: null })), true);
   render();

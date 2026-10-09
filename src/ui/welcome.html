@@ -18,6 +18,7 @@
     <symbol id="w-web" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.4 2.6 3.5 5.6 3.5 9s-1.1 6.4-3.5 9c-2.4-2.6-3.5-5.6-3.5-9s1.1-6.4 3.5-9z"/></symbol>
     <symbol id="w-folder" viewBox="0 0 24 24"><path d="M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2h8.5A1.5 1.5 0 0 1 21 9.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/><path d="M12 11v5M9.5 13.5h5"/></symbol>
     <symbol id="w-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+    <symbol id="w-windows" viewBox="0 0 24 24"><rect x="2.5" y="5" width="12" height="10" rx="1.5"/><path d="M8 18.5h11a1.5 1.5 0 0 0 1.5-1.5V9.5"/><path d="M2.5 8h12"/></symbol>
   </svg>
 
   <header class="wl-top">
@@ -77,6 +78,14 @@
         <svg class="wl-card-icon"><use href="#w-folder"/></svg>
         <div class="wl-card-text"><strong data-i18n="fileTitle"></strong><span id="wl-file-sub"></span></div>
         <button type="button" id="wl-file" class="wl-btn"></button>
+      </div>
+      <div class="wl-card">
+        <svg class="wl-card-icon"><use href="#w-windows"/></svg>
+        <div class="wl-card-text"><strong data-i18n="scopeTitle"></strong><span data-i18n="scopeSub"></span></div>
+        <select id="wl-scope" class="wl-select" aria-label="" data-i18n-aria-label="scopeTitle">
+          <option value="window" data-i18n="scopeWindow"></option>
+          <option value="browser" data-i18n="scopeBrowser"></option>
+        </select>
       </div>
       <div class="wl-actions"><button type="button" class="wl-btn wl-ghost" data-go="back" data-i18n="back"></button><button type="button" class="wl-btn wl-primary" data-go="next" data-i18n="next"></button></div>
     </section>

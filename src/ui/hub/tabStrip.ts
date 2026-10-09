@@ -13,12 +13,14 @@ import { orderKeysBetween } from '../../shared/orderKey';
 import { tabLabels } from '../../shared/displayPrefs';
 import { type PdfLibraryEntry } from '../../shared/pdfLibrary';
 import { HUB_MESSAGE_TAG, hubDocumentTitle, sameTitle, type HubKeyAction } from '../../shared/pdfHubProtocol';
+import type { PdfTearOffRequest } from '../../shared/messages';
 import { SETTINGS_SHOWN_MESSAGE } from '../openPdfTabs';
 import { S } from '../pdfHub.strings';
 import { HOME, type HubTab, type NewDoc, SETTINGS, activeKey, activeTab, ask, currentProject, display, isLocal, isPage, library, libraryIdForUrl, pendingPins, pinnedDocIds, projectId, projectName, projects, registerDoc, registered, reloadProjects, sendProjectUpdate, succeeded, tabName, tabs, updateError, setActiveKey, setProjectsLocally } from './store';
-import { home, homeBtn, listBtn, listCount, moveBtn, settingsBtn, settingsView, tabList } from './dom';
+import { homeBtn, listBtn, listCount, moveBtn, settingsView, splitDrop, tabList } from './dom';
 import { type MenuEntry, copyUrl, el, hidePanels, icon, showMenu, showToast } from './uiKit';
-import { enforceSleep, ensureFrame, loadWaiters, postToFrame, queuePrefetch, retireFrame } from './frames';
+import { askToStore, enforceSleep, ensureFrame, loadWaiters, postToFrame, queuePrefetch, retireFrame } from './frames';
+import { closeSplit, focusIfBehind, focusOtherPane, frontElement, layoutPanes, onScreen, otherSide, releaseTab, replaceInSplit, showInFront, split, splitWith, toggleSplit } from './split';
 import { closed, reopenClosed, reopenEntries, setClosed, persistState } from './session';
 import { localFileId, scheduleLocalFilePrune } from './localFiles';
 import { scheduleHomeRender, showHome } from './home/home';
@@ -51,7 +53,7 @@ export function createTab(doc: NewDoc): HubTab {
     key, url: doc.url, hash: doc.hash, file: doc.file, fileId: doc.file ? doc.fileId ?? localFileId(doc.file) : null,
     title: initialTitle, paperTitle: null, docId: null, libraryId: doc.url ? libraryIdForUrl(doc.url) : null,
     pinned: false, keepOnUnpin: false, pendingPin: 0, pendingMove: null,
-    frame: null, loaded: false, unseenHash: '', prefetched: false, lastShownAt: 0, busyUntil: 0,
+    frame: null, mirror: null, loaded: false, unseenHash: '', prefetched: false, lastShownAt: 0, busyUntil: 0,
     root, button, iconEl, titleEl, paperEl, verEl, closeEl,
   };
   // Names the library already knows, until the viewer reports its own.
@@ -148,6 +150,7 @@ export function addDocs(docs: NewDoc[], activateLast: boolean, autoActivate = tr
 export function removeTab(tab: HubTab): void {
   const index = tabs.indexOf(tab);
   if (index < 0) return;
+  releaseTab(tab.key);
   tabs.splice(index, 1);
   void retireFrame(tab);
   tab.root.remove();
@@ -166,40 +169,42 @@ export function activate(key: number, focusFrame = true): void {
   if (key === SETTINGS) { showSettings(); return; }
   const tab = tabs.find((t) => t.key === key);
   if (!tab) return;
+  // Split: shown in the half behind, which comes in front.
+  if (focusIfBehind(key)) return;
   const now = Date.now();
   const previous = activeTab();
   if (previous) previous.lastShownAt = now;
+  showInFront(key);
   setActiveKey(key);
   tab.lastShownAt = now;
   tab.unseenHash = '';
-  const frame = ensureFrame(tab);
-  for (const t of tabs) if (t.frame) t.frame.hidden = t !== tab;
-  home.hidden = true;
-  homeBtn.setAttribute('aria-pressed', 'false');
-  settingsView.hidden = true;
-  settingsBtn.setAttribute('aria-pressed', 'false');
+  ensureFrame(tab);
+  layoutPanes();
   tab.root.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  if (focusFrame) frame.focus();
+  if (focusFrame) frontElement()?.focus();
   render();
   void enforceSleep();
 }
 
-/** Leaves the tab in front for a page (home, settings): its frame hides, the strip stays reachable. */
-export function leaveTabs(next: number): void {
+/**
+ * Leaves the tab in front for a page (home, settings): its frame hides, the
+ * strip stays reachable. False when the page was already in the half behind,
+ * which came in front instead.
+ */
+export function leaveTabs(next: number): boolean {
+  if (focusIfBehind(next)) return false;
   const previous = activeTab();
   if (previous) {
     previous.lastShownAt = Date.now();
     lastTabKey = previous.key;
   }
+  showInFront(next);
   setActiveKey(next);
-  for (const t of tabs) if (t.frame) t.frame.hidden = true;
+  layoutPanes();
+  return true;
 }
 export function showSettings(): void {
-  leaveTabs(SETTINGS);
-  home.hidden = true;
-  homeBtn.setAttribute('aria-pressed', 'false');
-  settingsView.hidden = false;
-  settingsBtn.setAttribute('aria-pressed', 'true');
+  if (!leaveTabs(SETTINGS)) return;
   let frame = settingsFrame();
   if (!frame) {
     frame = el('iframe', { src: 'settings.html', title: S.settings });
@@ -259,6 +264,8 @@ export function step(action: HubKeyAction): void {
     return;
   }
   if (action === 'reopen') { reopenClosed(); return; }
+  if (action === 'split') { toggleSplit(); return; }
+  if (action === 'pane') { focusOtherPane(); return; }
   if (tabs.length === 0) return;
   if (isPage(activeKey) || activeKey === null) {
     activate((action === 'next' ? tabs[0] : tabs[tabs.length - 1]).key);
@@ -337,13 +344,19 @@ export function wireDrag(tab: HubTab): void {
   root.addEventListener('dragstart', (e) => {
     dragKey = tab.key;
     root.classList.add('is-dragging');
+    // The page below offers its halves (split view).
+    document.body.classList.add('is-tab-dragging');
     e.dataTransfer?.setData('text/plain', tab.url ?? tab.title);
     if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
   });
-  root.addEventListener('dragend', () => {
+  root.addEventListener('dragend', (e) => {
     dragKey = null;
     root.classList.remove('is-dragging');
+    document.body.classList.remove('is-tab-dragging');
+    splitDrop.classList.remove('is-armed');
     clearStripDropMarks();
+    // Dropped outside the browser window, on nothing: the document gets a window of its own there.
+    if (e.dataTransfer?.dropEffect === 'none' && droppedOutside(e)) void tearOff(tab, boundsAt(e));
   });
   // Pinned tabs reorder among pins (the project's pin order), the rest among the rest.
   root.addEventListener('dragover', (e) => {
@@ -561,6 +574,8 @@ export function showTabMenu(tab: HubTab, x: number, y: number): void {
     const url = tab.url;
     entries.push({ label: S.copyUrl, run: () => copyUrl(url) });
   }
+  entries.push('sep', ...splitMenu(tab));
+  entries.push({ label: S.tearOff, run: () => { void tearOff(tab, null); }, disabled: !tab.url });
   const others = tabs.filter((t) => t !== tab && !t.pinned);
   entries.push(
     'sep',
@@ -592,6 +607,7 @@ export function setPinOrder(docIds: string[]): void {
 export function mergeTwins(reporter: HubTab, twin: HubTab): void {
   const keep = reporter.pinned && !twin.pinned ? reporter : twin;
   const drop = keep === reporter ? twin : reporter;
+  replaceInSplit(drop.key, keep.key);
   if (drop.pendingPin && !keep.pendingPin) keep.pendingPin = drop.pendingPin;
   if (drop.pendingMove && !keep.pendingMove) keep.pendingMove = drop.pendingMove;
   const wasShown = activeKey === drop.key || activeKey === keep.key;
@@ -616,4 +632,50 @@ export function runPendingMove(tab: HubTab): void {
   const { to, keep } = tab.pendingMove;
   tab.pendingMove = null;
   void moveTab(tab, to, keep);
+}
+
+// ─── Split view and windows, from the tab menu ───
+
+function splitMenu(tab: HubTab): MenuEntry[] {
+  const inFront = tab.key === activeKey;
+  if (!split) {
+    return [inFront
+      ? { label: S.splitSame, run: () => splitWith(tab.key, 'right', true) }
+      : { label: S.splitOpen, run: () => splitWith(tab.key, 'right') }];
+  }
+  const behind = otherSide(split.focus);
+  const entries: MenuEntry[] = [];
+  if (!onScreen(tab.key)) entries.push({ label: S.splitOther, run: () => splitWith(tab.key, behind) });
+  else if (inFront && split[behind].key !== tab.key) entries.push({ label: S.splitSameOther, run: () => splitWith(tab.key, behind, true) });
+  entries.push({ label: S.splitClose, run: () => closeSplit() });
+  return entries;
+}
+
+function droppedOutside(e: DragEvent): boolean {
+  // Some platforms end a cancelled drag at (0, 0).
+  if (e.screenX === 0 && e.screenY === 0) return false;
+  return e.screenX < window.screenX || e.screenY < window.screenY
+    || e.screenX > window.screenX + window.outerWidth || e.screenY > window.screenY + window.outerHeight;
+}
+
+function boundsAt(e: DragEvent): NonNullable<PdfTearOffRequest['bounds']> {
+  return { left: Math.round(e.screenX - 80), top: Math.round(e.screenY - 16), width: Math.round(window.outerWidth), height: Math.round(window.outerHeight) };
+}
+
+/**
+ * Moves the document into a hub of this project in a new window (the menu,
+ * or its tab dropped outside the window). Its position is stored first, so
+ * it opens there where it was read. A pinned document stays here too (pins
+ * belong to the project, in every hub of it).
+ */
+export async function tearOff(tab: HubTab, bounds: PdfTearOffRequest['bounds']): Promise<void> {
+  if (!tab.url) { showToast(S.tearOffLocal); return; }
+  if (tab.frame) await askToStore(tab.frame);
+  const request: PdfTearOffRequest = { type: 'VOCAB_T_PDF_TEAR_OFF', project: projectId, url: tab.url, bounds };
+  const response = await ask(request as unknown as Record<string, unknown>);
+  if (!succeeded(response)) { showToast(S.tearOffFailed); return; }
+  if (!tab.pinned && tabs.includes(tab)) {
+    removeTab(tab);
+    render();
+  }
 }

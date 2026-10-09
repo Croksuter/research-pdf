@@ -30,6 +30,8 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { group: 'tabs', combos: [['Alt', 'Shift', '←'], ['Alt', 'Shift', '→']], label: 'prevNextTab', tour: true },
   { group: 'tabs', combos: [['Alt', 'W']], label: 'closeTab', tour: true },
   { group: 'tabs', combos: [['Alt', 'Shift', 'T']], label: 'reopenTab', tour: true },
+  { group: 'tabs', combos: [['Alt', 'Shift', 'S']], label: 'splitView' },
+  { group: 'tabs', combos: [['Alt', 'Shift', 'O']], label: 'otherHalf' },
   { group: 'tabs', combos: [['Alt', '↑'], ['Alt', '↓']], label: 'moveInProject' },
   { group: 'view', combos: [['Ctrl', 'F']], label: 'find' },
   { group: 'view', combos: [['Ctrl', 'G'], ['Ctrl', 'Shift', 'G']], label: 'findNext' },

@@ -11,6 +11,15 @@ Google Drive.
   stop scattering among your web tabs (Alt+Shift+←/→ to switch, Alt+W to
   close one, Alt+Shift+T to reopen it). The same paper opened again goes to
   its existing tab; tabs you have not looked at for a while are unloaded.
+- Split view: two papers side by side in one PDF tab, or the same paper
+  twice (text beside its references) — drag a tab onto either half of the
+  page, use the split button, or Alt+Shift+S. Drawings show in both halves
+  as you make them.
+- Works with several windows: by default a PDF joins the PDF tab of the
+  window it was opened in and never pulls another window forward; for
+  browsers where you switch spaces in one window (Arc), choose one PDF tab
+  for the whole browser in settings. Any paper can move to a window of its
+  own ("Move to new window", or drag its tab out of the window).
 - Projects: every new PDF starts in the default project; move it to a named
   one ("Move to project" / "프로젝트로 이동"), local files included. After a
   move you stay or go along (a setting); the notice can undo the move or take
@@ -71,6 +80,8 @@ step).
 | Alt+Shift+← / Alt+Shift+→ | Previous / next PDF tab |
 | Alt+W | Close this PDF tab |
 | Alt+Shift+T | Reopen closed tab |
+| Alt+Shift+S | Split view on / off (two documents side by side) |
+| Alt+Shift+O | Go to the other half of the split view |
 | Alt+↑ / Alt+↓ | Reorder in the project list |
 | Ctrl+F | Find in document |
 | Ctrl+G / Ctrl+Shift+G | Next / previous match |

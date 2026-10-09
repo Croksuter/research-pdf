@@ -51,6 +51,10 @@ export const moveItems = byId<HTMLDivElement>('rpdf-move-items');
 export const moveNewForm = byId<HTMLFormElement>('rpdf-move-new');
 export const moveNewName = byId<HTMLInputElement>('rpdf-move-new-name');
 export const homeTitle = byId<HTMLHeadingElement>('rpdf-home-title');
+export const splitBtn = byId<HTMLButtonElement>('rpdf-split-btn');
+export const splitDivider = byId<HTMLDivElement>('rpdf-split-divider');
+export const splitFront = byId<HTMLDivElement>('rpdf-split-front');
+export const splitDrop = byId<HTMLDivElement>('rpdf-split-drop');
 
 export const viewerBase = chrome.runtime.getURL(PDF_VIEWER_PAGE);
 export const hubBase = chrome.runtime.getURL(PDF_HUB_PAGE);

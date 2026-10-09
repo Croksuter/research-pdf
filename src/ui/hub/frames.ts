@@ -15,6 +15,7 @@ import { frames, viewerBase } from './dom';
 import { el } from './uiKit';
 import { completePendingPins, mergeTwins, render, runPendingMove, step, updateTabLabel } from './tabStrip';
 import { openFiles } from './session';
+import { dropMirror, focusSide, noteMirrorLoaded, onScreen, sideOfWindow, split } from './split';
 
 export const SLEEP_CHECK_MS = 60_000;
 export const SLEEP_REPLY_TIMEOUT_MS = 2_000;
@@ -133,12 +134,14 @@ export function askToStore(frame: HTMLIFrameElement): Promise<{ ok: boolean; has
 export function storeFrames(): Promise<unknown> {
   return Promise.all([
     ...tabs.filter((t) => t.frame).map((t) => askToStore(t.frame as HTMLIFrameElement)),
+    ...tabs.filter((t) => t.mirror).map((t) => askToStore(t.mirror as HTMLIFrameElement)),
     ...retiring,
   ]);
 }
 
 /** A closed tab's frame: hidden at once, removed once it stored everything. */
 export function retireFrame(tab: HubTab): Promise<void> {
+  if (tab.mirror) dropMirror(tab);
   const frame = tab.frame;
   tab.frame = null;
   tab.loaded = false;
@@ -150,9 +153,9 @@ export function retireFrame(tab: HubTab): Promise<void> {
 }
 
 export async function sleepTab(tab: HubTab): Promise<void> {
-  if (!tab.frame || tab.key === activeKey) return;
+  if (!tab.frame || onScreen(tab.key)) return;
   const reply = await askToStore(tab.frame);
-  if (!tab.frame || tab.key === activeKey || !tabs.includes(tab)) return;
+  if (!tab.frame || onScreen(tab.key) || !tabs.includes(tab)) return;
   if (!reply.ok) { tab.busyUntil = Date.now() + BUSY_RETRY_MS; return; }
   tab.frame.remove();
   tab.frame = null;
@@ -171,7 +174,7 @@ export async function enforceSleep(): Promise<void> {
     const keys = pickTabsToSleep(tabs.map((t) => ({
       key: t.key,
       loaded: !!t.frame,
-      active: t.key === activeKey,
+      active: onScreen(t.key),
       lastShownAt: t.lastShownAt,
       busyUntil: t.busyUntil,
     })), now);
@@ -194,8 +197,22 @@ window.addEventListener('message', (event) => {
     if (Array.from(frames.querySelectorAll('iframe')).some((f) => f.contentWindow === event.source)) sleepWaiters.get(message.id)?.(message);
     return;
   }
+  // Split view: pressing in a viewer brings its half in front.
+  if (message.kind === 'focus') {
+    const side = sideOfWindow(event.source);
+    if (side && split && side !== split.focus) focusSide(side, false);
+    return;
+  }
   const tab = tabs.find((t) => t.frame?.contentWindow === event.source);
-  if (!tab) return;
+  if (!tab) {
+    // A second view of a document (split view): only its keys and files count.
+    const mirrored = tabs.find((t) => t.mirror?.contentWindow === event.source);
+    if (!mirrored?.mirror) return;
+    if (message.kind === 'doc') noteMirrorLoaded(mirrored.mirror);
+    else if (message.kind === 'key') step(message.action);
+    else if (message.kind === 'open-files') openFiles(message.files);
+    return;
+  }
   if (message.kind === 'doc') {
     tab.title = message.title;
     tab.paperTitle = message.paperTitle;
@@ -213,7 +230,7 @@ window.addEventListener('message', (event) => {
     render();
   } else if (message.kind === 'key') {
     step(message.action);
-  } else {
+  } else if (message.kind === 'open-files') {
     openFiles(message.files);
   }
 });

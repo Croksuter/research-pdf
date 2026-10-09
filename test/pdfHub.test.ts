@@ -10,6 +10,7 @@ import {
   parsePdfHubClaimRequest,
   parsePdfHubOpenMessage,
   parsePdfHubStateRequest,
+  parsePdfTearOffRequest,
 } from '../src/shared/messages';
 import {
   HUB_MESSAGE_TAG,
@@ -20,6 +21,7 @@ import {
   parseViewerToHubMessage,
   sameTitle,
 } from '../src/shared/pdfHubProtocol';
+import { DEFAULT_HUB_SCOPE, parseHubScope, pickHub } from '../src/shared/hubScope';
 
 const HUB = 'chrome-extension://abc/pdf-hub.html';
 const A = 'https://arxiv.org/pdf/2401.00001';
@@ -98,6 +100,19 @@ describe('hub messages', () => {
     expect(parsePdfHubOpenMessage({ type: 'VOCAB_T_PDF_HUB_OPEN', tabId: '4', docs: [], activate: false })).toBeNull();
   });
 
+  it('parses a tear-off by shape: a project, a document address, and on-screen-sized bounds or none', () => {
+    const bounds = { left: -1200, top: 40, width: 900, height: 700 };
+    expect(parsePdfTearOffRequest({ type: 'VOCAB_T_PDF_TEAR_OFF', project: 'p1x', url: A, bounds }))
+      .toEqual({ type: 'VOCAB_T_PDF_TEAR_OFF', project: 'p1x', url: A, bounds });
+    expect(parsePdfTearOffRequest({ type: 'VOCAB_T_PDF_TEAR_OFF', project: 'default', url: LOCAL, bounds: null })?.bounds).toBeNull();
+    expect(parsePdfTearOffRequest({ type: 'VOCAB_T_PDF_TEAR_OFF', project: 'default', url: LOCAL })?.bounds).toBeNull();
+    expect(parsePdfTearOffRequest({ type: 'VOCAB_T_PDF_TEAR_OFF', project: '../x', url: A, bounds: null })).toBeNull();
+    expect(parsePdfTearOffRequest({ type: 'VOCAB_T_PDF_TEAR_OFF', project: 'p1x', url: 'javascript:x', bounds: null })).toBeNull();
+    expect(parsePdfTearOffRequest({ type: 'VOCAB_T_PDF_TEAR_OFF', project: 'p1x', url: A, bounds: { ...bounds, width: 20 } })).toBeNull();
+    expect(parsePdfTearOffRequest({ type: 'VOCAB_T_PDF_TEAR_OFF', project: 'p1x', url: A, bounds: { ...bounds, left: 1.5 } })).toBeNull();
+    expect(parsePdfTearOffRequest({ type: 'VOCAB_T_PDF_TEAR_OFF', project: 'p1x', url: A, bounds: 'top' })).toBeNull();
+  });
+
   it('parses frame messages and never trusts untagged or malformed ones', () => {
     const file = new File([new Uint8Array([1])], 'x.pdf', { type: 'application/pdf' });
     expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'doc', title: '1706.03762', paperTitle: ' Attention Is All You Need ' }))
@@ -122,6 +137,10 @@ describe('hub messages', () => {
     expect(parseHubToViewerMessage({ tag: HUB_MESSAGE_TAG, kind: 'open-file', file })?.kind).toBe('open-file');
     expect(parseHubToViewerMessage({ tag: HUB_MESSAGE_TAG, kind: 'hash', hash: '#page=4' })).toEqual({ tag: HUB_MESSAGE_TAG, kind: 'hash', hash: '#page=4' });
     expect(parseHubToViewerMessage({ tag: HUB_MESSAGE_TAG, kind: 'hash', hash: 'page=4' })).toBeNull();
+    // Split view: a viewer pressed in, a second view made the tab's own.
+    expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'focus' })).toEqual({ tag: HUB_MESSAGE_TAG, kind: 'focus' });
+    expect(parseHubToViewerMessage({ tag: HUB_MESSAGE_TAG, kind: 'primary' })).toEqual({ tag: HUB_MESSAGE_TAG, kind: 'primary' });
+    expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'key', action: 'split' })?.kind).toBe('key');
   });
 
   it('maps only the hub keys Chrome leaves free, and titles the tab by count and document', () => {
@@ -131,6 +150,9 @@ describe('hub messages', () => {
     expect(key('ArrowLeft', { altKey: true, shiftKey: true })).toBe('prev');
     expect(key('KeyW', { altKey: true })).toBe('close');
     expect(key('KeyT', { altKey: true, shiftKey: true })).toBe('reopen');
+    expect(key('KeyS', { altKey: true, shiftKey: true })).toBe('split');
+    expect(key('KeyO', { altKey: true, shiftKey: true })).toBe('pane');
+    expect(key('KeyS', { altKey: true })).toBeNull();
     expect(key('KeyT', { ctrlKey: true, shiftKey: true })).toBeNull(); // Chrome's own reopen
     expect(key('ArrowLeft', { altKey: true })).toBeNull(); // Alt+← is the browser's Back
     expect(key('KeyW', { ctrlKey: true })).toBeNull();
@@ -160,7 +182,9 @@ function createFakeChrome() {
   const session: Record<string, unknown> = {};
   const local: Record<string, unknown> = {};
   const focusedWindows: number[] = [];
+  const createdWindows: Array<{ url: string; left?: number }> = [];
   let nextId = 100;
+  let nextWindow = 50;
   // Hub pages that answer the background's hand-over broadcast.
   const hubInboxes = new Map<number, Array<{ docs: Array<{ url: string; hash: string }>; activate: boolean }>>();
   // Hub pages Chrome froze: they take a message only when woken.
@@ -190,6 +214,14 @@ function createFakeChrome() {
     storage: { session: area(session), local: area(local) },
     windows: {
       update: vi.fn(async (windowId: number) => { focusedWindows.push(windowId); return {}; }),
+      create: vi.fn(async (props: { url: string; left?: number }) => {
+        if (props.left !== undefined && props.left < -5000) throw new Error('Invalid value for bounds.');
+        const windowId = nextWindow++;
+        const tab = { id: nextId++, windowId, index: 0, active: true, url: props.url };
+        tabs.set(tab.id, tab);
+        createdWindows.push(props);
+        return { id: windowId, tabs: [{ ...tab }] };
+      }),
     },
     tabs: {
       get: vi.fn(async (id: number) => {
@@ -215,7 +247,9 @@ function createFakeChrome() {
     chrome,
     tabs,
     local,
+    session,
     focusedWindows,
+    createdWindows,
     hubInboxes,
     asleep,
     /** The frozen hub wakes and takes what was sent to it meanwhile. */
@@ -343,7 +377,8 @@ describe('hub claims', () => {
     expect(fake.hubInboxes.get(hubId)?.flatMap((m) => m.docs.map((d) => d.url))).toHaveLength(3);
   });
 
-  it('keeps one hub per project across windows, and replaces a hub that stopped answering', async () => {
+  it('keeps one hub per project across windows with the browser scope, and replaces a hub that stopped answering', async () => {
+    fake.local.rpdfHubScope = 'browser';
     fake.addTab({ id: 1, windowId: 7, index: 0, active: true });
     fake.addTab({ id: 2, windowId: 8, index: 0, active: true });
     expect(await claim([doc(A)], false, 1)).toMatchObject({ role: 'hub' });
@@ -365,6 +400,7 @@ describe('hub claims', () => {
   });
 
   it('gives each project its own hub, and sends a document to an open project it belongs to', async () => {
+    fake.local.rpdfHubScope = 'browser';
     storeProject('p1x', A);
     fake.addTab({ id: 1, windowId: 7, index: 0, active: true });
     fake.addTab({ id: 2, windowId: 7, index: 1, active: true });
@@ -388,6 +424,7 @@ describe('hub claims', () => {
   });
 
   it('opens a document of a closed project in the default project, and a deleted project\'s tab as the default one', async () => {
+    fake.local.rpdfHubScope = 'browser';
     storeProject('p1x', A);
     fake.addTab({ id: 1, windowId: 7, index: 0, active: true });
     expect(await claim([doc(A)], false, 1)).toMatchObject({ role: 'hub', project: 'default' });
@@ -418,6 +455,7 @@ describe('hub claims', () => {
   });
 
   it('switches a hub to a closed project in place: the URL to load, and a claim that keeps the tab', async () => {
+    fake.local.rpdfHubScope = 'browser';
     storeProject('p1x', A);
     (fake.local.rpdfProjects as Record<string, { layout: unknown }>).p1x.layout = { urls: [A], active: 0, show: 'home', savedAt: 9 };
     fake.addTab({ id: 1, windowId: 7, index: 0, active: true });
@@ -499,6 +537,124 @@ describe('hub claims', () => {
     await vi.waitFor(() => expect(fake.hubInboxes.get(2)?.flatMap((m) => m.docs)).toEqual([doc(LOCAL)]));
     await vi.waitFor(async () => expect(await claim([], false, 2, 'p1x')).toEqual({ success: true, role: 'hub', project: 'p1x', docs: [] }));
   }, 10_000);
+
+  it('picks the hub of the claimer\'s window, the one in front there first, and with the browser scope any', () => {
+    const hubs = [
+      { tabId: 1, windowId: 7, active: false },
+      { tabId: 2, windowId: 8, active: false },
+      { tabId: 3, windowId: 8, active: true },
+    ];
+    expect(pickHub(hubs, 8, 'window')?.tabId).toBe(3);
+    expect(pickHub(hubs.slice(0, 2), 8, 'window')?.tabId).toBe(2);
+    expect(pickHub(hubs, 9, 'window')).toBeNull();
+    expect(pickHub(hubs, 9, 'browser')?.tabId).toBe(1);
+    expect(pickHub(hubs, null, 'browser')?.tabId).toBe(1);
+    expect(pickHub([], 7, 'browser')).toBeNull();
+    expect(parseHubScope('browser')).toBe('browser');
+    expect(parseHubScope(undefined)).toBe(DEFAULT_HUB_SCOPE);
+    expect(parseHubScope('space')).toBe(DEFAULT_HUB_SCOPE);
+  });
+
+  it('with the window scope keeps a PDF in its window: a hub there, never another window brought forward', async () => {
+    fake.addTab({ id: 1, windowId: 7, index: 0, active: true });
+    expect(await claim([doc(A)], false, 1)).toMatchObject({ role: 'hub', project: 'default' });
+    fake.hubInboxes.set(1, []);
+    // Window 8 has no hub: the PDF's own tab becomes one there.
+    fake.addTab({ id: 2, windowId: 8, index: 0, active: true });
+    expect(await claim([doc(B)], false, 2)).toEqual({ success: true, role: 'hub', project: 'default', docs: [] });
+    fake.hubInboxes.set(2, []);
+    expect(fake.focusedWindows).toEqual([]);
+    // Later PDFs go to their own window's hub.
+    fake.addTab({ id: 3, windowId: 8, index: 1, active: true });
+    expect(await claim([doc(LOCAL)], false, 3)).toMatchObject({ role: 'forwarded', dispose: 'close' });
+    expect(fake.hubInboxes.get(2)).toEqual([{ docs: [doc(LOCAL)], activate: true }]);
+    expect(fake.hubInboxes.get(1)).toEqual([]);
+    expect(fake.focusedWindows).toEqual([8]);
+    // A project's tab opened in a window without its hub becomes a second hub of it there.
+    storeProject('p1x', A);
+    fake.addTab({ id: 4, windowId: 7, index: 1, active: true });
+    expect(await claim([], false, 4, 'p1x')).toMatchObject({ role: 'hub', project: 'p1x' });
+    fake.addTab({ id: 5, windowId: 8, index: 2, active: true });
+    expect(await claim([], false, 5, 'p1x')).toMatchObject({ role: 'hub', project: 'p1x' });
+    expect(fake.session.rpdfProjectHubs).toMatchObject({ default: [{ tabId: 1 }, { tabId: 2 }], p1x: [{ tabId: 4 }, { tabId: 5 }] });
+    // A document registered to p1x goes to p1x's hub in its own window.
+    fake.hubInboxes.set(4, []);
+    fake.hubInboxes.set(5, []);
+    fake.addTab({ id: 6, windowId: 8, index: 3, active: false });
+    expect(await claim([doc(A)], true, 6)).toMatchObject({ role: 'forwarded', dispose: 'back' });
+    expect(fake.hubInboxes.get(5)).toEqual([{ docs: [doc(A)], activate: false }]);
+    expect(fake.hubInboxes.get(4)).toEqual([]);
+  });
+
+  it('with the window scope opens a project here even when it is open in another window', async () => {
+    storeProject('p1x', A);
+    fake.addTab({ id: 1, windowId: 7, index: 0, active: true });
+    expect(await claim([], false, 1, 'p1x')).toMatchObject({ role: 'hub', project: 'p1x' });
+    fake.addTab({ id: 2, windowId: 8, index: 0, active: true });
+    expect(await claim([], false, 2)).toMatchObject({ role: 'hub', project: 'default' });
+    const answer = await hub.openPdfProject('p1x', fake.sender(2), true);
+    expect(hubParts(answer.url!)).toMatchObject({ project: 'p1x' });
+    expect(fake.focusedWindows).toEqual([]);
+    // The same request from window 7 shows the hub there.
+    fake.addTab({ id: 3, windowId: 7, index: 1, active: true });
+    expect(await hub.openPdfProject('p1x', fake.sender(3), true)).toEqual({ success: true });
+    expect(fake.tabs.get(1)?.active).toBe(true);
+  });
+
+  it('moves a document to the target project\'s hub in the sender\'s window first', async () => {
+    storeProject('p1x', A, 'docA');
+    fake.addTab({ id: 1, windowId: 7, index: 0, active: true });
+    fake.addTab({ id: 2, windowId: 8, index: 0, active: true });
+    expect(await claim([], false, 1, 'p1x')).toMatchObject({ role: 'hub' });
+    expect(await claim([], false, 2, 'p1x')).toMatchObject({ role: 'hub' });
+    fake.hubInboxes.set(1, []);
+    fake.hubInboxes.set(2, []);
+    expect(await hub.movePdfToProject({ docId: 'docB', url: B, from: 'default', to: 'p1x', keep: false }, 8)).toEqual({ success: true, open: true });
+    expect(fake.hubInboxes.get(2)).toEqual([{ docs: [doc(B)], activate: false }]);
+    // From a window without one: any open hub of it (the oldest).
+    expect(await hub.movePdfToProject({ docId: 'docL', url: LOCAL, from: 'default', to: 'p1x', keep: false }, 9)).toEqual({ success: true, open: true });
+    expect(fake.hubInboxes.get(1)).toEqual([{ docs: [doc(LOCAL)], activate: false }]);
+  });
+
+  it('tears a document off into a hub of its own in a new window, which never hands it back', async () => {
+    fake.local.rpdfHubScope = 'browser';
+    storeProject('p1x', A);
+    fake.addTab({ id: 1, windowId: 7, index: 0, active: true });
+    expect(await claim([doc(A), doc(B)], false, 1, 'p1x')).toMatchObject({ role: 'hub', project: 'p1x' });
+    fake.hubInboxes.set(1, []);
+    expect(await hub.tearOffPdfDoc({ project: 'p1x', url: B, bounds: { left: 40, top: 30, width: 900, height: 700 } })).toEqual({ success: true });
+    expect(fake.createdWindows).toHaveLength(1);
+    expect(fake.createdWindows[0]).toMatchObject({ left: 40, top: 30, width: 900, height: 700 });
+    const created = [...fake.tabs.values()].find((t) => t.id !== 1)!;
+    expect(hubParts(created.url)).toEqual({ docs: [doc(B)], active: 0, show: null, project: 'p1x' });
+    // Its page claims: it is a hub of p1x too, even with the browser scope.
+    expect(await claim([doc(B)], false, created.id, 'p1x')).toEqual({ success: true, role: 'hub', project: 'p1x', docs: [] });
+    expect(fake.hubInboxes.get(1)).toEqual([]);
+    // Only the oldest hub's tabs are the project's saved layout.
+    expect(await hub.isLayoutHub('p1x', 1)).toBe(true);
+    expect(await hub.isLayoutHub('p1x', created.id)).toBe(false);
+    expect(await hub.isLayoutHub('default', created.id)).toBe(true);
+    fake.tabs.delete(1);
+    expect(await hub.isLayoutHub('p1x', created.id)).toBe(true);
+    // Bounds Chrome refuses: the window opens wherever Chrome puts it.
+    expect(await hub.tearOffPdfDoc({ project: 'gone', url: A, bounds: { left: -9000, top: 0, width: 900, height: 700 } })).toEqual({ success: true });
+    expect(fake.createdWindows[fake.createdWindows.length - 1]).not.toHaveProperty('left');
+    expect(hubParts(fake.createdWindows[fake.createdWindows.length - 1].url).project).toBe('default');
+  });
+
+  it('reads a registry from the build with one hub per project', async () => {
+    fake.addTab({ id: 1, windowId: 7, index: 0, active: true });
+    fake.session.rpdfProjectHubs = { default: { tabId: 1, ready: true, pending: [] } };
+    fake.hubInboxes.set(1, []);
+    fake.addTab({ id: 2, windowId: 7, index: 1, active: true });
+    expect(await claim([doc(B)], false, 2)).toMatchObject({ role: 'forwarded' });
+    expect(fake.hubInboxes.get(1)).toEqual([{ docs: [doc(B)], activate: true }]);
+    // Written back in the new form with the next change.
+    storeProject('p1x', A);
+    fake.addTab({ id: 3, windowId: 7, index: 2, active: true });
+    expect(await claim([], false, 3, 'p1x')).toMatchObject({ role: 'hub' });
+    expect(fake.session.rpdfProjectHubs).toEqual({ default: [{ tabId: 1, ready: true, pending: [] }], p1x: [{ tabId: 3, ready: true, pending: [] }] });
+  });
 
   it('takes an embedded PDF for the whole page only when its frame fills the tab', () => {
     expect(hub.fillsTab({ width: 1300, height: 860 }, { width: 1300, height: 900 })).toBe(true); // IEEE stamp.jsp: header + iframe

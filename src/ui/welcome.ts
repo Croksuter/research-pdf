@@ -14,6 +14,7 @@ import { LANGUAGE_STORAGE_KEY, currentLanguage, localizeDocument, parseLanguageP
 import { SHORTCUTS, shortcutLabel } from '../shared/shortcuts';
 import { WELCOME_RESUME_STORAGE_KEY, type WelcomeResume } from '../shared/welcomeResume';
 import type { PdfSyncPublicStatus } from '../background/pdfSyncService';
+import { HUB_SCOPE_STORAGE_KEY, parseHubScope } from '../shared/hubScope';
 import { byId, closeWhenGathered, hasFileAccess, hasWebAccess, openExtensionDetails, openInHub, send, shortcutKeys } from './pageKit';
 import { S } from './welcome.strings';
 
@@ -123,6 +124,13 @@ fileButton.addEventListener('click', () => {
 });
 // Back from Chrome's extension page.
 window.addEventListener('focus', () => { if (current === 'open') void renderOpen(); });
+
+// Where PDFs gather: a hub per window, or one for the whole browser (shared/hubScope.ts).
+const scopeSelect = byId<HTMLSelectElement>('wl-scope');
+void chrome.storage.local.get(HUB_SCOPE_STORAGE_KEY).then((stored) => { scopeSelect.value = parseHubScope(stored[HUB_SCOPE_STORAGE_KEY]); }, () => undefined);
+scopeSelect.addEventListener('change', () => {
+  void chrome.storage.local.set({ [HUB_SCOPE_STORAGE_KEY]: parseHubScope(scopeSelect.value) }).catch(() => undefined);
+});
 
 // ─── Gather the PDFs open now ───
 
