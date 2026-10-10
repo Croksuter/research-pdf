@@ -2,7 +2,8 @@
 //
 // Preferences go with the rest of the sync document (shared/pdfSync.ts,
 // version 6): how tabs are named and drawn, the language, where a moved tab
-// goes, the paper strip, figure capture. What belongs to one device stays
+// goes, the paper strip, figure capture, which projects keep their PDF
+// files in Drive. What belongs to one device stays
 // there: API keys, Chrome's site and file access behind the "open PDFs here"
 // switches, the local file cache, one PDF tab per window or per browser.
 //
@@ -24,7 +25,7 @@ export interface SyncedSetting {
 /** Settings in IndexedDB (db/settingsRepository.ts). */
 export const SYNCED_DB_SETTINGS = ['paperInfoEnabled', 'paperStripShown', 'figureCopyOptions'] as const;
 /** Settings in chrome.storage.local. */
-export const SYNCED_LOCAL_SETTINGS = ['rpdfDisplay', 'rpdfLanguage', 'rpdfDragPrefs'] as const;
+export const SYNCED_LOCAL_SETTINGS = ['rpdfDisplay', 'rpdfLanguage', 'rpdfDragPrefs', 'rpdfDriveAuto'] as const;
 export type SyncedSettingKey = typeof SYNCED_DB_SETTINGS[number] | typeof SYNCED_LOCAL_SETTINGS[number];
 
 export const SETTING_STAMP_PREFIX = 'rpdfSettingAt:';

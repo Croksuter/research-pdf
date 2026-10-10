@@ -1,4 +1,4 @@
-import { GOOGLE_DRIVE_APPDATA_SCOPE, GOOGLE_OAUTH_CLIENT_ID } from '../shared/constants';
+import { GOOGLE_DRIVE_APPDATA_SCOPE, GOOGLE_DRIVE_FILE_SCOPE, GOOGLE_OAUTH_CLIENT_ID } from '../shared/constants';
 import { CloudSyncError } from './cloudSyncError';
 import type { SyncErrorCode } from '../shared/syncErrors';
 
@@ -18,6 +18,9 @@ import type { SyncErrorCode } from '../shared/syncErrors';
  *    granted scope is checked, and tokeninfo confirms the token was minted for
  *    this client (`aud`) before it is used.
  *  - Tokens are never logged and never placed in a URL.
+ *  - `drive.file` (PDF files kept in the user's Drive folder) is asked for
+ *    only once the user turns that on, as incremental consent on top of
+ *    `drive.appdata`; a token says which scopes it carries.
  */
 
 const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -52,6 +55,8 @@ export interface GoogleAccessToken {
   accessToken: string;
   /** Epoch ms after which the token must not be used. */
   expiresAt: number;
+  /** It may also reach the PDF files this app created in the user's Drive. */
+  files?: boolean;
 }
 
 interface CachedGoogleToken extends GoogleAccessToken {
@@ -83,12 +88,16 @@ export function buildGoogleAuthUrl(options: {
   state: string;
   interactive: boolean;
   loginHint?: string;
+  /** Ask for `drive.file` too. */
+  files?: boolean;
 }): string {
   const url = new URL(AUTH_ENDPOINT);
   url.searchParams.set('client_id', options.clientId);
   url.searchParams.set('response_type', 'token');
   url.searchParams.set('redirect_uri', options.redirectUri);
-  url.searchParams.set('scope', GOOGLE_DRIVE_APPDATA_SCOPE);
+  url.searchParams.set('scope', options.files ? `${GOOGLE_DRIVE_APPDATA_SCOPE} ${GOOGLE_DRIVE_FILE_SCOPE}` : GOOGLE_DRIVE_APPDATA_SCOPE);
+  // Scopes granted before come along, so a renewal never drops one.
+  url.searchParams.set('include_granted_scopes', 'true');
   url.searchParams.set('state', options.state);
   // Interactive: always let the user pick which account holds the shared data.
   // Silent renewal: never show UI; fail with interaction_required instead.
@@ -148,7 +157,7 @@ export function parseGoogleAuthRedirect(
   if (!scopes.includes(GOOGLE_DRIVE_APPDATA_SCOPE)) {
     throw new GoogleAuthError('denied', 'auth-drive-denied');
   }
-  return { accessToken, expiresAt: now + expiresIn * 1_000 };
+  return { accessToken, expiresAt: now + expiresIn * 1_000, files: scopes.includes(GOOGLE_DRIVE_FILE_SCOPE) };
 }
 
 async function postForm(url: string, fields: Record<string, string>): Promise<Response> {
@@ -191,6 +200,7 @@ async function verifyTokenAudience(token: GoogleAccessToken, clientId: string): 
 export async function requestGoogleAccessToken(options: {
   interactive: boolean;
   loginHint?: string;
+  files?: boolean;
 }): Promise<GoogleAccessToken> {
   if (!isGoogleSyncConfigured()) {
     throw new GoogleAuthError('not-configured', 'not-configured');
@@ -199,7 +209,7 @@ export async function requestGoogleAccessToken(options: {
   const redirectUri = googleRedirectUri();
   const state = randomState();
   const url = buildGoogleAuthUrl({
-    clientId, redirectUri, state, interactive: options.interactive, loginHint: options.loginHint,
+    clientId, redirectUri, state, interactive: options.interactive, loginHint: options.loginHint, files: options.files,
   });
   let responseUrl: string | undefined;
   try {
@@ -230,16 +240,17 @@ function cachedTokenFromUnknown(value: unknown): CachedGoogleToken | null {
   if (typeof raw.accessToken !== 'string' || !raw.accessToken
     || typeof raw.expiresAt !== 'number' || !Number.isFinite(raw.expiresAt)
     || typeof raw.accountId !== 'string' || !raw.accountId) return null;
-  return { accessToken: raw.accessToken, expiresAt: raw.expiresAt, accountId: raw.accountId };
+  return { accessToken: raw.accessToken, expiresAt: raw.expiresAt, accountId: raw.accountId, files: raw.files === true };
 }
 
-/** A still-valid cached token for exactly this account, or null. */
-export async function getCachedGoogleToken(accountId: string, now: number = Date.now()): Promise<GoogleAccessToken | null> {
+/** A still-valid cached token for exactly this account (`files`: one that reaches the PDF files too), or null. */
+export async function getCachedGoogleToken(accountId: string, now: number = Date.now(), files = false): Promise<GoogleAccessToken | null> {
   try {
     const stored = await chrome.storage.session.get(TOKEN_SESSION_KEY);
     const cached = cachedTokenFromUnknown(stored[TOKEN_SESSION_KEY]);
     if (!cached || cached.accountId !== accountId || cached.expiresAt - EXPIRY_SKEW_MS <= now) return null;
-    return { accessToken: cached.accessToken, expiresAt: cached.expiresAt };
+    if (files && !cached.files) return null;
+    return { accessToken: cached.accessToken, expiresAt: cached.expiresAt, files: cached.files };
   } catch {
     return null;
   }

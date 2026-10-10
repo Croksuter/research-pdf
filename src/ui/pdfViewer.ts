@@ -1023,7 +1023,9 @@ async function loadFromFile(file: File) {
     const data = new Uint8Array(await file.arrayBuffer());
     // Hash before handing the buffer to PDF.js: it is transferred to the worker.
     const bytesInfo = await inspectPdfBytes(data);
-    await openDocument(pdfjsLib.getDocument({ data, ...documentOptions() }), file.name, bytesInfo);
+    const doc = await openDocument(pdfjsLib.getDocument({ data, ...documentOptions() }), file.name, bytesInfo);
+    // Kept by its identity: home reopens it without asking for the file again.
+    void keepLocalCopy(null, doc, null);
   } catch (error) {
     if (error instanceof PasswordCancelled) { setProgress(null); return; }
     setProgress('failed');
@@ -1032,18 +1034,48 @@ async function loadFromFile(file: File) {
 }
 
 // Every opened file goes to the local cache once fully loaded (PDF.js keeps
-// fetching the rest in the background): a web PDF under its URL, and any
-// file — local ones included — under its arXiv watermark, so that paper's
-// web URLs open from it. A local file without one could never be looked up
-// (local opens always read the file itself) and is not stored.
-async function keepLocalCopy(fileUrl: string, doc: PDFDocumentProxy, resolved: ResolvedPdfUrl | null): Promise<void> {
+// fetching the rest in the background): under its URL — web or file:// —
+// and its document identity, and any file under its arXiv watermark too, so
+// that paper's web URLs open from it. A file picked from disk (no URL) is
+// found by its identity alone.
+async function keepLocalCopy(fileUrl: string | null, doc: PDFDocumentProxy, resolved: ResolvedPdfUrl | null): Promise<void> {
   try {
     const [data, paperAliases] = await Promise.all([doc.getData(), paperAliasesOf(doc)]);
-    if (currentDoc !== doc || (!resolved && paperAliases.length === 0)) return;
-    await cachePdfBytes(fileUrl, data, resolved ?? undefined, paperAliases);
+    if (currentDoc !== doc) return;
+    await cachePdfBytes(fileUrl, data, resolved ?? undefined, paperAliases, currentIdentity?.docId ?? null);
   } catch {
     /* the cache is an optimisation only */
   }
+}
+
+/** Asks the background to bring the Drive copy of `url`'s document into this device's cache. */
+function fetchDriveCopy(url: string): Promise<boolean> {
+  return (chrome.runtime.sendMessage({ type: 'VOCAB_T_PDF_DRIVE_FETCH', url }) as Promise<{ success?: boolean } | undefined>)
+    .then((reply) => reply?.success === true, () => false);
+}
+
+/**
+ * A file that could not be read — a local one moved, deleted, on another
+ * computer or without file access; a web one gone from its address: its
+ * copy kept on this device, else the one in the user's Drive folder. True
+ * when one opened.
+ */
+async function openStoredCopy(fileUrl: string, label: string, web: boolean): Promise<boolean> {
+  let stored = await readCachedPdf(fileUrl).catch(() => null);
+  if (!stored && await fetchDriveCopy(fileUrl)) stored = await readCachedPdf(fileUrl).catch(() => null);
+  if (!stored) return false;
+  try {
+    currentByteLength = stored.bytes.byteLength;
+    // No byte info: the identity comes out as for the file's URL load.
+    await openDocument(pdfjsLib.getDocument({ data: stored.bytes, ...documentOptions() }), label);
+  } catch {
+    return false;
+  }
+  debugLog('cache', 'file unreadable, opened the stored copy', () => ({ url: fileUrl }));
+  if (web) { showMessage(S.openedStoredCopyWeb); return true; }
+  const fileAccess = await chrome.extension.isAllowedFileSchemeAccess().catch(() => true);
+  showMessage(fileAccess ? S.openedStoredCopy : S.openedStoredCopyNoAccess(APP_NAME), fileAccess ? undefined : { label: S.openExtensionSettings, onClick: openExtensionSettings });
+  return true;
 }
 
 async function loadFromUrl(fileUrl: string) {
@@ -1083,8 +1115,9 @@ async function loadFromUrl(fileUrl: string) {
     void keepLocalCopy(fileUrl, doc, resolved);
   } catch (error) {
     if (error instanceof PasswordCancelled) { setProgress(null); return; }
-    setProgress('failed');
     const message = error instanceof Error ? error.message : String(error);
+    if (await openStoredCopy(fileUrl, displayName, isWeb)) return;
+    setProgress('failed');
     if (isWeb) {
       // Cross-origin fetch from an extension page needs host access; that is
       // the one failure a user can fix in place.

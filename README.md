@@ -74,9 +74,20 @@ Google Drive.
 - Gathers the PDFs already open in Chrome's own viewer into the PDF tab
   (from home, the settings page or the welcome guide), with their zoom; an
   original tab closes only once its PDF is there.
-- Optional Google Drive sync (`drive.appdata` only): one gzip document in the
-  app's hidden folder, merged per document and per drawing. PDFs themselves are
-  never uploaded. No server, no account, no telemetry.
+- Optional Google Drive sync (`drive.appdata`): one gzip document in the
+  app's hidden folder, merged per document and per drawing — drawings,
+  positions, the library (with your names, notes and links), projects and
+  settings. PDF files go up only if you choose: "Keep PDF files in my Drive
+  too" (`drive.file`, asked for then) puts the ones you pick — or a
+  project's local files and/or web PDFs, a rule per project — in a ResearchPDF
+  folder of your own Drive, so a paper opened from disk on one computer opens
+  on another. No server, no account, no telemetry.
+- Every opened PDF, local files included, is kept on the device: a local file
+  that was moved or deleted still opens, and a file picked from disk reopens
+  from home without picking it again.
+- Document info (tab menu, home, F2): rename a document, see where it was
+  opened from, keep a note and links with it. A PDF that is not a paper keeps
+  its file name rather than its Title metadata.
 - In Korean and English: the settings page has a language choice (automatic
   follows the browser).
 - A welcome guide on install walks through opening PDFs here (web and file

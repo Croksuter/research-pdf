@@ -38,5 +38,8 @@ export const GOOGLE_OAUTH_CLIENT_ID = '355378593067-61bfn1c2ov40qkjvkj1m9aoaolav
 // Least privilege: the app's own hidden Drive folder only. ResearchPDF can
 // never list, read, or write any other file in the user's Drive with this scope.
 export const GOOGLE_DRIVE_APPDATA_SCOPE = 'https://www.googleapis.com/auth/drive.appdata';
+// Asked for only when the user keeps PDF files in their Drive: the files and
+// folder this app creates there, nothing else (background/pdfDriveFiles.ts).
+export const GOOGLE_DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 // The sync document's name in appDataFolder (background/pdfSyncService.ts).
 export const PDF_SYNC_FILE_NAME = 'researchpdf-sync-v1.json';

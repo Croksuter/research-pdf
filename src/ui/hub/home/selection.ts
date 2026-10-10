@@ -1,5 +1,6 @@
 // ─── Actions on documents: a row's ⋯, the selection and its bar ───
 
+import { keepInDrive } from '../driveFiles';
 import { showDocInfo } from '../docInfo';
 import { type HubClosedTab, visibleSelection } from '../../../shared/hubTabs';
 import { DEFAULT_PROJECT_ID, isDocInProject, pdfProjectTree, type PdfProject } from '../../../shared/pdfProjects';
@@ -125,6 +126,8 @@ export function showDocMenu(docIds: string[], x: number, y: number): void {
     { label: `${S.moveToAnother}…`, run: () => showProjectPicker(docIds, 'move', x, y) },
   );
   if (inHere) entries.push({ label: S.removeFromThisProject, run: () => { removeDocsFromProject(docIds); selected.clear(); scheduleHomeRender(); } });
+  const notInDrive = docIds.filter((id) => library[id] && !library[id].driveFileId);
+  if (notInDrive.length) entries.push({ label: S.driveKeepMenu, run: () => { void keepInDrive(notInDrive); } });
   if (one) {
     entries.push('sep', { label: S.docInfoMenu, run: () => showDocInfo(one.docId, 'name') });
     entries.push({ label: S.kindMenuItem(KIND_LABEL[libraryEntryKind(one)]), run: () => showKindMenu(one.docId, x, y) });

@@ -15,6 +15,7 @@ import {
   hasCachedPdf,
   markPdfValidated,
   pdfFileCacheUsage,
+  readCachedDoc,
   readCachedPdf,
   storeCachedPdf,
 } from '../src/db/pdfFileCache';
@@ -25,9 +26,9 @@ const SHA_B = 'b'.repeat(64);
 const bytes = (n: number, fill = 1) => new Uint8Array(n).fill(fill);
 
 describe('cache aliases', () => {
-  it('keys every web URL by itself, fragment dropped, and never local files', () => {
+  it('keys every URL by itself, fragment dropped, local files included', () => {
     expect(pdfCacheAliases('https://a.org/p.pdf#page=3')).toEqual(['url:https://a.org/p.pdf']);
-    expect(pdfCacheAliases('file:///home/me/p.pdf')).toEqual([]);
+    expect(pdfCacheAliases('file:///home/me/arxiv.org/pdf/1706.03762')).toEqual(['url:file:///home/me/arxiv.org/pdf/1706.03762']);
     expect(pdfCacheAliases('nonsense')).toEqual([]);
   });
 
@@ -128,9 +129,23 @@ describe('file cache store', () => {
     expect((await readCachedPdf('https://arxiv.org/pdf/1706.03762v7'))?.sha256).toBe(SHA_A);
   });
 
-  it('refuses oversize and local files, and clears on request', async () => {
+  it('keeps local files and picked ones by their document, the last to be evicted', async () => {
+    expect(await storeCachedPdf({ url: 'file:///home/me/p.pdf', docId: 'doc-local', bytes: bytes(5), sha256: SHA_A, etag: null, lastModified: null })).toBe(true);
+    expect((await readCachedPdf('file:///home/me/p.pdf#page=2'))?.sha256).toBe(SHA_A);
+    expect((await readCachedDoc('doc-local'))?.sha256).toBe(SHA_A);
+    expect(await storeCachedPdf({ url: null, docId: 'doc-picked', bytes: bytes(6, 2), sha256: SHA_B, etag: null, lastModified: null })).toBe(true);
+    expect((await readCachedDoc('doc-picked'))?.bytes.byteLength).toBe(6);
+    expect(await storeCachedPdf({ url: null, bytes: bytes(6, 2), sha256: SHA_B, etag: null, lastModified: null })).toBe(false); // nothing to find it by
+    const files = [
+      { sha256: 'web-old', size: 10, lastUsedAt: 1 },
+      { sha256: 'local-older', size: 10, lastUsedAt: 0, local: true },
+      { sha256: 'web-new', size: 10, lastUsedAt: 5 },
+    ];
+    expect(pickEvictions(files, 0, { maxBytes: 15, maxFiles: 10 })).toEqual(['web-old', 'web-new']);
+  });
+
+  it('refuses oversize files, and clears on request', async () => {
     expect(await storeCachedPdf({ url: 'https://a.org/big.pdf', bytes: new Uint8Array(PDF_CACHE_MAX_FILE_BYTES + 1), sha256: SHA_A, etag: null, lastModified: null })).toBe(false);
-    expect(await storeCachedPdf({ url: 'file:///p.pdf', bytes: bytes(5), sha256: SHA_A, etag: null, lastModified: null })).toBe(false);
     await storeCachedPdf({ url: 'https://a.org/p.pdf', bytes: bytes(5), sha256: SHA_A, etag: null, lastModified: null });
     await clearPdfFileCache();
     expect(await readCachedPdf('https://a.org/p.pdf')).toBeNull();

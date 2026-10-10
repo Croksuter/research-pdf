@@ -43,9 +43,11 @@
       <section>
         <h2>Google Drive sync (optional)</h2>
         <p>When you connect a Google account in settings, ResearchPDF asks only for the Google Drive API's <code>drive.appdata</code> scope. It reaches only a hidden app-only folder; ResearchPDF cannot even list your other Drive files.</p>
+        <p>Only if you also turn on "Keep PDF files in my Drive too", ResearchPDF asks for the <code>drive.file</code> scope as well. It then creates a visible folder named ResearchPDF in your Drive and uploads the PDF files you choose (or that a project's rule says to keep) there; with this scope it can see only the folder and files it created itself, never your other files. Turning it off stops uploads; files already there stay in your Drive, under your control.</p>
         <ul>
           <li>What is synced: document identifiers, reading page and zoom, file name or URL, your annotations, the list of PDFs you opened (address, title, when last opened, pinned or not, kind of paper), projects (name, documents, pins, the addresses of the tabs that were open, icon and color, folders and order). One gzip-compressed JSON file.</li>
-          <li>What is not synced: the PDF files themselves, the paper-lookup cache, settings, API keys.</li>
+          <li>Also synced: the names, notes and links you give documents, and your preferences (tab names and icons, language, paper strip, figure capture, which projects keep files in Drive).</li>
+          <li>What is not synced: the PDF files themselves (unless you keep them in your Drive folder as above), the paper-lookup cache, API keys, and this device's access and storage settings.</li>
           <li>The data is stored only in your Google account. There is no developer server, and the developer has no access to it.</li>
           <li>Sign-in happens on Google's OAuth screen. ResearchPDF never handles your password, stores no long-lived (refresh) token, and keeps only an access token of about an hour in the browser session's memory.</li>
           <li>"Disconnect" revokes the token and removes the account details from this device. You can delete the data in Drive yourself under Google Drive settings → Manage apps.</li>
@@ -114,9 +116,11 @@
       <section>
         <h2>Google Drive 동기화 (선택)</h2>
         <p>설정에서 Google 계정을 연결하면 ResearchPDF는 Google Drive API의 <code>drive.appdata</code> 권한만 요청합니다. 이 권한은 앱 전용 숨김 폴더에만 접근할 수 있으며, 사용자의 다른 Drive 파일은 목록조차 볼 수 없습니다.</p>
+        <p>"PDF 파일도 내 드라이브에 보관"을 켠 경우에만 <code>drive.file</code> 권한을 추가로 요청합니다. 그러면 내 드라이브에 ResearchPDF라는 폴더를 만들고, 사용자가 고른 PDF(또는 프로젝트 규칙에 따라 보관하는 PDF)를 그 폴더에 올립니다. 이 권한으로는 확장이 직접 만든 폴더와 파일만 볼 수 있고 다른 파일은 볼 수 없습니다. 끄면 더 이상 올리지 않으며, 이미 올린 파일은 사용자의 드라이브에 그대로 남습니다.</p>
         <ul>
           <li>동기화되는 것: 문서 식별자, 읽던 페이지와 확대 상태, 파일 이름 또는 URL, 그린 주석, 열어 본 PDF 목록(주소, 제목, 마지막으로 연 시각, 고정 여부, 논문 종류), 프로젝트(이름, 속한 문서, 고정, 열려 있던 탭의 주소, 아이콘·색, 폴더와 순서). gzip으로 압축된 JSON 파일 하나입니다.</li>
-          <li>동기화되지 않는 것: PDF 파일 자체, 논문 정보 캐시, 설정, API 키.</li>
+          <li>함께 동기화되는 것: 문서에 붙인 이름·메모·링크, 설정(탭 이름·아이콘, 언어, 논문 정보 줄, 그림 캡처, 프로젝트별 Drive 보관 규칙).</li>
+          <li>동기화되지 않는 것: PDF 파일 자체(위처럼 내 드라이브 폴더에 보관하지 않는 한), 논문 정보 캐시, API 키, 이 기기의 접근 권한·저장 공간 설정.</li>
           <li>데이터는 사용자의 Google 계정에만 저장됩니다. 개발자가 운영하는 서버는 없으며 개발자는 이 데이터에 접근할 수 없습니다.</li>
           <li>로그인은 Google의 OAuth 화면에서 이루어집니다. ResearchPDF는 비밀번호를 다루지 않고, 장기 토큰(refresh token)을 저장하지 않으며, 약 1시간짜리 액세스 토큰만 브라우저 세션 메모리에 보관합니다.</li>
           <li>"연결 해제"를 누르면 토큰을 폐기하고 이 기기의 계정 정보를 지웁니다. Drive의 데이터는 Google Drive 설정 → 앱 관리에서 사용자가 직접 삭제할 수 있습니다.</li>

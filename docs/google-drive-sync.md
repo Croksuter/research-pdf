@@ -17,9 +17,17 @@ file stays, because other profiles still sync with it.
 
 ## Security model
 
-- **Scope:** `drive.appdata` only. ResearchPDF gets a hidden per-app folder and can
+- **Scope:** `drive.appdata` for sync. ResearchPDF gets a hidden per-app folder and can
   never list, read, or write any other Drive file. The scope is non-sensitive in
   Google's classification, so no restricted-scope audit applies.
+- **PDF files (optional):** `drive.file`, asked for only when the user turns
+  on "Keep PDF files in my Drive too" (incremental consent,
+  `include_granted_scopes`), for the account already connected (checked by
+  `permissionId` like every token). It reaches only what this OAuth client
+  created: a `ResearchPDF` folder in My Drive and the PDFs uploaded there
+  (`background/pdfDriveFiles.ts`), one per content (`appProperties.rpdfSha256`).
+  Also non-sensitive. A silent renewal that comes back without it reports
+  `files-consent` instead of a sync failure; sync itself never needs it.
 - **No secret, no refresh token.** The repository is public. The flow is OAuth
   implicit via `chrome.identity.launchWebAuthFlow`; the only embedded value is
   the OAuth client ID, which is public by design. Google delivers tokens solely
@@ -94,7 +102,8 @@ Only the project owner does this, once. End users never see it.
 2. Google Auth Platform → Branding: app name, support email. Audience: External,
    then **Publish to production**. With only the non-sensitive `drive.appdata`
    scope no verification review is required, and consent does not expire weekly
-   the way it does in Testing mode. Data access: add `drive.appdata`.
+   the way it does in Testing mode. Data access: add `drive.appdata` and
+   `drive.file` (both non-sensitive; `drive.file` only for the optional PDF files).
 3. Clients → Create client → **Web application**. Authorized redirect URI:
    `https://<extension-id>.chromiumapp.org/` (the settings page prints the exact value under "로그인이 안 될 때").
    No JavaScript origins. Do not download or commit the client secret; the

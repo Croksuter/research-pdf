@@ -1,10 +1,14 @@
 // ─── Local PDF file cache: policy (pure) ───
 //
-// The viewer keeps the bytes of every web PDF it opened in IndexedDB
+// The viewer keeps the bytes of every PDF it opened in IndexedDB
 // (db/pdfFileCache.ts), so reopening a paper — a reload, a restored hub, the
 // same link clicked again, another URL of the same arXiv paper — renders from
-// disk without touching the network. A local arXiv PDF the user already
-// opened is stored the same way and serves that paper's web URLs. This module decides which URLs share a
+// disk without touching the network. Local files are kept too, under their
+// file:// URL: one moved, deleted or on another computer still opens from
+// here; a local arXiv PDF also serves that paper's web URLs. Every copy is
+// reachable by its document identity too (`doc:<docId>`), which is how a
+// file picked from disk (no address) is reopened and how its Drive copy is
+// uploaded. This module decides which URLs share a
 // cached file, when a cached copy must be re-checked against the server, and
 // what to evict. No IndexedDB, no fetch: unit-tested.
 
@@ -36,12 +40,17 @@ export interface PdfFileStat {
   sha256: string;
   size: number;
   lastUsedAt: number;
+  /** A local file's copy: the last to go (a web PDF can be fetched again). */
+  local?: boolean;
 }
+
+/** The alias of a document identity. */
+export const docAlias = (docId: string): string => `doc:${docId}`;
 
 function parse(url: string): URL | null {
   try {
     const parsed = new URL(url);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed : null;
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' || parsed.protocol === 'file:' ? parsed : null;
   } catch {
     return null;
   }
@@ -53,14 +62,14 @@ function parse(url: string): URL | null {
  * paper — `arxiv:2401.12345v2` for a versioned one, which never changes, and
  * `arxiv:2401.12345` for a versionless one, which means "latest" and is
  * re-checked like any URL. The `.pdf` suffix, `www.`/`export.` hosts and
- * http/https variants all meet there. Local files are never cached.
+ * http/https variants all meet there. A file:// URL keys by itself.
  */
 export function pdfCacheAliases(url: string): string[] {
   const parsed = parse(url);
   if (!parsed) return [];
   parsed.hash = '';
   const aliases = [`url:${parsed.href}`];
-  if (ARXIV_HOSTS.has(parsed.hostname.toLowerCase())) {
+  if (parsed.protocol !== 'file:' && ARXIV_HOSTS.has(parsed.hostname.toLowerCase())) {
     const match = ARXIV_PDF_PATH.exec(parsed.pathname);
     if (match) aliases.push(`arxiv:${match[1].toLowerCase()}${match[2]?.toLowerCase() ?? ''}`);
   }
@@ -97,13 +106,13 @@ export function needsRevalidation(entry: Pick<PdfUrlEntry, 'alias' | 'etag' | 'l
   return entry.etag || entry.lastModified ? age > PDF_CACHE_REVALIDATE_MS : age > PDF_CACHE_REVALIDATE_BLIND_MS;
 }
 
-/** Least-recently-used files to drop so the cache fits its budget after adding `incomingBytes`. */
+/** Least-recently-used files to drop so the cache fits its budget after adding `incomingBytes`; local files' copies last. */
 export function pickEvictions(
   files: readonly PdfFileStat[],
   incomingBytes = 0,
   budget: { maxBytes: number; maxFiles: number } = { maxBytes: PDF_CACHE_MAX_BYTES, maxFiles: PDF_CACHE_MAX_FILES },
 ): string[] {
-  const ordered = [...files].sort((a, b) => a.lastUsedAt - b.lastUsedAt);
+  const ordered = [...files].sort((a, b) => Number(!!a.local) - Number(!!b.local) || a.lastUsedAt - b.lastUsedAt);
   let bytes = files.reduce((sum, f) => sum + f.size, 0) + incomingBytes;
   let count = files.length + (incomingBytes > 0 ? 1 : 0);
   const evict: string[] = [];

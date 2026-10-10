@@ -9,6 +9,7 @@
 import { dbGet, dbPut } from '../db/database';
 import { STORE_SETTINGS } from '../shared/constants';
 import { parseDisplayPrefs } from '../shared/displayPrefs';
+import { parseDriveAutoRules } from '../shared/driveAuto';
 import { FIGURE_COPY_OPTIONS_CHANNEL, normalizeFigureCopyOptions } from '../shared/figureSource';
 import { parseLanguagePref } from '../shared/i18n';
 import { parseDragPrefs } from '../shared/tabTransfer';
@@ -35,6 +36,7 @@ function normalize(key: string, value: unknown): unknown {
     case 'rpdfDisplay': return parseDisplayPrefs(value);
     case 'rpdfLanguage': return parseLanguagePref(value);
     case 'rpdfDragPrefs': return parseDragPrefs(value);
+    case 'rpdfDriveAuto': return parseDriveAutoRules(value);
     default: return undefined;
   }
 }

@@ -1,5 +1,6 @@
 import { CloudSyncError } from './cloudSyncError';
 import {
+  GoogleAuthError,
   cacheGoogleToken,
   clearCachedGoogleToken,
   getCachedGoogleToken,
@@ -22,14 +23,20 @@ export interface GoogleAccountRef {
  * A token for exactly the connected account. Renewal is silent; when Google
  * needs the user again this fails and the popup asks them to reconnect.
  */
-export async function accessTokenForAccount(account: GoogleAccountRef, forceRefresh: boolean): Promise<string> {
+export async function accessTokenForAccount(account: GoogleAccountRef, forceRefresh: boolean, files = false): Promise<string> {
   if (forceRefresh) await clearCachedGoogleToken();
-  const cached = forceRefresh ? null : await getCachedGoogleToken(account.id);
+  const cached = forceRefresh ? null : await getCachedGoogleToken(account.id, Date.now(), files);
   if (cached) return cached.accessToken;
   const token = await requestGoogleAccessToken({
     interactive: false,
     loginHint: account.email || undefined,
+    files,
+  }).catch((error: unknown) => {
+    // Asked silently for the PDF files and Google wants the user: grant it again.
+    throw files && error instanceof GoogleAuthError && error.reason === 'interaction-required' ? new CloudSyncError('files-consent') : error;
   });
+  // PDF files asked for, not granted (consent withdrawn): the user has to grant it again.
+  if (files && !token.files) throw new CloudSyncError('files-consent');
   // A silent flow can answer for whichever Google session the browser prefers.
   // Never sync one account's data into another account's Drive.
   const actual = await createGoogleDriveStore(async () => token.accessToken).account();
@@ -39,6 +46,24 @@ export async function accessTokenForAccount(account: GoogleAccountRef, forceRefr
   }
   await cacheGoogleToken(account.id, token);
   return token.accessToken;
+}
+
+/**
+ * Interactive consent for the PDF files (`drive.file`) on top of the
+ * connected account's sync, for exactly that account.
+ */
+export async function grantDriveFiles(account: GoogleAccountRef): Promise<void> {
+  const token = await requestGoogleAccessToken({ interactive: true, loginHint: account.email || undefined, files: true });
+  const actual = await createGoogleDriveStore(async () => token.accessToken).account().catch(async (error: unknown) => {
+    await revokeGoogleToken(token.accessToken);
+    throw error;
+  });
+  if (actual.id !== account.id) {
+    await revokeGoogleToken(token.accessToken);
+    throw new CloudSyncError('account-mismatch');
+  }
+  if (!token.files) throw new CloudSyncError('files-consent');
+  await cacheGoogleToken(account.id, token);
 }
 
 export function driveStoreForAccount(account: GoogleAccountRef, fileName?: string): GoogleDriveStore {

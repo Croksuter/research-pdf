@@ -14,6 +14,7 @@ import { S } from '../pdfHub.strings';
 import { library, sendLibraryUpdate } from './store';
 import { copyUrl, el, icon, iconButton, registerPopover, showToast } from './uiKit';
 import { addDocs } from './tabStrip';
+import { driveSection } from './driveFiles';
 
 const panel = el('div', { className: 'rpdf-popover rpdf-docinfo', hidden: true });
 panel.setAttribute('role', 'dialog');
@@ -158,6 +159,7 @@ function render(entry: PdfLibraryEntry, focus: 'name' | 'note' | null): void {
     head,
     section(S.docInfoName, name, nameHint),
     section(S.docInfoSources, ...sources),
+    driveSection(entry),
     section(S.docInfoNote, note),
     section(S.docInfoLinks, linkList, addRow),
   );

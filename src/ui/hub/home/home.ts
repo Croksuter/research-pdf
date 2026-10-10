@@ -17,6 +17,8 @@ import { el, icon, listRow, showToast } from '../uiKit';
 import { activate, addDocs, leaveTabs, render, showSettings } from '../tabStrip';
 import { closed, reopenClosed } from '../session';
 import { homeRow } from './homeRow';
+import { readCachedDoc } from '../../../db/pdfFileCache';
+import { fetchFromDrive } from '../driveFiles';
 import { renderSelectionBar, keepSelected } from './selection';
 import { gatherBanner, refreshOpenPdfs } from './gather';
 import { KIND_LABEL, KIND_ORDER, projectBadge } from '../looks';
@@ -79,12 +81,21 @@ export function openEntry(entry: PdfLibraryEntry): void {
   const existing = openTabFor(entry.docId);
   if (existing) { activate(existing.key); return; }
   const url = entry.urls[0];
-  if (!url) {
-    showToast(S.localReselect);
-    fileInput.click();
+  if (!url) { void openWithoutAddress(entry); return; }
+  addDocs([{ url, hash: '', file: null }], true);
+}
+
+/** A file picked from disk (no address): its copy on this device, else its Drive copy, else the user picks it again. */
+async function openWithoutAddress(entry: PdfLibraryEntry): Promise<void> {
+  let stored = await readCachedDoc(entry.docId).catch(() => null);
+  if (!stored && entry.driveFileId && await fetchFromDrive(entry.docId)) stored = await readCachedDoc(entry.docId).catch(() => null);
+  if (stored) {
+    const file = new File([stored.bytes as Uint8Array<ArrayBuffer>], entry.fileName ?? 'document.pdf', { type: 'application/pdf' });
+    addDocs([{ url: null, hash: '', file }], true);
     return;
   }
-  addDocs([{ url, hash: '', file: null }], true);
+  showToast(S.localReselect);
+  fileInput.click();
 }
 
 // ─── Home: filters, sort, selection (this page; filter and sort remembered per device) ───

@@ -16,6 +16,8 @@ export const SYNC_ERROR_CODES = [
   'drive-file-too-large', 'drive-read-failed', 'drive-quota', 'drive-rate-limited', 'drive-denied', 'drive-http',
   'drive-bad-url', 'timeout', 'drive-unreachable', 'drive-bad-response', 'drive-upload-session', 'drive-upload-unverified',
   'account-info-failed', 'drive-file-changing',
+  // PDF files in the user's Drive folder
+  'files-consent', 'files-off', 'no-local-copy',
   // The sync run
   'account-changed', 'file-invalid', 'file-too-new', 'connect-first', 'sync-off', 'failed', 'conflict',
 ] as const;
@@ -52,6 +54,9 @@ const TEXT: Record<SyncErrorCode, (detail: string | null) => string> = {
   'drive-upload-unverified': () => S.syncErrDriveUploadUnverified,
   'account-info-failed': () => S.syncErrAccountInfoFailed,
   'drive-file-changing': () => S.syncErrDriveFileChanging,
+  'files-consent': () => S.syncErrFilesConsent,
+  'files-off': () => S.syncErrFilesOff,
+  'no-local-copy': () => S.syncErrNoLocalCopy,
   'account-changed': () => S.syncErrAccountChanged,
   'file-invalid': () => S.syncErrFileInvalid,
   'file-too-new': () => S.syncErrFileTooNew,

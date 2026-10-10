@@ -145,8 +145,12 @@ async function driveError(response: Response): Promise<CloudSyncError> {
   return new CloudSyncError('drive-http', String(response.status));
 }
 
-export function createGoogleDriveStore(getToken: DriveTokenProvider, fileName: string = PDF_SYNC_FILE_NAME) {
-  async function request(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+/**
+ * Authorized requests to the Drive API, pinned to Google's API hosts; a 401
+ * renews the token once. Shared with the PDF files (./pdfDriveFiles.ts).
+ */
+export function createDriveClient(getToken: DriveTokenProvider) {
+  async function request(url: string, init: RequestInit, timeoutMs: number = METADATA_TIMEOUT_MS): Promise<Response> {
     // Every request is pinned to Google's API host, including the resumable
     // session URI that comes back from the server.
     if (!url.startsWith(`${DRIVE_API}/`) && !url.startsWith(`${DRIVE_UPLOAD}/`)) {
@@ -185,6 +189,14 @@ export function createGoogleDriveStore(getToken: DriveTokenProvider, fileName: s
       throw new CloudSyncError('drive-bad-response');
     }
   }
+
+  return { request, json };
+}
+
+export { DRIVE_API, DRIVE_UPLOAD, DRIVE_ID_PATTERN, TRANSFER_TIMEOUT_MS, driveError };
+
+export function createGoogleDriveStore(getToken: DriveTokenProvider, fileName: string = PDF_SYNC_FILE_NAME) {
+  const { request, json } = createDriveClient(getToken);
 
   /** Every sync file, deterministic winner first (oldest, then smallest id). */
   async function listFiles(): Promise<DriveFileRef[]> {

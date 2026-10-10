@@ -1,16 +1,16 @@
 // ─── Local PDF file cache (IndexedDB) ───
 //
-// First layer of the viewer's storage: the bytes of web PDFs this device has
-// opened, so a reopen never waits for the network. Files are stored once by
-// content hash; any number of URL / arXiv aliases point at them (policy in
-// shared/pdfCachePolicy.ts). Local files are stored the same way — bytes in
-// here — when their arXiv watermark lets that paper's web URLs find them.
-// Only this device reads it: nothing here is ever
-// synced — Drive carries drawings and reading positions, not files.
+// First layer of the viewer's storage: the bytes of the PDFs this device has
+// opened, web and local, so a reopen never waits for the network or needs
+// the original file. Files are stored once by content hash; any number of
+// URL / arXiv / document aliases point at them (policy in
+// shared/pdfCachePolicy.ts). Only this device reads it; a file the user keeps
+// in their Drive folder is uploaded from here (background/pdfDriveFiles.ts).
 
 import { STORE_PDF_FILE_BYTES, STORE_PDF_FILES, STORE_PDF_URLS } from '../shared/constants';
 import {
   PDF_CACHE_MAX_FILE_BYTES,
+  docAlias,
   pdfCacheAliases,
   pickEvictions,
   type PdfFileStat,
@@ -50,8 +50,16 @@ function result<T>(request: IDBRequest<T>): Promise<T> {
 }
 
 /** The cached copy for `url` (any of its aliases), marked as just used; null on a miss. */
-export async function readCachedPdf(url: string, now = Date.now()): Promise<CachedPdf | null> {
-  const aliases = pdfCacheAliases(url);
+export function readCachedPdf(url: string, now = Date.now()): Promise<CachedPdf | null> {
+  return readCachedAliases(pdfCacheAliases(url), now);
+}
+
+/** The cached copy of a document (any file stored for its identity); null on a miss. */
+export function readCachedDoc(docId: string, now = Date.now()): Promise<CachedPdf | null> {
+  return readCachedAliases([docAlias(docId)], now);
+}
+
+async function readCachedAliases(aliases: string[], now: number): Promise<CachedPdf | null> {
   if (aliases.length === 0) return null;
   const db = await openDB();
   const tx = db.transaction([STORE_PDF_URLS, STORE_PDF_FILES, STORE_PDF_FILE_BYTES], 'readwrite');
@@ -85,9 +93,12 @@ export async function readCachedPdf(url: string, now = Date.now()): Promise<Cach
  * different file, and a versionless one is re-checked on its first web use.
  */
 export async function storeCachedPdf(input: {
-  url: string;
+  /** The address it came from (null: a file picked from disk). */
+  url: string | null;
   alsoUrls?: string[];
   paperAliases?: string[];
+  /** Its document identity. */
+  docId?: string | null;
   bytes: Uint8Array;
   sha256: string;
   etag: string | null;
@@ -95,7 +106,9 @@ export async function storeCachedPdf(input: {
   now?: number;
 }): Promise<boolean> {
   const now = input.now ?? Date.now();
-  const aliases = [...new Set([input.url, ...(input.alsoUrls ?? [])].flatMap(pdfCacheAliases))];
+  const aliases = [...new Set([...(input.url ? [input.url] : []), ...(input.alsoUrls ?? [])].flatMap(pdfCacheAliases))];
+  if (input.docId) aliases.push(docAlias(input.docId));
+  const local = !input.url || input.url.startsWith('file:');
   const paperAliases = (input.paperAliases ?? []).filter((alias) => !aliases.includes(alias));
   const size = input.bytes.byteLength;
   if (aliases.length + paperAliases.length === 0 || size === 0 || size > PDF_CACHE_MAX_FILE_BYTES) return false;
@@ -117,7 +130,7 @@ export async function storeCachedPdf(input: {
     // A copy, so the caller's buffer can go on to PDF.js (which transfers it).
     blobs.put({ sha256: input.sha256, bytes: input.bytes.slice().buffer } satisfies PdfFileBytes);
   }
-  files.put({ sha256: input.sha256, size, storedAt: existing?.storedAt ?? now, lastUsedAt: now } satisfies PdfFileMeta);
+  files.put({ sha256: input.sha256, size, storedAt: existing?.storedAt ?? now, lastUsedAt: now, local: local || existing?.local } satisfies PdfFileMeta);
   for (const alias of aliases) {
     urls.put({ alias, sha256: input.sha256, etag: input.etag, lastModified: input.lastModified, validatedAt: now, lastUsedAt: now } satisfies PdfUrlEntry);
   }

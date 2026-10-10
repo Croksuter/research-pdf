@@ -434,8 +434,13 @@ next one:
    page 1, `arxivStampAliases`) is also stored under `arxiv:IDvN` and, unless
    a different file already holds it, `arxiv:ID` (re-checked on first web
    use) — so a paper opened from disk opens instantly from its arXiv URL.
-   Local files are otherwise not cached: a local open always reads the file.
-   Never synced.
+   Local files are kept too (file:// URLs, and files picked from disk by
+   their identity, `doc:<docId>` — every copy is reachable that way): a
+   local open reads the file, and only one that cannot be read (moved,
+   deleted, another computer, no file access) opens from the copy, saying
+   so; a picked file reopens from home without the picker. Local copies are
+   the last to be evicted. Never synced; a copy the user keeps in Drive is
+   uploaded from here.
 2. **Local state**: reading position (`chrome.storage.local`, written only by
    the background: the viewer sends `VOCAB_T_PDF_DOC_STATE_SAVE`) and
    drawings (`pdf_annotations`), applied at first render.
@@ -515,8 +520,17 @@ refuse a newer version instead of writing it back without it):
   switches (they need this device's Chrome access), the local file cache and
   one PDF tab per window or per browser stay on the device.
 
-The PDF files themselves are never uploaded. Paper-strip lookups stay on the
-device.
+The PDF files themselves are not in the sync document. When the user keeps
+PDF files in Drive (settings, `drive.file`), `background/pdfDriveFiles.ts`
+puts them in a visible `ResearchPDF` folder of their Drive — the ones they
+pick (document info, home menu), and those a project's rule keeps (local
+files and/or web PDFs, per project; `rpdfDriveAuto`, a synced setting) when
+opened — one file per content (SHA-256 in `appProperties`), named as the
+library names the document (a rename renames it). The library row records
+the Drive file id, so any device can bring the file down: the viewer does
+when a local file or web address cannot be read (after this device's own
+copy), and home does for a file picked from disk. Paper-strip lookups stay on
+the device.
 
 ## When it syncs
 

@@ -29,7 +29,9 @@ import { WEB_PDF_HOST_ORIGINS } from '../shared/localPdf';
 import { GATHER_MESSAGE, GATHER_RESULT_MESSAGE, SETTINGS_SHOWN_MESSAGE, findOpenPdfTabs } from './openPdfTabs';
 import { PDF_CACHE_MAX_BYTES } from '../shared/pdfCachePolicy';
 import { PDF_LIBRARY_STORAGE_KEY, parsePdfLibrary } from '../shared/pdfLibrary';
-import { PDF_PROJECTS_STORAGE_KEY, parsePdfProjects } from '../shared/pdfProjects';
+import { DEFAULT_PROJECT_ID, PDF_PROJECTS_STORAGE_KEY, livePdfProjects, parsePdfProjects } from '../shared/pdfProjects';
+import { DRIVE_AUTO_STORAGE_KEY, parseDriveAutoRules } from '../shared/driveAuto';
+import { S as SHARED } from '../shared/shared.strings';
 import { isEmptyAnnotationCache, parsePdfAnnotationCache } from '../shared/pdfAnnotations';
 import { openAlexCheck, semanticScholarCheck, type ApiCheck } from '../shared/apiStatus';
 import { HUB_SCOPE_STORAGE_KEY, parseHubScope } from '../shared/hubScope';
@@ -37,7 +39,7 @@ import { DRAG_PREFS_STORAGE_KEY, parseDragPrefs } from '../shared/tabTransfer';
 import { DISPLAY_PREFS_STORAGE_KEY, parseDisplayPrefs, type DisplayPrefs } from '../shared/displayPrefs';
 import { FIGURE_COPY_OPTIONS_CHANNEL, FIGURE_COPY_OPTIONS_SETTING_KEY, normalizeFigureCopyOptions, type FigureCopyOptions } from '../shared/figureSource';
 import { LANGUAGE_STORAGE_KEY, currentLanguage, localizeDocument, parseLanguagePref, saveLanguagePref } from '../shared/i18n';
-import { syncStatusErrorText } from '../shared/syncErrors';
+import { isSyncErrorCode, syncStatusErrorText } from '../shared/syncErrors';
 import { SHORTCUTS, SHORTCUT_GROUPS, shortcutLabel } from '../shared/shortcuts';
 import type { PdfSyncPublicStatus } from '../background/pdfSyncService';
 import {
@@ -224,6 +226,91 @@ syncNowButton.addEventListener('click', () => {
     if (!response?.success) syncStatus.textContent = syncStatusErrorText(response) ?? S.syncFailed;
   });
 });
+
+// ─── PDF files in my Drive ───
+
+interface DriveFilesStatus { available: boolean; enabled: boolean; folderUrl: string | null; stored: number }
+const driveFilesInput = byId<HTMLInputElement>('drive-files-enabled');
+const driveFilesStatusEl = byId<HTMLParagraphElement>('drive-files-status');
+const driveAuto = byId<HTMLDivElement>('drive-auto');
+const driveAutoRows = byId<HTMLDivElement>('drive-auto-rows');
+
+function renderDriveFiles(status: DriveFilesStatus | null, note = ''): void {
+  driveFilesInput.checked = !!status?.enabled;
+  driveFilesInput.disabled = !status?.available;
+  driveAuto.hidden = !status?.enabled;
+  driveFilesStatusEl.replaceChildren();
+  if (note) driveFilesStatusEl.textContent = note;
+  else if (!status?.available) driveFilesStatusEl.textContent = S.driveFilesNeedSync;
+  else if (status.enabled) {
+    driveFilesStatusEl.append(S.driveFilesOn(status.stored));
+    if (status.folderUrl) {
+      const link = document.createElement('a');
+      link.href = status.folderUrl;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = S.driveFilesOpenFolder;
+      driveFilesStatusEl.append(' · ', link);
+    }
+  }
+  if (status?.enabled) void renderDriveAuto();
+}
+
+async function loadDriveFiles(): Promise<void> {
+  const reply = await send<{ success?: boolean; status?: DriveFilesStatus }>({ type: 'VOCAB_T_PDF_DRIVE_STATUS' });
+  renderDriveFiles(reply?.status ?? null);
+}
+
+driveFilesInput.addEventListener('change', () => {
+  const enabled = driveFilesInput.checked;
+  if (enabled) driveFilesStatusEl.textContent = S.driveFilesAsking;
+  void send<{ success?: boolean; status?: DriveFilesStatus; errorCode?: string }>({ type: 'VOCAB_T_PDF_DRIVE_ENABLE', enabled }).then(async (reply) => {
+    if (reply?.success && reply.status) { renderDriveFiles(reply.status); return; }
+    await loadDriveFiles();
+    const code = reply?.errorCode;
+    renderDriveFiles({ available: true, enabled: false, folderUrl: null, stored: 0 }, syncStatusErrorText({ errorCode: isSyncErrorCode(code) ? code : 'failed', errorDetail: null, error: null }) ?? S.syncFailed);
+  });
+});
+
+/** Per project: keep its local files / web PDFs in Drive when opened (a synced setting). */
+async function renderDriveAuto(): Promise<void> {
+  const stored = await chrome.storage.local.get([DRIVE_AUTO_STORAGE_KEY, PDF_PROJECTS_STORAGE_KEY]);
+  const rules = parseDriveAutoRules(stored[DRIVE_AUTO_STORAGE_KEY]);
+  const projects = livePdfProjects(parsePdfProjects(stored[PDF_PROJECTS_STORAGE_KEY]))
+    .sort((a, b) => Number(b.id === DEFAULT_PROJECT_ID) - Number(a.id === DEFAULT_PROJECT_ID) || a.name.localeCompare(b.name));
+  if (driveAutoRows.contains(document.activeElement)) return; // not under the pointer of someone ticking
+  driveAutoRows.replaceChildren(...projects.map((project) => {
+    const row = document.createElement('div');
+    row.className = 'st-drive-auto-row';
+    const name = document.createElement('span');
+    name.className = 'st-drive-auto-name';
+    name.textContent = project.id === DEFAULT_PROJECT_ID ? SHARED.defaultProjectName : project.name;
+    row.append(name);
+    for (const kind of ['local', 'web'] as const) {
+      const label = document.createElement('label');
+      label.className = 'st-drive-auto-check';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = !!rules[project.id]?.[kind];
+      box.addEventListener('change', () => { void setDriveAuto(project.id, kind, box.checked); });
+      label.append(box, kind === 'local' ? S.driveAutoLocal : S.driveAutoWeb);
+      row.append(label);
+    }
+    return row;
+  }));
+}
+
+async function setDriveAuto(projectId: string, kind: 'local' | 'web', on: boolean): Promise<void> {
+  const stored = await chrome.storage.local.get(DRIVE_AUTO_STORAGE_KEY);
+  const rules = parseDriveAutoRules(stored[DRIVE_AUTO_STORAGE_KEY]);
+  const rule = { ...(rules[projectId] ?? { local: false, web: false }), [kind]: on };
+  if (rule.local || rule.web) rules[projectId] = rule; else delete rules[projectId];
+  await chrome.storage.local.set({ [DRIVE_AUTO_STORAGE_KEY]: rules });
+  if (!on) return;
+  // Turned on: the project's documents of that kind go up now, not only the next ones opened.
+  const reply = await send<{ success?: boolean; queued?: number }>({ type: 'VOCAB_T_PDF_DRIVE_KEEP_PROJECT', projectId });
+  if (reply?.success) driveFilesStatusEl.textContent = S.driveAutoQueued(reply.queued ?? 0);
+}
 
 // ─── Opening PDFs ───
 
@@ -698,7 +785,7 @@ let refreshing: Promise<void> | null = null;
 let refreshAgain = false;
 function refresh(): void {
   if (refreshing) { refreshAgain = true; return; }
-  refreshing = Promise.all([loadSettings(), loadSync()]).then(() => undefined, () => undefined).finally(() => {
+  refreshing = Promise.all([loadSettings(), loadSync(), loadDriveFiles()]).then(() => undefined, () => undefined).finally(() => {
     refreshing = null;
     if (refreshAgain) { refreshAgain = false; refresh(); }
   });

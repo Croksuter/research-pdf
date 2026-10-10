@@ -78,10 +78,11 @@ export async function paperAliasesOf(doc: PDFDocumentProxy): Promise<string[]> {
 
 /** Stores bytes the viewer already holds (a first open finished downloading, or a local file). */
 export async function cachePdfBytes(
-  url: string,
+  url: string | null,
   bytes: Uint8Array,
   validators?: { etag: string | null; lastModified: string | null; finalUrl?: string },
   paperAliases: string[] = [],
+  docId: string | null = null,
 ): Promise<string | null> {
   if (!(await pdfFileCacheEnabled())) return null;
   try {
@@ -90,6 +91,7 @@ export async function cachePdfBytes(
       url,
       alsoUrls: validators?.finalUrl && validators.finalUrl !== url ? [validators.finalUrl] : [],
       paperAliases,
+      docId,
       bytes,
       sha256,
       etag: validators?.etag ?? null,

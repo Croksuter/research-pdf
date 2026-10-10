@@ -33,6 +33,9 @@ import {
   syncPdfNow,
 } from './background/pdfSyncService';
 import { updatePdfLibrary } from './background/pdfLibraryStore';
+import { driveFilesStatus, fetchDriveCopy, keepProjectInDrive, maybeKeepInDrive, removeDocFromDrive, renameDriveCopy, setDriveFilesEnabled, storeDocInDrive } from './background/pdfDriveFiles';
+import { CloudSyncError } from './background/cloudSyncError';
+import { isRecord } from './shared/guards';
 import { savePdfDocRecord } from './background/pdfDocStateStore';
 import { followStoredLanguage } from './shared/i18n';
 import { watchSyncedSettings } from './background/settingsSync';
@@ -87,9 +90,47 @@ const messageHandlers: Record<string, MessageHandler> = {
   // Opens and detected titles from viewer frames.
   VOCAB_T_PDF_LIBRARY_UPDATE: async (m, sender) => {
     const request = parsePdfLibraryUpdateRequest(m);
-    if (!request || !isExtensionPageSender(sender)) return { success: false, error: S.badLibraryRequest };
-    if (await updatePdfLibrary(request.update)) requestPdfSyncSoon();
+    // A Drive copy is recorded by the background only, once it is there.
+    if (!request || !isExtensionPageSender(sender) || request.update.kind === 'drive') return { success: false, error: S.badLibraryRequest };
+    const { update } = request;
+    if (await updatePdfLibrary(update)) {
+      requestPdfSyncSoon();
+      if (update.kind === 'rename') void renameDriveCopy(update.docId);
+    }
+    if (update.kind === 'opened') void maybeKeepInDrive(update.docId, update.url);
     return { success: true };
+  },
+  // PDF files in the user's Drive folder (background/pdfDriveFiles.ts); extension pages only.
+  VOCAB_T_PDF_DRIVE_STATUS: async (_m, sender) => (isExtensionPageSender(sender) ? { success: true, status: await driveFilesStatus() } : { success: false }),
+  VOCAB_T_PDF_DRIVE_ENABLE: async (m, sender) => {
+    const enabled = isRecord(m) ? m.enabled : undefined;
+    if (typeof enabled !== 'boolean' || !isExtensionPageSender(sender)) return { success: false };
+    try {
+      return { success: true, status: await setDriveFilesEnabled(enabled) };
+    } catch (error) {
+      return { success: false, errorCode: error instanceof CloudSyncError ? error.code : 'failed' };
+    }
+  },
+  VOCAB_T_PDF_DRIVE_STORE: async (m, sender) => {
+    const docIds = isRecord(m) && Array.isArray(m.docIds) ? m.docIds.filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 128).slice(0, 200) : [];
+    if (docIds.length === 0 || !isExtensionPageSender(sender)) return { success: false };
+    const results = await Promise.all(docIds.map(storeDocInDrive));
+    const failed = results.find((r) => !r.success);
+    return failed && !failed.success ? { success: false, errorCode: failed.errorCode, stored: results.filter((r) => r.success).length } : { success: true, stored: results.length };
+  },
+  VOCAB_T_PDF_DRIVE_REMOVE: async (m, sender) => {
+    const docId = isRecord(m) && typeof m.docId === 'string' ? m.docId : '';
+    return docId && isExtensionPageSender(sender) ? removeDocFromDrive(docId) : { success: false };
+  },
+  VOCAB_T_PDF_DRIVE_FETCH: async (m, sender) => {
+    if (!isRecord(m) || !isExtensionPageSender(sender)) return { success: false };
+    const url = typeof m.url === 'string' ? m.url : null;
+    const docId = typeof m.docId === 'string' ? m.docId : null;
+    return url || docId ? fetchDriveCopy({ url, docId }) : { success: false };
+  },
+  VOCAB_T_PDF_DRIVE_KEEP_PROJECT: async (m, sender) => {
+    const projectId = isRecord(m) && typeof m.projectId === 'string' ? m.projectId : '';
+    return projectId && isExtensionPageSender(sender) ? { success: true, ...(await keepProjectInDrive(projectId)) } : { success: false };
   },
 };
 
