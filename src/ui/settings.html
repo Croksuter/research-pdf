@@ -180,6 +180,46 @@
           <option value="follow" data-i18n="afterMoveFollow">옮긴 프로젝트로 따라가기</option>
         </select>
       </div>
+      <div class="st-row" data-search="끌어 놓기 드래그 다른 창 탭 옮기기 복사 drag drop window tab move keep">
+        <div class="st-row-text">
+          <p class="st-row-title" data-i18n="dropSame">같은 프로젝트의 다른 PDF 탭에 끌어 놓으면</p>
+          <p class="st-row-sub" data-i18n="dropSameSub">다른 창에 열린 같은 프로젝트의 PDF 탭에 탭을 끌어 놓을 때입니다.</p>
+        </div>
+        <select id="drop-same" class="st-select" aria-label="같은 프로젝트의 다른 PDF 탭에 끌어 놓으면" data-i18n-aria-label="dropSame">
+          <option value="ask" data-i18n="dropAsk">매번 묻기</option>
+          <option value="move" data-i18n="dropSameMove">옮기기</option>
+          <option value="keep" data-i18n="dropSameKeep">양쪽에 모두 두기</option>
+        </select>
+      </div>
+      <div class="st-row" data-search="끌어 놓기 드래그 다른 프로젝트 이동 추가 drag drop project move add">
+        <div class="st-row-text">
+          <p class="st-row-title" data-i18n="dropOther">다른 프로젝트의 PDF 탭에 끌어 놓으면</p>
+          <p class="st-row-sub" data-i18n="dropOtherSub">추가하면 문서가 두 프로젝트에 함께 들어가고, 필기와 읽던 위치는 하나로 이어집니다.</p>
+        </div>
+        <select id="drop-other" class="st-select" aria-label="다른 프로젝트의 PDF 탭에 끌어 놓으면" data-i18n-aria-label="dropOther">
+          <option value="ask" data-i18n="dropAsk">매번 묻기</option>
+          <option value="move" data-i18n="dropOtherMove">그 프로젝트로 이동</option>
+          <option value="keep" data-i18n="dropOtherKeep">그 프로젝트에도 추가</option>
+        </select>
+      </div>
+      <div class="st-row" data-search="끌어 놓기 드래그 기본 프로젝트 빼기 drag drop default project">
+        <div class="st-row-text">
+          <p class="st-row-title" data-i18n="dropDefault">기본 프로젝트의 PDF 탭에 끌어 놓으면</p>
+          <p class="st-row-sub" data-i18n="dropDefaultSub">기본 프로젝트는 다른 프로젝트에 들지 않은 문서 모두입니다.</p>
+        </div>
+        <select id="drop-default" class="st-select" aria-label="기본 프로젝트의 PDF 탭에 끌어 놓으면" data-i18n-aria-label="dropDefault">
+          <option value="ask" data-i18n="dropAsk">매번 묻기</option>
+          <option value="move" data-i18n="dropDefaultMove">프로젝트에서 빼기</option>
+          <option value="keep" data-i18n="dropDefaultKeep">잠깐 열어 보기</option>
+        </select>
+      </div>
+      <div class="st-row" data-search="베타 빈 곳 다른 창 끌어 놓기 beta empty window drop">
+        <div class="st-row-text">
+          <p class="st-row-title"><span data-i18n="windowDrop">다른 창의 빈 곳에 끌어 놓아 옮기기</span> <span class="st-badge st-beta" data-i18n="beta">베타</span></p>
+          <p class="st-row-sub" data-i18n="windowDropSub"></p>
+        </div>
+        <input type="checkbox" id="window-drop" class="st-switch" aria-label="다른 창의 빈 곳에 끌어 놓아 옮기기" data-i18n-aria-label="windowDrop">
+      </div>
     </section>
 
     <section id="capture" class="st-card" aria-labelledby="capture-title">

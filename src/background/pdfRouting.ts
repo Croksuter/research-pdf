@@ -34,13 +34,14 @@ import {
   parsePdfProjectOpenRequest,
   parsePdfProjectUpdateRequest,
   parsePdfTearOffRequest,
+  parsePdfWindowsRequest,
   parseRestoreViewerTabsRequest,
   parseSyncWebPdfRoutingRequest,
 } from '../shared/messages';
 import { DEFAULT_PROJECT_ID, PDF_PROJECTS_MAX, PDF_PROJECT_FOLDERS_MAX, isPdfProjectId } from '../shared/pdfProjects';
 import { getSetting } from '../db/settingsRepository';
 import { debugError, debugLog } from '../shared/debugLog';
-import { claimPdfHub, isLayoutHub, movePdfToProject, noteTopLevelCommit, openPdfProject, promoteEmbeddedPdf, showPdfSettings, tearOffPdfDoc } from './pdfHub';
+import { claimPdfHub, isLayoutHub, listPdfWindows, movePdfToProject, noteTopLevelCommit, openPdfProject, promoteEmbeddedPdf, showPdfSettings, tearOffPdfDoc } from './pdfHub';
 import { applyPdfProjectRequest, updatePdfProjects } from './pdfProjectStore';
 import { isExtensionPageSender } from './messageDispatcher';
 import { requestPdfSyncSoon } from './pdfSyncService';
@@ -512,7 +513,13 @@ export const pdfMessageHandlers: Record<string, PdfMessageHandler> = {
   VOCAB_T_PDF_TEAR_OFF: (m, sender) => {
     const request = parsePdfTearOffRequest(m);
     return request && isHubPageSender(sender)
-      ? tearOffPdfDoc(request)
+      ? tearOffPdfDoc(request, sender)
+      : { success: false, error: S.badPdfTabRequest };
+  },
+  VOCAB_T_PDF_WINDOWS: (m, sender) => {
+    const request = parsePdfWindowsRequest(m);
+    return request && isHubPageSender(sender)
+      ? listPdfWindows(request.project, sender)
       : { success: false, error: S.badPdfTabRequest };
   },
   VOCAB_T_RESTORE_VIEWER_TABS: async (m) => {

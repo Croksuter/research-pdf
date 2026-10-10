@@ -6,15 +6,12 @@
 
 export const HUB_MESSAGE_TAG = 'rpdf-hub';
 
+/** A hub tab's own drag type (shared/tabTransfer.ts); a viewer seeing it tells its hub. */
+export const TAB_DRAG_TYPE = 'application/x-rpdf-tab';
+
 export type HubKeyAction = 'prev' | 'next' | 'close' | 'reopen' | 'split' | 'pane';
 const HUB_KEY_ACTIONS: readonly HubKeyAction[] = ['prev', 'next', 'close', 'reopen', 'split', 'pane'];
 
-/**
- * `window.name` of a second view of a document shown beside its tab's own
- * (split view, the same document twice): it remembers no reading position
- * until the hub says it is the tab's view now (`primary`).
- */
-export const HUB_AUX_FRAME_NAME = 'rpdf-aux';
 
 export type ViewerToHubMessage =
   | { tag: typeof HUB_MESSAGE_TAG; kind: 'doc'; title: string; paperTitle: string | null; docId: string | null }
@@ -22,6 +19,8 @@ export type ViewerToHubMessage =
   | { tag: typeof HUB_MESSAGE_TAG; kind: 'open-files'; files: File[] }
   // The reader pressed or focused inside this viewer (split view: its pane comes in front).
   | { tag: typeof HUB_MESSAGE_TAG; kind: 'focus' }
+  // Another hub's tab is dragged over this viewer: the hub shows where it can go.
+  | { tag: typeof HUB_MESSAGE_TAG; kind: 'drag' }
   // Answer to `sleep`: `ok` once drawings and position are stored (false
   // while presenting, printing or asking for a password); `hash` reopens an
   // untouched document where it was.
@@ -32,8 +31,8 @@ export type HubToViewerMessage =
   | { tag: typeof HUB_MESSAGE_TAG; kind: 'hash'; hash: string }
   // The hub is about to unload this frame to free memory.
   | { tag: typeof HUB_MESSAGE_TAG; kind: 'sleep'; id: number }
-  // A second view (HUB_AUX_FRAME_NAME) is now its tab's own view.
-  | { tag: typeof HUB_MESSAGE_TAG; kind: 'primary' };
+  // This view is in front now: it is the one that remembers the reading position.
+  | { tag: typeof HUB_MESSAGE_TAG; kind: 'active' };
 
 const HASH_PATTERN = /^#[^\s]{1,512}$/u;
 const DOC_ID_MAX_CHARS = 128;
@@ -73,6 +72,8 @@ export function parseViewerToHubMessage(value: unknown): ViewerToHubMessage | nu
         : null;
     case 'focus':
       return { tag: HUB_MESSAGE_TAG, kind: 'focus' };
+    case 'drag':
+      return { tag: HUB_MESSAGE_TAG, kind: 'drag' };
     default:
       return null;
   }
@@ -87,7 +88,7 @@ export function parseHubToViewerMessage(value: unknown): HubToViewerMessage | nu
       : null;
   }
   if (value.kind === 'sleep') return Number.isInteger(value.id) ? { tag: HUB_MESSAGE_TAG, kind: 'sleep', id: value.id as number } : null;
-  if (value.kind === 'primary') return { tag: HUB_MESSAGE_TAG, kind: 'primary' };
+  if (value.kind === 'active') return { tag: HUB_MESSAGE_TAG, kind: 'active' };
   return null;
 }
 

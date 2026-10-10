@@ -148,35 +148,69 @@ export function parsePdfProjectMoveRequest(value: unknown): PdfProjectMoveReques
   return { type: 'VOCAB_T_PDF_PROJECT_MOVE', docId, url, from, to, keep };
 }
 
-// Tear a document off its hub into a hub of its own in a new window
-// ("새 창으로 분리", or a tab dragged out of the hub's window). `bounds`: where
-// the new window goes (the drop point), or null for wherever Chrome puts it.
+// Send a document from its hub to another window ("새 창으로 분리", "다른 창으로
+// 보내기", a tab dropped outside the hub's window). `target`: a window by id,
+// the window under a screen point (a drop on another window's empty space),
+// or null for a new window — placed at `bounds` (the drop point), or where
+// Chrome puts it. `url` null: a file picked from disk, handed over to the hub
+// once it exists. `arrival`: what the new hub's notice can send back.
 export interface PdfTearOffRequest {
   type: 'VOCAB_T_PDF_TEAR_OFF';
   project: string;
-  url: string;
+  url: string | null;
   bounds: { left: number; top: number; width: number; height: number } | null;
+  target: { windowId: number } | { x: number; y: number } | null;
+  arrival: { key: number; title: string } | null;
 }
 
 const BOUND_LIMIT = 100_000;
+const isCoord = (n: unknown): n is number => Number.isInteger(n) && Math.abs(n as number) <= BOUND_LIMIT;
 
 function parseBounds(value: unknown): PdfTearOffRequest['bounds'] | undefined {
   if (value === null || value === undefined) return null;
   if (!isRecord(value)) return undefined;
   const { left, top, width, height } = value;
-  const ints = [left, top, width, height];
-  if (!ints.every((n) => Number.isInteger(n) && Math.abs(n as number) <= BOUND_LIMIT)) return undefined;
+  if (![left, top, width, height].every(isCoord)) return undefined;
   if ((width as number) < 200 || (height as number) < 150) return undefined;
   return { left: left as number, top: top as number, width: width as number, height: height as number };
 }
 
+function parseTarget(value: unknown): PdfTearOffRequest['target'] | undefined {
+  if (value === null || value === undefined) return null;
+  if (!isRecord(value)) return undefined;
+  if ('windowId' in value) return Number.isInteger(value.windowId) ? { windowId: value.windowId as number } : undefined;
+  return isCoord(value.x) && isCoord(value.y) ? { x: value.x, y: value.y } : undefined;
+}
+
+function parseArrival(value: unknown): PdfTearOffRequest['arrival'] | undefined {
+  if (value === null || value === undefined) return null;
+  if (!isRecord(value) || !Number.isInteger(value.key) || typeof value.title !== 'string') return undefined;
+  return { key: value.key as number, title: value.title.slice(0, 300) };
+}
+
 export function parsePdfTearOffRequest(value: unknown): PdfTearOffRequest | null {
   if (!isRecord(value) || value.type !== 'VOCAB_T_PDF_TEAR_OFF') return null;
-  const { project, url } = value;
-  if (!isPdfProjectId(project) || typeof url !== 'string' || !isPdfViewerSourceUrl(url)) return null;
+  const { project } = value;
+  const url = value.url ?? null;
+  if (!isPdfProjectId(project) || (url !== null && (typeof url !== 'string' || !isPdfViewerSourceUrl(url)))) return null;
   const bounds = parseBounds(value.bounds);
-  if (bounds === undefined) return null;
-  return { type: 'VOCAB_T_PDF_TEAR_OFF', project, url, bounds };
+  const target = parseTarget(value.target);
+  const arrival = parseArrival(value.arrival);
+  if (bounds === undefined || target === undefined || arrival === undefined) return null;
+  return { type: 'VOCAB_T_PDF_TEAR_OFF', project, url, bounds, target, arrival };
+}
+
+// The browser's other windows, for "다른 창으로 보내기": each with its tab
+// count and whether it holds a hub of `project`.
+export interface PdfWindowsRequest {
+  type: 'VOCAB_T_PDF_WINDOWS';
+  project: string;
+}
+
+export function parsePdfWindowsRequest(value: unknown): PdfWindowsRequest | null {
+  return isRecord(value) && value.type === 'VOCAB_T_PDF_WINDOWS' && isPdfProjectId(value.project)
+    ? { type: 'VOCAB_T_PDF_WINDOWS', project: value.project }
+    : null;
 }
 
 // Background → hub page broadcast: add these documents to the hub in tab `tabId`.

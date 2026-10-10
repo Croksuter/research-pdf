@@ -11,7 +11,7 @@
 
 import { fileIdentity, parseClosedTabs, parseLocalTabs, type HubLocalTab } from '../../shared/hubTabs';
 import { S } from '../pdfHub.strings';
-import { type HubTab, activeKey, isHub, projectId, tabs } from './store';
+import { type HubTab, activeKey, isHub, myTabId, projectId, tabs } from './store';
 import { showToast } from './uiKit';
 import { addDocs, createTab, insertTab, updateTabLabel } from './tabStrip';
 import { CLOSED_STORAGE_KEY, closed } from './session';
@@ -225,6 +225,8 @@ export function restoreLocalTabs(): HubTab | null {
 // ─── Handing a local file to another project ───
 
 const handoffKeys = (project: string) => IDBKeyRange.bound(`handoff:${project}:`, `handoff:${project}:\uffff`);
+// Handed to one hub tab (a document sent to another window), not to whichever hub of the project takes it first.
+const hubHandoffKeys = (hubTabId: number) => IDBKeyRange.bound(`handoff-hub:${hubTabId}:`, `handoff-hub:${hubTabId}:\uffff`);
 const handoffChannel = new BroadcastChannel('rpdf-hub-handoff');
 
 interface HandedOverFile extends StoredLocalFile { title: string; paperTitle: string | null; activate: boolean }
@@ -240,6 +242,16 @@ export async function handOver(project: string, tab: HubTab, activate: boolean):
   return key;
 }
 
+/** Gives the tab's file to the hub in tab `hubTabId` (a document sent to another window). */
+export async function handOverToHub(hubTabId: number, tab: HubTab): Promise<boolean> {
+  if (!tab.file) return false;
+  const key = `handoff-hub:${hubTabId}:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const record: HandedOverFile = { session: `handoff-hub:${hubTabId}`, file: tab.file, touchedAt: Date.now(), title: tab.title, paperTitle: tab.paperTitle, activate: true };
+  const stored = await withFiles('readwrite', (store) => store.put(record, key)).then(() => true, () => false);
+  handoffChannel.postMessage({ hub: hubTabId });
+  return stored;
+}
+
 /** Takes back a copy not taken in yet (undo). */
 export function withdrawHandOver(key: string): Promise<unknown> {
   return withFiles('readwrite', (store) => store.delete(key)).catch(() => undefined);
@@ -250,15 +262,19 @@ export async function claimHandedOver(): Promise<void> {
   if (!isHub) return;
   const records: HandedOverFile[] = [];
   await withFiles('readwrite', (store) => {
-    const cursor = store.openCursor(handoffKeys(projectId));
-    cursor.onsuccess = () => {
-      const c = cursor.result;
-      if (!c) return;
-      const record = c.value as HandedOverFile;
-      if (record?.file instanceof File) records.push(record);
-      c.delete();
-      c.continue();
+    const take = (range: IDBKeyRange) => {
+      const cursor = store.openCursor(range);
+      cursor.onsuccess = () => {
+        const c = cursor.result;
+        if (!c) return;
+        const record = c.value as HandedOverFile;
+        if (record?.file instanceof File) records.push(record);
+        c.delete();
+        c.continue();
+      };
     };
+    take(handoffKeys(projectId));
+    if (myTabId !== null) take(hubHandoffKeys(myTabId));
   }).catch(() => undefined);
   for (const record of records) {
     const [tab] = addDocs([{ url: null, hash: '', file: record.file }], record.activate);
@@ -270,5 +286,6 @@ export async function claimHandedOver(): Promise<void> {
 }
 
 handoffChannel.onmessage = (e: MessageEvent) => {
-  if (isHub && (e.data as { project?: unknown } | null)?.project === projectId) void claimHandedOver();
+  const data = e.data as { project?: unknown; hub?: unknown } | null;
+  if (isHub && (data?.project === projectId || (myTabId !== null && data?.hub === myTabId))) void claimHandedOver();
 };

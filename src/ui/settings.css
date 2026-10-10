@@ -128,6 +128,7 @@ a { color: var(--accent); }
 .st-status:empty { display: none; }
 
 .st-badge { padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; }
+.st-beta { background: rgba(138, 180, 248, 0.16); color: #8ab4f8; }
 .st-badge[data-tone="ok"] { background: var(--success-soft); color: var(--success-text); }
 .st-badge[data-tone="warn"] { background: var(--st-warn-soft); color: var(--st-warn-text); }
 .st-badge[data-tone="muted"] { background: var(--surface-soft); color: var(--text-muted); }

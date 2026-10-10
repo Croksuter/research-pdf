@@ -31,6 +31,7 @@ import { PDF_HUB_PAGE, PDF_HUB_SHOW_SETTINGS, buildPdfHubEntryUrl, buildPdfHubUr
 import type { PdfHubOpenMessage } from '../shared/messages';
 import { hubDocKey } from '../shared/hubTabs';
 import { DEFAULT_HUB_SCOPE, HUB_SCOPE_STORAGE_KEY, parseHubScope, pickHub, type HubCandidate, type HubScope } from '../shared/hubScope';
+import { windowAtPoint } from '../shared/tabTransfer';
 import { DEFAULT_PROJECT_ID, appendToPdfProjectLayout, applyPdfProjectUpdate, targetProjectForDoc, type PdfProjects } from '../shared/pdfProjects';
 import type { PdfLibrary } from '../shared/pdfLibrary';
 import { debugError, debugLog } from '../shared/debugLog';
@@ -643,32 +644,129 @@ export interface WindowBounds {
   height: number;
 }
 
+// ─── Sending a document to another window ───
+//
+// Chrome gives windows' places but no stacking order: the order windows were
+// last focused in stands in for it (an empty-space drop over overlapping
+// windows goes to the one focused last). Kept in session storage.
+
+const FOCUS_ORDER_KEY = 'rpdfWindowFocus';
+const FOCUS_ORDER_MAX = 30;
+
+async function readFocusOrder(): Promise<number[]> {
+  try {
+    const value = (await chrome.storage.session.get(FOCUS_ORDER_KEY))[FOCUS_ORDER_KEY];
+    return Array.isArray(value) ? value.filter((id): id is number => Number.isInteger(id)) : [];
+  } catch {
+    return [];
+  }
+}
+
+const focusQueue = createSerialQueue();
+chrome.windows?.onFocusChanged?.addListener((windowId) => {
+  if (windowId === chrome.windows.WINDOW_ID_NONE) return;
+  void focusQueue(async () => {
+    const order = [windowId, ...(await readFocusOrder()).filter((id) => id !== windowId)].slice(0, FOCUS_ORDER_MAX);
+    await chrome.storage.session.set({ [FOCUS_ORDER_KEY]: order }).catch(() => undefined);
+  });
+});
+
+/** What a hub that received a sent document shows: where it came from, so its notice can send it back. */
+export const ARRIVALS_KEY = 'rpdfArrivals';
+export interface HubArrival { from: number; key: number; title: string; at: number }
+
+async function noteArrival(tabId: number, arrival: HubArrival): Promise<void> {
+  try {
+    const stored = (await chrome.storage.session.get(ARRIVALS_KEY))[ARRIVALS_KEY];
+    const all = stored && typeof stored === 'object' ? stored as Record<string, HubArrival> : {};
+    for (const [id, a] of Object.entries(all)) if (arrival.at - a.at > 60_000) delete all[id];
+    all[String(tabId)] = arrival;
+    await chrome.storage.session.set({ [ARRIVALS_KEY]: all });
+  } catch {
+    /* the notice is a convenience */
+  }
+}
+
+/** The normal window a send goes to: the one named, or the one under the point (not the sender's). */
+async function targetWindow(target: { windowId: number } | { x: number; y: number } | null, senderWindow: number | null): Promise<number | null> {
+  if (!target) return null;
+  const windows = await chrome.windows.getAll({ windowTypes: ['normal'] }).catch(() => [] as chrome.windows.Window[]);
+  if ('windowId' in target) return windows.some((w) => w.id === target.windowId) ? target.windowId : null;
+  const boxes = windows
+    .filter((w): w is chrome.windows.Window & { id: number } => typeof w.id === 'number')
+    .map((w) => ({ id: w.id, left: w.left ?? 0, top: w.top ?? 0, width: w.width ?? 0, height: w.height ?? 0, minimized: w.state === 'minimized' }));
+  return windowAtPoint(boxes, target, await readFocusOrder(), senderWindow);
+}
+
+export type SendResult =
+  | { success: true; hubTabId: number; created: boolean }
+  | { success: false; error: string };
+
 /**
- * Opens `url` in a new window, in a hub of `project` of its own (a document
- * dragged out of its hub, or "새 창으로 분리"). That tab is registered before
- * its page claims, so it becomes a hub of the project next to the one the
- * document came from — with either hub scope — instead of handing it back.
+ * Sends a document to another window. A window that already holds a hub of
+ * the project gets it there (that hub is brought forward; it asks what to do
+ * as for a drop on it, so `created` is false and the sender offers the
+ * document to it). Otherwise a hub tab of the project is made — next to that
+ * window's tab in front, or in a new window — holding just this document (a
+ * file from disk follows by hand-over), registered before its page claims so
+ * it stays a hub of the project instead of handing it back, with a note of
+ * where it came from.
  */
-export function tearOffPdfDoc(request: { project: string; url: string; bounds: WindowBounds | null }): Promise<{ success: boolean; error?: string }> {
-  return serialized(async () => {
+export function tearOffPdfDoc(
+  request: { project: string; url: string | null; bounds: WindowBounds | null; target?: { windowId: number } | { x: number; y: number } | null; arrival?: { key: number; title: string } | null },
+  sender?: chrome.runtime.MessageSender,
+): Promise<SendResult> {
+  return serialized(async (): Promise<SendResult> => {
     const projects = await readPdfProjects();
     const project = projects[request.project]?.deletedAt === 0 ? request.project : DEFAULT_PROJECT_ID;
-    const url = buildPdfHubUrl([request.url], 0, chrome.runtime.getURL(PDF_HUB_PAGE), null, project);
-    const create = (bounds: WindowBounds | null) => chrome.windows.create({ url, focused: true, type: 'normal', ...(bounds ?? {}) });
+    const url = buildPdfHubUrl(request.url ? [request.url] : [], 0, chrome.runtime.getURL(PDF_HUB_PAGE), null, project);
+    const registry = await readRegistry();
     try {
-      // Bounds Chrome finds mostly off screen are refused: then wherever Chrome puts it.
-      const created = await create(request.bounds).catch(() => (request.bounds ? create(null) : Promise.reject(new Error('no window'))));
-      const tabId = created?.tabs?.[0]?.id;
+      const windowId = await targetWindow(request.target ?? null, sender?.tab?.windowId ?? null);
+      let tabId: number | undefined;
+      if (windowId !== null) {
+        const hub = pickHub(await liveHubs(registry, project), windowId, 'window');
+        if (hub && hub.tabId !== sender?.tab?.id) {
+          await activateTab(hub.tabId);
+          debugLog('bg:hub', 'sending a document to a window with a hub of its project', () => ({ project, hubTabId: hub.tabId }));
+          return { success: true, hubTabId: hub.tabId, created: false };
+        }
+        const inWindow = await chrome.tabs.query({ windowId }).catch(() => [] as chrome.tabs.Tab[]);
+        const front = inWindow.find((t) => t.active);
+        const created = await chrome.tabs.create({ windowId, url, active: true, ...(front ? { index: front.index + 1 } : {}) });
+        await chrome.windows.update(windowId, { focused: true }).catch(() => undefined);
+        tabId = created.id;
+      } else {
+        const create = (bounds: WindowBounds | null) => chrome.windows.create({ url, focused: true, type: 'normal', ...(bounds ?? {}) });
+        // Bounds Chrome finds mostly off screen are refused: then wherever Chrome puts it.
+        const created = await create(request.bounds).catch(() => (request.bounds ? create(null) : Promise.reject(new Error('no window'))));
+        tabId = created?.tabs?.[0]?.id;
+      }
       if (typeof tabId !== 'number') throw new Error('no tab id');
-      const registry = await readRegistry();
       register(registry, project, { tabId, ready: false, pending: [] });
       await writeRegistry(registry);
-      debugLog('bg:hub', 'tore a document off into a new window', () => ({ project, tabId }));
-      return { success: true };
+      const from = sender?.tab?.id;
+      if (request.arrival && typeof from === 'number') await noteArrival(tabId, { from, ...request.arrival, at: Date.now() });
+      debugLog('bg:hub', 'sent a document to a hub of its own', () => ({ project, tabId, windowId }));
+      return { success: true, hubTabId: tabId, created: true };
     } catch (error) {
-      debugError('bg:hub', 'failed to tear a document off', () => ({ error: error instanceof Error ? error.message : String(error) }));
+      debugError('bg:hub', 'failed to send a document to another window', () => ({ error: error instanceof Error ? error.message : String(error) }));
       return { success: false, error: error instanceof Error ? error.message : String(error) };
     }
+  });
+}
+
+/** The browser's normal windows other than the sender's, oldest first: tab count, and whether a hub of `project` is there. */
+export function listPdfWindows(project: string, sender: chrome.runtime.MessageSender): Promise<{ success: true; windows: Array<{ windowId: number; number: number; tabs: number; hasHub: boolean }> }> {
+  return serialized(async () => {
+    const windows = await chrome.windows.getAll({ windowTypes: ['normal'], populate: true }).catch(() => [] as chrome.windows.Window[]);
+    const hubs = await liveHubs(await readRegistry(), project);
+    // Numbered among all windows (the sender's too), in the order they were opened.
+    const all = windows
+      .filter((w): w is chrome.windows.Window & { id: number } => typeof w.id === 'number')
+      .sort((a, b) => a.id - b.id)
+      .map((w, i) => ({ windowId: w.id, number: i + 1, tabs: w.tabs?.length ?? 0, hasHub: hubs.some((h) => h.windowId === w.id) }));
+    return { success: true as const, windows: all.filter((w) => w.windowId !== sender.tab?.windowId) };
   });
 }
 

@@ -23,7 +23,7 @@ import {
 import { APP_NAME } from '../shared/brand';
 import { debugLog, initDebugLogging } from '../shared/debugLog';
 import { PDF_HUB_PAGE, WEB_PDF_HOST_ORIGINS, buildPdfHubEntryUrl, isWebPdfSourceUrl, parsePdfViewerFile, pdfDisplayName } from '../shared/localPdf';
-import { HUB_AUX_FRAME_NAME, HUB_MESSAGE_TAG, hubKeyAction, parseHubToViewerMessage, sameTitle, type ViewerToHubMessage } from '../shared/pdfHubProtocol';
+import { HUB_MESSAGE_TAG, TAB_DRAG_TYPE, hubKeyAction, parseHubToViewerMessage, sameTitle, type ViewerToHubMessage } from '../shared/pdfHubProtocol';
 import { AnnotationToolbar, HIGHLIGHT_COLORS } from './pdfViewer/annotate';
 import { FigureCapture } from './pdfViewer/figureCapture';
 import { byId } from './pdfViewer/dom';
@@ -238,9 +238,35 @@ function postToHub(message: ViewerToHubMessage) {
   if (inHub) window.parent.postMessage(message, location.origin);
 }
 
-// A second view of a document beside its tab's own (the hub's split view):
-// reading the references there must not move where the document reopens.
-let auxView = inHub && window.name === HUB_AUX_FRAME_NAME;
+// ─── Which view remembers the reading position ───
+//
+// One document can be open in several views at once (split halves, hubs in
+// other windows or projects). The one brought in front or used last saves
+// where the reader is; the others stop until they are again. Drawings are
+// not this: every view stores them and shows the others' (annotationCache).
+const VIEW_ID = Math.random().toString(36).slice(2);
+const activeViews = typeof BroadcastChannel === 'function' ? new BroadcastChannel('rpdf-active-view') : null;
+let positionWriter = false;
+
+function announceActiveView() {
+  if (currentIdentity) activeViews?.postMessage({ docId: currentIdentity.docId, view: VIEW_ID });
+}
+
+function becomeActiveView() {
+  if (positionWriter) return;
+  positionWriter = true;
+  announceActiveView();
+}
+
+activeViews?.addEventListener('message', (event: MessageEvent<{ docId?: unknown; view?: unknown }>) => {
+  if (!positionWriter || event.data?.view === VIEW_ID || !currentIdentity || event.data?.docId !== currentIdentity.docId) return;
+  // Another view of this document is in front now: what this one had waiting still goes, then it stops.
+  void flushDocState();
+  positionWriter = false;
+});
+for (const type of ['pointerdown', 'keydown', 'wheel'] as const) {
+  document.addEventListener(type, becomeActiveView, { capture: true, passive: true });
+}
 // In a split hub, pressing in a viewer brings its half in front.
 if (inHub) {
   document.addEventListener('pointerdown', () => postToHub({ tag: HUB_MESSAGE_TAG, kind: 'focus' }), { capture: true, passive: true });
@@ -282,7 +308,7 @@ window.addEventListener('message', (event) => {
   if (!message) return;
   if (message.kind === 'open-file') void loadFromFile(message.file);
   else if (message.kind === 'sleep') void prepareForSleep(message.id);
-  else if (message.kind === 'primary') auxView = false;
+  else if (message.kind === 'active') becomeActiveView();
   else if (currentDoc) applyViewParams(classifyViewerHash(message.hash));
 });
 
@@ -601,7 +627,7 @@ let docStateTimer: ReturnType<typeof setTimeout> | null = null;
 let docStatePending: (() => PdfDocRecord | null) | null = null;
 function rememberDocState() {
   const identity = currentIdentity;
-  if (!identity || !userTouched || holdPosition || auxView) return;
+  if (!identity || !userTouched || holdPosition || !positionWriter) return;
   if (docStateTimer) clearTimeout(docStateTimer);
   docStatePending = () => (currentIdentity !== identity ? null : {
     ...identity,
@@ -735,6 +761,8 @@ document.addEventListener('keydown', (e) => {
 
 let dragDepth = 0;
 document.addEventListener('dragenter', (e) => {
+  // Another hub's tab: the hub puts its drop zones over this frame.
+  if (e.dataTransfer?.types.includes(TAB_DRAG_TYPE)) { postToHub({ tag: HUB_MESSAGE_TAG, kind: 'drag' }); return; }
   if (!e.dataTransfer?.types.includes('Files')) return;
   dragDepth += 1;
   dropOverlay.hidden = false;
@@ -836,6 +864,8 @@ async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesIn
   try {
     currentIdentity = await derivePdfDocIdentity(doc, bytesInfo);
     pendingRestore = currentIdentity ? await loadPdfDocRecord(currentIdentity) : null;
+    // Made the active view before the document was known: the other views hear it now.
+    if (positionWriter) announceActiveView();
   } catch {
     currentIdentity = null;
     pendingRestore = null;

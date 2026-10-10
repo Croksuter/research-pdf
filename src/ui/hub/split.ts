@@ -8,10 +8,11 @@
 // like a document.
 //
 // The same document can be in both panes (the references beside the text):
-// the second one is a mirror frame (HUB_AUX_FRAME_NAME) next to the tab's
-// own, which remembers no reading position; drawings show in both as they
-// are made (the annotation cache's channel). Closing the split keeps the
-// pane in front, a mirror becoming the tab's own view.
+// the second one is a mirror frame next to the tab's own. Like any two views
+// of a document, the one in front (or used) last remembers the reading
+// position, and drawings show in both as they are made (the annotation
+// cache's channel). Closing the split keeps the pane in front, a mirror
+// becoming the tab's own view.
 //
 // In: the tab menu, the strip's split button or Alt+Shift+S, or a tab
 // dragged onto either half of the page. Out: the same button or key, or
@@ -19,12 +20,12 @@
 // halves); its place is per device, and the panes are kept per project for
 // this tab's session, so a reload brings them back.
 
-import { HUB_AUX_FRAME_NAME, HUB_MESSAGE_TAG } from '../../shared/pdfHubProtocol';
+import { HUB_MESSAGE_TAG } from '../../shared/pdfHubProtocol';
 import { S } from '../pdfHub.strings';
 import { HOME, SETTINGS, type HubTab, activeKey, activeTab, isPage, isHub, projectId, setActiveKey, tabs } from './store';
 import { frames, home, homeBtn, settingsBtn, settingsView, splitBtn, splitDivider, splitDrop, splitFront } from './dom';
 import { showToast } from './uiKit';
-import { askToStore, ensureFrame, frameUrl, postToFrame, retiring } from './frames';
+import { askToStore, ensureFrame, frameUrl, retiring } from './frames';
 import { activate, dragKey, render } from './tabStrip';
 
 export type Side = 'left' | 'right';
@@ -71,7 +72,6 @@ function ensureMirror(tab: HubTab): HTMLIFrameElement {
   const frame = document.createElement('iframe');
   frame.title = tab.paperTitle ?? tab.title;
   frame.allow = 'fullscreen; clipboard-write';
-  frame.name = HUB_AUX_FRAME_NAME;
   frame.hidden = true;
   tab.mirror = frame;
   const start = (hash: string) => {
@@ -111,7 +111,6 @@ function promoteMirror(tab: HubTab): void {
   tab.frame = mirror;
   tab.mirror = null;
   tab.loaded = loadedMirrors.has(mirror);
-  postToFrame(tab, { tag: HUB_MESSAGE_TAG, kind: 'primary' });
   if (own) retire(own);
 }
 
@@ -166,7 +165,27 @@ export function layoutPanes(): void {
   splitBtn.setAttribute('aria-pressed', String(!!split));
   const behind = behindKey();
   for (const t of tabs) t.root.classList.toggle('is-behind', t.key === behind);
+  announceFront();
 }
+
+// ─── The view in front remembers the reading position ───
+
+let announced: HTMLElement | null = null;
+
+/**
+ * Tells the viewer in front that it is: of all views of a document (halves,
+ * other hubs), the one brought in front last saves where the reader is.
+ * `force`: again (it just loaded, or this hub came back into view).
+ */
+export function announceFront(force = false): void {
+  const front = frontElement();
+  if (!(front instanceof HTMLIFrameElement) || (front === announced && !force)) return;
+  announced = front;
+  front.contentWindow?.postMessage({ tag: HUB_MESSAGE_TAG, kind: 'active' }, location.origin);
+}
+
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') announceFront(true); });
+window.addEventListener('focus', () => announceFront(true));
 
 /** Brings pane `side` in front: its tab becomes the active one. */
 export function focusSide(side: Side, focusFrame = true): void {

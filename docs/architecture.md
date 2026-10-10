@@ -83,13 +83,49 @@ no longer scatter across tabs that look like web pages.
   oldest open one writes the project's saved layout (`isLayoutHub`), so a
   window holding one torn-off paper never becomes what the project reopens
   with. The extension-reload records still keep every hub.
-- **Tearing off** ("새 창으로 분리" in the tab menu, or a tab dropped outside
-  the browser window): the viewer stores its position, then
-  `VOCAB_T_PDF_TEAR_OFF` opens a new window (at the drop point, Chrome
-  placing it when those bounds are refused) whose tab is registered as a hub
-  of the project before its page claims, so it stays one instead of handing
-  the document back; the tab leaves this hub (a pinned one stays — pins are
-  the project's). A file picked from disk has no address and cannot go.
+- **Moving a tab between hubs** (`shared/tabTransfer.ts`, `ui/hub/transfer.ts`):
+  every way ends in the receiving hub's `receive`, which works out the case
+  — same project (or a project the document is already in), another
+  project, the default project — asks unless the device's settings say
+  (`rpdfDragPrefs`: ask / move / keep per case; the dialog's "don't ask
+  again" writes them), takes the document from its hub over the
+  `rpdf-tab-transfer` BroadcastChannel (`take` → that hub stores the
+  reader's position, hands a file from disk over as a `File`, and on a move
+  lets its tab go — a pinned one stays, pins being the project's → `given`),
+  opens it, then changes the projects (`VOCAB_T_PDF_PROJECT_MOVE` with no
+  URL: membership only) and shows a notice whose undo sends it back the same
+  way. Move / keep mean: same project — move the tab here / keep it in both;
+  another — move to this project / add it here too; default — take it out of
+  its projects / just open it here as a guest.
+  - **A drop on a hub page**: a tab's drag carries only our types (the
+    payload, and the source hub and project in a type of their own, readable
+    during dragover) — never the address as text, which Chrome's own tab
+    strip would navigate a hub's tab to. Another hub page shows where it goes
+    (the strip marks the place; over the page, edges open it beside what is
+    in front, the middle opens it here); over a viewer the frame posts
+    `drag` so the zones come up above it.
+  - **Sending to a window** (`VOCAB_T_PDF_TEAR_OFF`: "새 창으로 분리", "다른
+    창으로 보내기…" listing the other windows, a tab dropped outside its
+    window): a window that holds a hub of the project gets an offer (that
+    hub is brought forward and asks as for a drop); any other gets a hub tab
+    of the project beside its front tab, or a new window at the drop point,
+    registered before its page claims so it stays a hub instead of handing
+    the document back, holding just this document (a file from disk follows
+    by a hub-targeted hand-over), with a note (`rpdfArrivals`) whose notice
+    can keep it in the old hub too or send it back.
+  - **Beta** (settings, off by default): a tab dropped outside its window
+    goes to the window under the drop point instead of a new one. Chrome
+    gives windows' places but no stacking order, so of the windows there
+    the one focused last wins (`rpdfWindowFocus`, from
+    `windows.onFocusChanged`).
+- **The reading position** of a document open in several views (split
+  halves, hubs in other windows or projects) is saved only by the view
+  brought in front or used last: the hub tells the viewer in front `active`
+  (when it comes in front, loads, or the hub comes back into view), and
+  pressing, typing or wheeling in a viewer does too; it says so on the
+  `rpdf-active-view` channel and the other views stop saving until they are
+  active again. Drawings are not this: every view stores them and shows the
+  others' as they are made (the annotation channel).
 - **Split view** (`ui/hub/split.ts`): the page shows two panes; the pane in
   front holds the active tab (strip, title, keys and "move" act on it), the
   tab of the other pane is marked in the strip. Choosing a tab shows it in
@@ -99,11 +135,10 @@ no longer scatter across tabs that look like web pages.
   Alt+Shift+S (the last other document beside this one, or this one twice),
   or a tab dragged onto either half of the page; Alt+Shift+O goes to the
   other half. Out: the same button or key, or closing the tab of one half.
-  The same document in both halves is a mirror frame next to the tab's own
-  (`window.name` = `rpdf-aux`): opened where the reader is (asked like
-  before sleeping), it saves no reading position until joining the halves
-  makes it the tab's view (`primary`); drawings show in both live (the
-  annotation channel). Frames of either pane never sleep. The divider drags
+  The same document in both halves is a mirror frame next to the tab's own,
+  opened where the reader is (asked like before sleeping); joining the
+  halves makes it the tab's view when its pane is the one kept. Frames of
+  either pane never sleep. The divider drags
   (per-device ratio, ≥ 240 px a pane); the halves are kept per project in
   sessionStorage, so a reload or a project switched back to keeps them.
 - An embedded PDF gets the viewer inline, unless its frame fills the tab

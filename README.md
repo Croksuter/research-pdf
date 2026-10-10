@@ -19,7 +19,14 @@ Google Drive.
   window it was opened in and never pulls another window forward; for
   browsers where you switch spaces in one window (Arc), choose one PDF tab
   for the whole browser in settings. Any paper can move to a window of its
-  own ("Move to new window", or drag its tab out of the window).
+  own ("Move to new window", or drag its tab out of the window), or to
+  another window ("Send to another window…").
+- Drag a tab onto a PDF tab in another window to move it there — or keep it
+  in both. Onto another project's PDF tab, it asks whether to move the paper
+  to that project or add it there too (or remember your answer in
+  settings). The reading position follows the view you used last; drawings
+  change everywhere at once. Beta: drop a tab on another window's empty
+  space to move it into that window.
 - Projects: every new PDF starts in the default project; move it to a named
   one ("Move to project" / "프로젝트로 이동"), local files included. After a
   move you stay or go along (a setting); the notice can undo the move or take

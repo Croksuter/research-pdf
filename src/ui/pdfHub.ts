@@ -38,6 +38,7 @@ import { hideStyle, renderStyle, updateFavicon } from './hub/looks';
 import { hideProjects, renderProjects, updateProjectLabel } from './hub/projectsPanel';
 import { hideMove, moveTarget, renderMove, takeMoveNotice } from './hub/movePanel';
 import { claimHandedOver } from './hub/localFiles';
+import { takeArrival } from './hub/transfer';
 import { onPositionsChanged, scheduleHomeRender } from './hub/home/home';
 
 // The page's modules (src/ui/hub/):
@@ -118,4 +119,6 @@ void boot().then(async () => {
   // Local files and a note handed over by a move to this project.
   await claimHandedOver();
   await takeMoveNotice();
+  // A document sent here from another window: where it came from.
+  await takeArrival();
 });

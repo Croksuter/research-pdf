@@ -31,6 +31,7 @@ import { PDF_PROJECTS_STORAGE_KEY, parsePdfProjects } from '../shared/pdfProject
 import { isEmptyAnnotationCache, parsePdfAnnotationCache } from '../shared/pdfAnnotations';
 import { openAlexCheck, semanticScholarCheck, type ApiCheck } from '../shared/apiStatus';
 import { HUB_SCOPE_STORAGE_KEY, parseHubScope } from '../shared/hubScope';
+import { DRAG_PREFS_STORAGE_KEY, parseDragPrefs } from '../shared/tabTransfer';
 import { DISPLAY_PREFS_STORAGE_KEY, parseDisplayPrefs, type DisplayPrefs } from '../shared/displayPrefs';
 import { FIGURE_COPY_OPTIONS_CHANNEL, FIGURE_COPY_OPTIONS_SETTING_KEY, normalizeFigureCopyOptions, type FigureCopyOptions } from '../shared/figureSource';
 import { LANGUAGE_STORAGE_KEY, currentLanguage, localizeDocument, parseLanguagePref, saveLanguagePref } from '../shared/i18n';
@@ -396,6 +397,30 @@ function saveDisplay(): void {
 
 for (const control of [displayTitle, displaySubtitle, displayKinds, displayFavicon, afterMove]) control.addEventListener('change', saveDisplay);
 
+// ─── Dragging a tab to another hub (this device) ───
+
+const dropSame = byId<HTMLSelectElement>('drop-same');
+const dropOther = byId<HTMLSelectElement>('drop-other');
+const dropDefault = byId<HTMLSelectElement>('drop-default');
+const windowDrop = byId<HTMLInputElement>('window-drop');
+
+async function renderDrag(): Promise<void> {
+  const prefs = parseDragPrefs((await chrome.storage.local.get(DRAG_PREFS_STORAGE_KEY))[DRAG_PREFS_STORAGE_KEY]);
+  dropSame.value = prefs.same;
+  dropOther.value = prefs.other;
+  dropDefault.value = prefs.default;
+  windowDrop.checked = prefs.windowDrop;
+}
+
+function saveDrag(): void {
+  const prefs = parseDragPrefs({ same: dropSame.value, other: dropOther.value, default: dropDefault.value, windowDrop: windowDrop.checked });
+  void chrome.storage.local.set({ [DRAG_PREFS_STORAGE_KEY]: prefs });
+}
+
+for (const control of [dropSame, dropOther, dropDefault, windowDrop]) control.addEventListener('change', saveDrag);
+// The hub's dialog can change these ("다음부터 묻지 않기").
+chrome.storage.onChanged.addListener((changes, area) => { if (area === 'local' && changes[DRAG_PREFS_STORAGE_KEY]) void renderDrag(); });
+
 // ─── Figure capture (this device; open viewers follow at once) ───
 
 const capture = {
@@ -652,7 +677,7 @@ async function loadSettings(): Promise<void> {
   ]);
   paperInfoInput.checked = paperInfo;
   fileCacheInput.checked = fileCache;
-  await Promise.all([renderAccess(), renderDisplay(), renderHubScope(), renderCapture(), ...keyFields.map(renderKey), renderStorage()]);
+  await Promise.all([renderAccess(), renderDisplay(), renderHubScope(), renderDrag(), renderCapture(), ...keyFields.map(renderKey), renderStorage()]);
 }
 
 // The hub keeps this frame once made, so what it shows can go stale: look

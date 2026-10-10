@@ -15,7 +15,8 @@ import { frames, viewerBase } from './dom';
 import { el } from './uiKit';
 import { completePendingPins, mergeTwins, render, runPendingMove, step, updateTabLabel } from './tabStrip';
 import { openFiles } from './session';
-import { dropMirror, focusSide, noteMirrorLoaded, onScreen, sideOfWindow, split } from './split';
+import { announceFront, dropMirror, focusSide, noteMirrorLoaded, onScreen, sideOfWindow, split } from './split';
+import { armForeignDrop } from './transfer';
 
 export const SLEEP_CHECK_MS = 60_000;
 export const SLEEP_REPLY_TIMEOUT_MS = 2_000;
@@ -197,6 +198,8 @@ window.addEventListener('message', (event) => {
     if (Array.from(frames.querySelectorAll('iframe')).some((f) => f.contentWindow === event.source)) sleepWaiters.get(message.id)?.(message);
     return;
   }
+  // Another hub's tab dragged over a viewer: the drop zones come up over it.
+  if (message.kind === 'drag') { armForeignDrop(); return; }
   // Split view: pressing in a viewer brings its half in front.
   if (message.kind === 'focus') {
     const side = sideOfWindow(event.source);
@@ -208,7 +211,7 @@ window.addEventListener('message', (event) => {
     // A second view of a document (split view): only its keys and files count.
     const mirrored = tabs.find((t) => t.mirror?.contentWindow === event.source);
     if (!mirrored?.mirror) return;
-    if (message.kind === 'doc') noteMirrorLoaded(mirrored.mirror);
+    if (message.kind === 'doc') { noteMirrorLoaded(mirrored.mirror); announceFront(true); }
     else if (message.kind === 'key') step(message.action);
     else if (message.kind === 'open-files') openFiles(message.files);
     return;
@@ -228,6 +231,8 @@ window.addEventListener('message', (event) => {
     }
     updateTabLabel(tab);
     render();
+    // A viewer that just loaded in front is the one that remembers the position.
+    announceFront(true);
   } else if (message.kind === 'key') {
     step(message.action);
   } else if (message.kind === 'open-files') {

@@ -19,7 +19,8 @@ import { S } from '../pdfHub.strings';
 import { HOME, type HubTab, type NewDoc, SETTINGS, activeKey, activeTab, ask, currentProject, display, isLocal, isPage, library, libraryIdForUrl, pendingPins, pinnedDocIds, projectId, projectName, projects, registerDoc, registered, reloadProjects, sendProjectUpdate, succeeded, tabName, tabs, updateError, setActiveKey, setProjectsLocally } from './store';
 import { homeBtn, listBtn, listCount, moveBtn, settingsView, splitDrop, tabList } from './dom';
 import { type MenuEntry, copyUrl, el, hidePanels, icon, showMenu, showToast } from './uiKit';
-import { askToStore, enforceSleep, ensureFrame, loadWaiters, postToFrame, queuePrefetch, retireFrame } from './frames';
+import { enforceSleep, ensureFrame, loadWaiters, postToFrame, queuePrefetch, retireFrame } from './frames';
+import { dragPrefs, sendToWindow, showWindowMenu, startDrag } from './transfer';
 import { closeSplit, focusIfBehind, focusOtherPane, frontElement, layoutPanes, onScreen, otherSide, releaseTab, replaceInSplit, showInFront, split, splitWith, toggleSplit } from './split';
 import { closed, reopenClosed, reopenEntries, setClosed, persistState } from './session';
 import { localFileId, scheduleLocalFilePrune } from './localFiles';
@@ -346,8 +347,8 @@ export function wireDrag(tab: HubTab): void {
     root.classList.add('is-dragging');
     // The page below offers its halves (split view).
     document.body.classList.add('is-tab-dragging');
-    e.dataTransfer?.setData('text/plain', tab.url ?? tab.title);
-    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+    // Our own types only: another hub page takes it (hub/transfer.ts).
+    if (e.dataTransfer) startDrag(tab, e.dataTransfer);
   });
   root.addEventListener('dragend', (e) => {
     dragKey = null;
@@ -355,8 +356,11 @@ export function wireDrag(tab: HubTab): void {
     document.body.classList.remove('is-tab-dragging');
     splitDrop.classList.remove('is-armed');
     clearStripDropMarks();
-    // Dropped outside the browser window, on nothing: the document gets a window of its own there.
-    if (e.dataTransfer?.dropEffect === 'none' && droppedOutside(e)) void tearOff(tab, boundsAt(e));
+    // Dropped outside this window on nothing that took it: a window of its
+    // own there — or (beta) the window it was dropped on, if any.
+    if (e.dataTransfer?.dropEffect === 'none' && droppedOutside(e)) {
+      void sendToWindow(tab, dragPrefs().windowDrop ? { x: Math.round(e.screenX), y: Math.round(e.screenY) } : null, boundsAt(e));
+    }
   });
   // Pinned tabs reorder among pins (the project's pin order), the rest among the rest.
   root.addEventListener('dragover', (e) => {
@@ -575,7 +579,10 @@ export function showTabMenu(tab: HubTab, x: number, y: number): void {
     entries.push({ label: S.copyUrl, run: () => copyUrl(url) });
   }
   entries.push('sep', ...splitMenu(tab));
-  entries.push({ label: S.tearOff, run: () => { void tearOff(tab, null); }, disabled: !tab.url });
+  entries.push(
+    { label: S.tearOff, run: () => { void sendToWindow(tab, null, null); } },
+    { label: S.sendToWindow, run: () => { void showWindowMenu(tab, x, y); } },
+  );
   const others = tabs.filter((t) => t !== tab && !t.pinned);
   entries.push(
     'sep',
@@ -660,22 +667,4 @@ function droppedOutside(e: DragEvent): boolean {
 
 function boundsAt(e: DragEvent): NonNullable<PdfTearOffRequest['bounds']> {
   return { left: Math.round(e.screenX - 80), top: Math.round(e.screenY - 16), width: Math.round(window.outerWidth), height: Math.round(window.outerHeight) };
-}
-
-/**
- * Moves the document into a hub of this project in a new window (the menu,
- * or its tab dropped outside the window). Its position is stored first, so
- * it opens there where it was read. A pinned document stays here too (pins
- * belong to the project, in every hub of it).
- */
-export async function tearOff(tab: HubTab, bounds: PdfTearOffRequest['bounds']): Promise<void> {
-  if (!tab.url) { showToast(S.tearOffLocal); return; }
-  if (tab.frame) await askToStore(tab.frame);
-  const request: PdfTearOffRequest = { type: 'VOCAB_T_PDF_TEAR_OFF', project: projectId, url: tab.url, bounds };
-  const response = await ask(request as unknown as Record<string, unknown>);
-  if (!succeeded(response)) { showToast(S.tearOffFailed); return; }
-  if (!tab.pinned && tabs.includes(tab)) {
-    removeTab(tab);
-    render();
-  }
 }

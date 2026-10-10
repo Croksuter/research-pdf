@@ -11,6 +11,7 @@ import {
   parsePdfHubOpenMessage,
   parsePdfHubStateRequest,
   parsePdfTearOffRequest,
+  parsePdfWindowsRequest,
 } from '../src/shared/messages';
 import {
   HUB_MESSAGE_TAG,
@@ -103,7 +104,16 @@ describe('hub messages', () => {
   it('parses a tear-off by shape: a project, a document address, and on-screen-sized bounds or none', () => {
     const bounds = { left: -1200, top: 40, width: 900, height: 700 };
     expect(parsePdfTearOffRequest({ type: 'VOCAB_T_PDF_TEAR_OFF', project: 'p1x', url: A, bounds }))
-      .toEqual({ type: 'VOCAB_T_PDF_TEAR_OFF', project: 'p1x', url: A, bounds });
+      .toEqual({ type: 'VOCAB_T_PDF_TEAR_OFF', project: 'p1x', url: A, bounds, target: null, arrival: null });
+    // A window by id or under a point, a file from disk (no address), and what the new hub's notice sends back.
+    expect(parsePdfTearOffRequest({ type: 'VOCAB_T_PDF_TEAR_OFF', project: 'p1x', url: null, bounds: null, target: { windowId: 8 }, arrival: { key: 3, title: 'T' } }))
+      .toEqual({ type: 'VOCAB_T_PDF_TEAR_OFF', project: 'p1x', url: null, bounds: null, target: { windowId: 8 }, arrival: { key: 3, title: 'T' } });
+    expect(parsePdfTearOffRequest({ type: 'VOCAB_T_PDF_TEAR_OFF', project: 'p1x', url: A, bounds: null, target: { x: -1500, y: 20 } })?.target).toEqual({ x: -1500, y: 20 });
+    expect(parsePdfTearOffRequest({ type: 'VOCAB_T_PDF_TEAR_OFF', project: 'p1x', url: A, bounds: null, target: { x: 1.5, y: 2 } })).toBeNull();
+    expect(parsePdfTearOffRequest({ type: 'VOCAB_T_PDF_TEAR_OFF', project: 'p1x', url: A, bounds: null, target: { windowId: 'w' } })).toBeNull();
+    expect(parsePdfTearOffRequest({ type: 'VOCAB_T_PDF_TEAR_OFF', project: 'p1x', url: A, bounds: null, arrival: { key: 'k', title: 'T' } })).toBeNull();
+    expect(parsePdfWindowsRequest({ type: 'VOCAB_T_PDF_WINDOWS', project: 'p1x' })).toEqual({ type: 'VOCAB_T_PDF_WINDOWS', project: 'p1x' });
+    expect(parsePdfWindowsRequest({ type: 'VOCAB_T_PDF_WINDOWS', project: '../x' })).toBeNull();
     expect(parsePdfTearOffRequest({ type: 'VOCAB_T_PDF_TEAR_OFF', project: 'default', url: LOCAL, bounds: null })?.bounds).toBeNull();
     expect(parsePdfTearOffRequest({ type: 'VOCAB_T_PDF_TEAR_OFF', project: 'default', url: LOCAL })?.bounds).toBeNull();
     expect(parsePdfTearOffRequest({ type: 'VOCAB_T_PDF_TEAR_OFF', project: '../x', url: A, bounds: null })).toBeNull();
@@ -139,7 +149,9 @@ describe('hub messages', () => {
     expect(parseHubToViewerMessage({ tag: HUB_MESSAGE_TAG, kind: 'hash', hash: 'page=4' })).toBeNull();
     // Split view: a viewer pressed in, a second view made the tab's own.
     expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'focus' })).toEqual({ tag: HUB_MESSAGE_TAG, kind: 'focus' });
-    expect(parseHubToViewerMessage({ tag: HUB_MESSAGE_TAG, kind: 'primary' })).toEqual({ tag: HUB_MESSAGE_TAG, kind: 'primary' });
+    expect(parseHubToViewerMessage({ tag: HUB_MESSAGE_TAG, kind: 'active' })).toEqual({ tag: HUB_MESSAGE_TAG, kind: 'active' });
+    expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'drag' })).toEqual({ tag: HUB_MESSAGE_TAG, kind: 'drag' });
+    expect(parseHubToViewerMessage({ tag: HUB_MESSAGE_TAG, kind: 'primary' })).toBeNull();
     expect(parseViewerToHubMessage({ tag: HUB_MESSAGE_TAG, kind: 'key', action: 'split' })?.kind).toBe('key');
   });
 
@@ -183,6 +195,7 @@ function createFakeChrome() {
   const local: Record<string, unknown> = {};
   const focusedWindows: number[] = [];
   const createdWindows: Array<{ url: string; left?: number }> = [];
+  const windowBoxes = new Map<number, { left: number; top: number; width: number; height: number }>();
   let nextId = 100;
   let nextWindow = 50;
   // Hub pages that answer the background's hand-over broadcast.
@@ -213,6 +226,11 @@ function createFakeChrome() {
     },
     storage: { session: area(session), local: area(local) },
     windows: {
+      WINDOW_ID_NONE: -1,
+      onFocusChanged: listener(),
+      getAll: vi.fn(async () => [...windowBoxes.entries()].map(([id, box]) => ({
+        id, ...box, state: 'normal', tabs: [...tabs.values()].filter((t) => t.windowId === id).map((t) => ({ ...t })),
+      }))),
       update: vi.fn(async (windowId: number) => { focusedWindows.push(windowId); return {}; }),
       create: vi.fn(async (props: { url: string; left?: number }) => {
         if (props.left !== undefined && props.left < -5000) throw new Error('Invalid value for bounds.');
@@ -234,6 +252,7 @@ function createFakeChrome() {
         tabs.set(tab.id, tab);
         return { ...tab };
       }),
+      query: vi.fn(async (q: { windowId?: number }) => [...tabs.values()].filter((t) => q.windowId === undefined || t.windowId === q.windowId).map((t) => ({ ...t }))),
       update: vi.fn(async (id: number, props: { active?: boolean }) => {
         const tab = tabs.get(id);
         if (!tab) throw new Error(`No tab with id: ${id}.`);
@@ -250,6 +269,7 @@ function createFakeChrome() {
     session,
     focusedWindows,
     createdWindows,
+    windowBoxes,
     hubInboxes,
     asleep,
     /** The frozen hub wakes and takes what was sent to it meanwhile. */
@@ -651,7 +671,7 @@ describe('hub claims', () => {
     fake.addTab({ id: 1, windowId: 7, index: 0, active: true });
     expect(await claim([doc(A), doc(B)], false, 1, 'p1x')).toMatchObject({ role: 'hub', project: 'p1x' });
     fake.hubInboxes.set(1, []);
-    expect(await hub.tearOffPdfDoc({ project: 'p1x', url: B, bounds: { left: 40, top: 30, width: 900, height: 700 } })).toEqual({ success: true });
+    expect(await hub.tearOffPdfDoc({ project: 'p1x', url: B, bounds: { left: 40, top: 30, width: 900, height: 700 } })).toMatchObject({ success: true, created: true });
     expect(fake.createdWindows).toHaveLength(1);
     expect(fake.createdWindows[0]).toMatchObject({ left: 40, top: 30, width: 900, height: 700 });
     const created = [...fake.tabs.values()].find((t) => t.id !== 1)!;
@@ -666,9 +686,63 @@ describe('hub claims', () => {
     fake.tabs.delete(1);
     expect(await hub.isLayoutHub('p1x', created.id)).toBe(true);
     // Bounds Chrome refuses: the window opens wherever Chrome puts it.
-    expect(await hub.tearOffPdfDoc({ project: 'gone', url: A, bounds: { left: -9000, top: 0, width: 900, height: 700 } })).toEqual({ success: true });
+    expect(await hub.tearOffPdfDoc({ project: 'gone', url: A, bounds: { left: -9000, top: 0, width: 900, height: 700 } })).toMatchObject({ success: true, created: true });
     expect(fake.createdWindows[fake.createdWindows.length - 1]).not.toHaveProperty('left');
     expect(hubParts(fake.createdWindows[fake.createdWindows.length - 1].url).project).toBe('default');
+  });
+
+  it('sends a document to another window: into its hub of the project, or a new hub tab beside its front tab, noting where it came from', async () => {
+    storeProject('p1x', A);
+    fake.windowBoxes.set(7, { left: 0, top: 0, width: 1000, height: 800 });
+    fake.windowBoxes.set(8, { left: 1000, top: 0, width: 1000, height: 800 });
+    fake.windowBoxes.set(9, { left: 500, top: 100, width: 1000, height: 800 });
+    fake.addTab({ id: 1, windowId: 7, index: 0, active: true });
+    expect(await claim([doc(A), doc(B)], false, 1, 'p1x')).toMatchObject({ role: 'hub', project: 'p1x' });
+    fake.addTab({ id: 20, windowId: 8, index: 0, active: false });
+    fake.addTab({ id: 21, windowId: 8, index: 1, active: true });
+    fake.addTab({ id: 22, windowId: 8, index: 2, active: false });
+
+    // Window 8 has no hub of p1x: one is made beside its front tab, holding just this document.
+    const sent = await hub.tearOffPdfDoc({ project: 'p1x', url: B, bounds: null, target: { windowId: 8 }, arrival: { key: 3, title: 'B paper' } }, fake.sender(1));
+    expect(sent).toMatchObject({ success: true, created: true });
+    const made = fake.tabs.get((sent as { hubTabId: number }).hubTabId)!;
+    expect(made).toMatchObject({ windowId: 8, index: 2, active: true });
+    expect(hubParts(made.url)).toEqual({ docs: [doc(B)], active: 0, show: null, project: 'p1x' });
+    expect(fake.focusedWindows).toContain(8);
+    expect((fake.session.rpdfArrivals as Record<string, unknown>)[String(made.id)]).toMatchObject({ from: 1, key: 3, title: 'B paper' });
+    expect(await claim([doc(B)], false, made.id, 'p1x')).toEqual({ success: true, role: 'hub', project: 'p1x', docs: [] });
+    // Sent there again: that hub gets it (and asks), nothing new is made.
+    expect(await hub.tearOffPdfDoc({ project: 'p1x', url: A, bounds: null, target: { windowId: 8 } }, fake.sender(1)))
+      .toEqual({ success: true, hubTabId: made.id, created: false });
+
+    // A point over windows 8 and 9: the one focused last.
+    fake.session.rpdfWindowFocus = [9, 8];
+    const onNine = await hub.tearOffPdfDoc({ project: 'p1x', url: A, bounds: null, target: { x: 1200, y: 400 } }, fake.sender(1));
+    expect(fake.tabs.get((onNine as { hubTabId: number }).hubTabId)?.windowId).toBe(9);
+    fake.session.rpdfWindowFocus = [8, 9];
+    expect(await hub.tearOffPdfDoc({ project: 'p1x', url: A, bounds: null, target: { x: 1200, y: 400 } }, fake.sender(1)))
+      .toEqual({ success: true, hubTabId: made.id, created: false });
+    // Over the sender's own window only, or over nothing: a new window.
+    const windowsBefore = fake.createdWindows.length;
+    expect(await hub.tearOffPdfDoc({ project: 'p1x', url: A, bounds: null, target: { x: 100, y: 100 } }, fake.sender(1))).toMatchObject({ created: true });
+    expect(await hub.tearOffPdfDoc({ project: 'p1x', url: A, bounds: null, target: { x: 5000, y: 5000 } }, fake.sender(1))).toMatchObject({ created: true });
+    expect(fake.createdWindows.length).toBe(windowsBefore + 2);
+    // A file from disk: an empty hub of the project, which the file is handed to.
+    const local = await hub.tearOffPdfDoc({ project: 'p1x', url: null, bounds: null, target: null }, fake.sender(1));
+    expect(hubParts(fake.tabs.get((local as { hubTabId: number }).hubTabId)!.url)).toMatchObject({ docs: [], project: 'p1x' });
+  });
+
+  it('lists the other windows for "send to another window", numbered among all, with whether a hub of the project is there', async () => {
+    storeProject('p1x', A);
+    for (const id of [7, 8, 9]) fake.windowBoxes.set(id, { left: 0, top: 0, width: 800, height: 600 });
+    fake.addTab({ id: 1, windowId: 7, index: 0, active: true });
+    fake.addTab({ id: 2, windowId: 9, index: 0, active: true });
+    fake.addTab({ id: 3, windowId: 9, index: 1, active: false });
+    expect(await claim([], false, 2, 'p1x')).toMatchObject({ role: 'hub' });
+    expect(await hub.listPdfWindows('p1x', fake.sender(1))).toEqual({
+      success: true,
+      windows: [{ windowId: 8, number: 2, tabs: 0, hasHub: false }, { windowId: 9, number: 3, tabs: 2, hasHub: true }],
+    });
   });
 
   it('reads a registry from the build with one hub per project', async () => {
