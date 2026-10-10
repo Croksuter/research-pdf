@@ -98,6 +98,7 @@ const menuFitLabel = byId<HTMLSpanElement>('vt-menu-fit-label');
 const menuStandIns = Array.from(document.querySelectorAll<HTMLButtonElement>('#vt-menu [data-menu-for]'));
 const openNativeBtn = byId<HTMLButtonElement>('vt-open-native');
 const captureBtn = byId<HTMLButtonElement>('vt-capture');
+const latexBtn = byId<HTMLButtonElement>('vt-latex');
 const openFileInput = byId<HTMLInputElement>('vt-open-file-input');
 const messageBox = byId<HTMLDivElement>('vocab-t-pdf-message');
 const messageText = byId<HTMLParagraphElement>('vt-message-text');
@@ -185,13 +186,16 @@ const figureCapture = new FigureCapture({
   eventBus,
   getDoc: () => currentDoc,
   getSource: () => ({ meta: paperStrip.paperMeta, docTitle: paperTitle ?? docTitle }),
-  onActiveChange: (active) => {
-    captureBtn.classList.toggle('is-active', active);
-    captureBtn.setAttribute('aria-pressed', String(active));
+  onActiveChange: (active, mode) => {
+    for (const [button, on] of [[captureBtn, active && mode === 'figure'], [latexBtn, active && mode === 'latex']] as const) {
+      button.classList.toggle('is-active', on);
+      button.setAttribute('aria-pressed', String(on));
+    }
   },
 });
 captureBtn.title = S.captureTitle(/Mac/u.test(navigator.platform) ? '⌘⇧X' : 'Ctrl+Shift+X');
 captureBtn.addEventListener('click', () => figureCapture.toggle());
+latexBtn.addEventListener('click', () => figureCapture.toggle('latex'));
 // Drawings persist per document identity and come back on reopen; when the
 // file itself also carries annotations the user resolves it in a dialog.
 // Its previews scroll the document; that is not the reader moving, so no
@@ -729,6 +733,12 @@ document.addEventListener('keydown', (e) => {
     && ((!mod && !e.shiftKey && e.code === 'KeyS') || (mod && e.shiftKey && e.code === 'KeyX'))) {
     e.preventDefault();
     figureCapture.toggle();
+    return;
+  }
+  // Formula → LaTeX: L.
+  if (!typing && !e.altKey && !mod && !e.shiftKey && !presentation.active && e.code === 'KeyL') {
+    e.preventDefault();
+    figureCapture.toggle('latex');
     return;
   }
   if (mod && !e.altKey) {

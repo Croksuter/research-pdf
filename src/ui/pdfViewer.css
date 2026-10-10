@@ -642,7 +642,7 @@ body.vt-presenting .vt-sidebar { display: none; }
    and Ctrl± remain), download and print follow. */
 @media (max-width: 720px) {
   .vt-toolbar { gap: 6px; padding: 0 6px; }
-  #vt-fit-toggle, #vt-rotate, #vt-undo, #vt-redo, #vt-capture, .vt-sep-compact { display: none; }
+  #vt-fit-toggle, #vt-rotate, #vt-undo, #vt-redo, #vt-capture, #vt-latex, .vt-sep-compact { display: none; }
   .vt-menu-item.vt-menu-compact { display: flex; }
   hr.vt-menu-compact { display: block; }
 }
@@ -834,7 +834,7 @@ body.vt-capture-dragging #viewerContainer .vt-figure-box { visibility: hidden; }
   overflow: hidden;
   animation: vt-toast-in 160ms ease-out;
 }
-.vt-capture-toast[data-variant="card"] { right: 16px; bottom: 16px; width: min(384px, calc(100vw - 32px)); }
+.vt-capture-toast[data-variant="card"] { right: 16px; bottom: 16px; width: min(424px, calc(100vw - 32px)); }
 .vt-capture-toast[data-variant="bar"] { left: 50%; translate: -50% 0; bottom: 20px; max-width: calc(100vw - 32px); align-items: center; padding: 8px; }
 .vt-capture-toast-thumb {
   flex: none;
@@ -854,8 +854,8 @@ body.vt-capture-dragging #viewerContainer .vt-figure-box { visibility: hidden; }
 .vt-capture-toast-title[data-kind="busy"] { color: var(--vt-toolbar-muted); font-weight: 400; }
 .vt-capture-toast-title[data-kind="error"] { color: #f28b82; }
 .vt-capture-toast-source { font-size: 12px; line-height: 16px; color: var(--vt-toolbar-muted); }
-.vt-capture-toast-actions { display: flex; gap: 6px; margin-top: 6px; }
-.vt-capture-toast-actions .vt-btn { height: 28px; padding: 0 10px; font-size: 12px; background: rgba(255, 255, 255, 0.08); }
+.vt-capture-toast-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.vt-capture-toast-actions .vt-btn { height: 28px; padding: 0 10px; font-size: 12px; white-space: nowrap; background: rgba(255, 255, 255, 0.08); }
 .vt-capture-toast-actions .vt-btn:hover { background: var(--vt-hover); }
 .vt-capture-toast .vt-capture-close { position: absolute; top: 6px; right: 6px; }
 /* The bar: one row, no source line. */
@@ -892,3 +892,28 @@ body.vt-capture-dragging #viewerContainer .vt-figure-box { visibility: hidden; }
 @media (max-width: 480px) {
   .vt-capture-toast[data-variant="bar"] .vt-capture-toast-body { flex-wrap: wrap; }
 }
+
+/* ── LaTeX mode: formula outlines in green, and the card with what was read ── */
+.vt-formula-box { border-color: rgba(129, 201, 149, 0.9); background: rgba(129, 201, 149, 0.06); }
+.vt-formula-box:hover,
+.vt-formula-box:focus-visible { border-color: #81c995; background: rgba(129, 201, 149, 0.16); }
+.vt-formula-box .vt-figure-chip { background: #81c995; }
+.vt-latex-card { right: 16px; bottom: 16px; width: min(460px, calc(100vw - 32px)); }
+.vt-latex-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.vt-latex-card .vt-capture-toast-thumb { width: 120px; height: 44px; }
+.vt-latex-card .vt-capture-toast-title { flex: 1; min-width: 0; white-space: normal; }
+.vt-latex-text {
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--vt-toolbar-border);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--vt-toolbar-fg);
+  font: 12px/1.45 ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  resize: vertical;
+}
+.vt-latex-text:disabled { opacity: 0.6; }
+.vt-latex-text:focus-visible { outline: 2px solid var(--vt-accent); outline-offset: 0; }
+.vt-latex-card[hidden] { display: none; }

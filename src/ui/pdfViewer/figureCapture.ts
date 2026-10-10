@@ -25,6 +25,12 @@
 // alone; "none" nothing until a button asks. "embed" draws the source under
 // the image. The item's blobs are promises so the write starts inside the
 // gesture while the rendering and the caption search finish.
+//
+// LaTeX mode (`L`, the ∑ toolbar button) is the same tool for formulas: the
+// formulas the layout model finds are outlined, a click or a drag reads the
+// area with a formula-recognition model (pdfViewer/formulaOcr.ts) and copies
+// the LaTeX; a card shows it to correct and copy again, bare or as $…$ /
+// $$…$$. Any captured area can be read so from its notice or panel too.
 
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import { AnnotationMode, OPS, Util } from 'pdfjs-dist';
@@ -50,11 +56,23 @@ import type { PaperMeta } from '../../shared/paperIdentifiers';
 import { detectFigures, graphicBoxes, type DetectedFigure, type OpsLike } from '../../shared/figureDetect';
 import { combineLayout } from '../../shared/layoutDetect';
 import { LayoutSkipped, detectLayout } from './layoutModel';
+import { NotAFormula, recognizeFormula, type FormulaProgress, type FormulaReading } from './formulaOcr';
 import { debugLog } from '../../shared/debugLog';
 import { el } from './dom';
 import { S } from './viewerParts.strings';
 
 const MIN_DRAG_PX = 6;
+// Formulas below this layout-model score are not outlined; a margin in PDF
+// points keeps sub- and superscripts the box cuts close.
+const FORMULA_SCORE = 0.4;
+const FORMULA_PAD = 2;
+// A formula is read from the area rendered at this resolution (the model
+// squeezes it to 384×384; 1–4× of the page all read alike).
+const LATEX_DPI = 144;
+
+/** What capture mode copies: figures and tables as images, or formulas as LaTeX. */
+export type CaptureMode = 'figure' | 'latex';
+type PdfBox = [number, number, number, number];
 // A 600 dpi full page is ~35 Mpx; beyond this the DPI is lowered to fit.
 const MAX_PIXELS = 40_000_000;
 const CSS_DPI = 96;
@@ -84,12 +102,15 @@ export interface FigureCaptureDeps {
   eventBus: EventBus;
   getDoc: () => PDFDocumentProxy | null;
   getSource: () => { meta: PaperMeta | null; docTitle: string };
-  onActiveChange: (active: boolean) => void;
+  onActiveChange: (active: boolean, mode: CaptureMode) => void;
 }
 
 export class FigureCapture {
   private options: FigureCopyOptions = DEFAULT_FIGURE_COPY_OPTIONS;
   private active = false;
+  private mode: CaptureMode = 'figure';
+  /** Formulas per page of `linesDoc`, in PDF points (LaTeX mode). */
+  private formulas = new Map<number, Promise<PdfBox[] | null>>();
   /** Pages whose figures are being looked for right now. */
   private detecting = 0;
   /** Ends the press or drag in progress, if one is. */
@@ -115,6 +136,12 @@ export class FigureCapture {
   private readonly toastSource = el('p', { className: 'vt-capture-toast-source' });
   private toastTimer: HTMLElement | null = null;
   private readonly sourceInput = el('textarea', { className: 'vt-capture-source', rows: '2', spellcheck: 'false', 'aria-label': S.captureSource });
+  // The LaTeX card: what was read, to correct and copy again.
+  private readonly latexCard = el('div', { className: 'vt-capture-toast vt-latex-card', role: 'group', 'aria-label': S.latexResult, hidden: true });
+  private readonly latexThumb = el('div', { className: 'vt-capture-toast-thumb' });
+  private readonly latexTitle = el('p', { className: 'vt-capture-toast-title', role: 'status' });
+  private readonly latexInput = el('textarea', { className: 'vt-latex-text', rows: '3', spellcheck: 'false', 'aria-label': S.latexText });
+  private readonly latexButtons: HTMLButtonElement[] = [];
   private readonly optionsBox = el('div', { className: 'vt-capture-options', hidden: true });
   private readonly optionsBtn = el('button', { type: 'button', className: 'vt-btn vt-btn-text', 'aria-expanded': 'false' }, [S.captureOptions]);
   private readonly controls = {
@@ -130,7 +157,8 @@ export class FigureCapture {
   constructor(private readonly deps: FigureCaptureDeps) {
     this.buildPanel();
     this.buildToast();
-    document.body.append(this.hint, this.panel, this.toast);
+    this.buildLatexCard();
+    document.body.append(this.hint, this.panel, this.toast, this.latexCard);
     void getSetting<unknown>(FIGURE_COPY_OPTIONS_SETTING_KEY, null)
       .then((raw) => this.applyOptions(normalizeFigureCopyOptions(raw)))
       .catch(() => { /* defaults */ });
@@ -156,24 +184,26 @@ export class FigureCapture {
       if (doc && this.wantsOutline(doc, evt.pageNumber)) this.outlineSoon(evt.pageNumber);
     });
     deps.eventBus.on('updateviewarea', () => this.outlineRenderedPages());
-    deps.eventBus.on('pagesdestroy', () => { this.setActive(false); this.detected.clear(); });
+    deps.eventBus.on('pagesdestroy', () => { this.setActive(false); this.detected.clear(); this.formulas.clear(); });
   }
 
-  /** The capture key: capture mode on or off. */
-  toggle(): void {
-    this.setActive(!this.active);
+  /** The capture key (`mode` 'figure') or the LaTeX key: that mode on, or off when it is on. */
+  toggle(mode: CaptureMode = 'figure'): void {
+    this.setActive(!(this.active && this.mode === mode), mode);
   }
 
-  setActive(active: boolean): void {
+  setActive(active: boolean, mode: CaptureMode = this.mode): void {
     if (active && !this.deps.getDoc()) return;
     this.cancelDrag?.();
     this.active = active;
+    this.mode = mode;
     if (active) this.close();
     document.body.classList.toggle('vt-capturing', active);
+    document.body.classList.toggle('vt-capturing-latex', active && mode === 'latex');
     this.clearOutlines();
     if (active) this.outlineRenderedPages();
     this.updateHint();
-    this.deps.onActiveChange(active);
+    this.deps.onActiveChange(active, mode);
   }
 
   /** Esc: ends a drag, else closes the panel, else leaves capture mode, else closes the notice. True when it did something. */
@@ -181,7 +211,7 @@ export class FigureCapture {
     if (this.cancelDrag) { this.cancelDrag(); return true; }
     if (this.region && !this.panel.hidden) { this.close(); return true; }
     if (this.active) { this.setActive(false); return true; }
-    if (!this.toast.hidden) { this.close(); return true; }
+    if (!this.toast.hidden || !this.latexCard.hidden) { this.close(); return true; }
     return false;
   }
 
@@ -189,8 +219,12 @@ export class FigureCapture {
   private updateHint(): void {
     this.hint.hidden = !this.active;
     if (!this.active) { this.hint.textContent = ''; return; }
-    if (!this.options.autoDetect) { this.hint.textContent = S.captureHintDrag; return; }
     const found = this.deps.container.querySelectorAll('.vt-figure-box').length;
+    if (this.mode === 'latex') {
+      this.hint.textContent = this.detecting > 0 ? S.latexHintFinding : found > 0 ? S.latexHintFound(found) : S.latexHintNone;
+      return;
+    }
+    if (!this.options.autoDetect) { this.hint.textContent = S.captureHintDrag; return; }
     this.hint.textContent = this.detecting > 0 ? S.captureHintFinding : found > 0 ? S.captureHintFound(found) : S.captureHintNone;
   }
 
@@ -210,7 +244,7 @@ export class FigureCapture {
   /** Outlines the rendered pages on screen that have none yet. */
   private outlineRenderedPages(): void {
     const doc = this.deps.getDoc();
-    if (!this.active || !this.options.autoDetect || !doc) return;
+    if (!this.active || !this.detects() || !doc) return;
     for (let i = 0; i < doc.numPages; i += 1) {
       if (this.outlined.has(i + 1) || !this.wantsOutline(doc, i + 1)) continue;
       const view = this.deps.pdfViewer.getPageView(i) as unknown as PageViewLike | undefined;
@@ -269,32 +303,70 @@ export class FigureCapture {
     return found;
   }
 
+  /** Formulas are always looked for; figures and tables when auto-detect is on. */
+  private detects(): boolean {
+    return this.mode === 'latex' || this.options.autoDetect;
+  }
+
+  /** The formulas of a page (cached per document); null when the run was skipped. */
+  private detectFormulas(pageNumber: number): Promise<PdfBox[] | null> {
+    const doc = this.deps.getDoc();
+    if (!doc) return Promise.resolve([]);
+    if (this.linesDoc !== doc) { this.linesDoc = doc; this.lines.clear(); this.detected.clear(); this.formulas.clear(); }
+    let found = this.formulas.get(pageNumber);
+    if (!found) {
+      found = (async () => {
+        const page = await doc.getPage(pageNumber);
+        const vp = page.getViewport({ scale: 1 });
+        const dets = await detectLayout(page, () => this.wantsOutline(doc, pageNumber));
+        return (dets ?? [])
+          .filter((d) => d.cls === 'formula' && d.score >= FORMULA_SCORE)
+          .map((d) => {
+            const [ax, ay] = vp.convertToPdfPoint(d.box.left - FORMULA_PAD, d.box.top - FORMULA_PAD);
+            const [bx, by] = vp.convertToPdfPoint(d.box.right + FORMULA_PAD, d.box.bottom + FORMULA_PAD);
+            return [Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by)] as PdfBox;
+          });
+      })().catch((error: unknown) => {
+        if (error instanceof LayoutSkipped) { if (this.formulas.get(pageNumber) === found) this.formulas.delete(pageNumber); return null; }
+        return [];
+      });
+      this.formulas.set(pageNumber, found);
+    }
+    return found;
+  }
+
   /** Capture mode outlines this document and the page is on screen. */
   private wantsOutline(doc: PDFDocumentProxy, pageNumber: number): boolean {
-    if (!this.active || !this.options.autoDetect || this.deps.getDoc() !== doc) return false;
+    if (!this.active || !this.detects() || this.deps.getDoc() !== doc) return false;
     const visible = (this.deps.pdfViewer as unknown as { _getVisiblePages?: () => { ids?: Set<number> } })._getVisiblePages?.().ids;
     return !visible || visible.has(pageNumber);
   }
 
   private async outlinePage(pageNumber: number): Promise<void> {
     this.outlined.add(pageNumber);
-    const figures = await this.detect(pageNumber);
-    debugLog('viewer', 'outline page', () => ({ pageNumber, figures: figures?.length ?? 'skipped', active: this.active }));
-    if (!figures) { this.outlined.delete(pageNumber); return; }
-    if (!this.active || !this.options.autoDetect) return;
+    const mode = this.mode;
+    const found = mode === 'latex'
+      ? (await this.detectFormulas(pageNumber))?.map((pdf) => ({ pdf, name: S.latexFormula }))
+      : (await this.detect(pageNumber))?.map((f) => ({
+        pdf: f.pdf,
+        name: f.label ? (f.label.kind === 'figure' ? S.captureFigureN(f.label.number) : S.captureTableN(f.label.number)) : S.captureFigure,
+      }));
+    debugLog('viewer', 'outline page', () => ({ pageNumber, mode, found: found?.length ?? 'skipped', active: this.active }));
+    if (!found) { this.outlined.delete(pageNumber); return; }
+    if (!this.active || !this.detects() || this.mode !== mode) return;
     const view = this.deps.pdfViewer.getPageView(pageNumber - 1) as unknown as PageViewLike | undefined;
     if (!view) return;
     view.div.querySelectorAll('.vt-figure-box').forEach((node) => node.remove());
     const { width, height } = view.viewport;
-    for (const figure of figures) {
+    for (const figure of found) {
       const [x0, y0] = view.viewport.convertToViewportPoint(figure.pdf[0], figure.pdf[1]);
       const [x1, y1] = view.viewport.convertToViewportPoint(figure.pdf[2], figure.pdf[3]);
-      const figureName = figure.label ? (figure.label.kind === 'figure' ? S.captureFigureN(figure.label.number) : S.captureTableN(figure.label.number)) : S.captureFigure;
+      const figureName = figure.name;
       const box = el('button', {
         type: 'button',
-        className: 'vt-figure-box',
-        title: S.captureClick,
-        'aria-label': S.captureCopyAria(figureName),
+        className: mode === 'latex' ? 'vt-figure-box vt-formula-box' : 'vt-figure-box',
+        title: mode === 'latex' ? S.latexClick : S.captureClick,
+        'aria-label': mode === 'latex' ? S.latexCopyAria : S.captureCopyAria(figureName),
       }, [el('span', { className: 'vt-figure-chip', textContent: figureName })]);
       // In percent of the page, so a zoom keeps them in place until the re-render redraws them.
       Object.assign(box.style, {
@@ -321,8 +393,9 @@ export class FigureCapture {
     const rectEl = el('div', { className: 'vt-capture-rect' });
     Object.assign(rectEl.style, { left: box.style.left, top: box.style.top, width: box.style.width, height: box.style.height });
     view.div.append(rectEl);
+    const mode = this.mode;
     this.afterCapture();
-    this.open({ pageNumber, pdf, rotation: view.viewport.rotation, rectEl });
+    this.open({ pageNumber, pdf, rotation: view.viewport.rotation, rectEl }, mode);
   }
 
   /** Capture mode ends with a capture, unless it is continuous. */
@@ -346,12 +419,15 @@ export class FigureCapture {
     this.region = null;
     this.panel.hidden = true;
     this.toast.hidden = true;
+    this.latexCard.hidden = true;
   }
 
   // ─── Drawing the region ───
 
   private onPointerDown(e: PointerEvent): void {
     if (e.button !== 0 || !(this.active || e.altKey)) return;
+    // Alt+drag outside capture mode copies a figure.
+    const mode: CaptureMode = this.active ? this.mode : 'figure';
     const target = e.target as HTMLElement | null;
     // A press on an outline copies that figure, unless it turns into a drag.
     const outline = this.active ? target?.closest<HTMLElement>('.vt-figure-box') ?? null : null;
@@ -417,7 +493,7 @@ export class FigureCapture {
         pdf: [Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by)],
         rotation: view.viewport.rotation,
         rectEl,
-      });
+      }, mode);
     };
     // Esc mid-drag: no capture, the outlines come back.
     this.cancelDrag = () => { stop(); rectEl.remove(); };
@@ -428,7 +504,8 @@ export class FigureCapture {
 
   // ─── Panel and notice ───
 
-  private open(region: Region): void {
+  private open(region: Region, mode: CaptureMode = 'figure'): void {
+    if (mode === 'latex') { this.openLatex(region); return; }
     this.region = region;
     this.label = null;
     this.sourceEdited = false;
@@ -493,6 +570,7 @@ export class FigureCapture {
           button(S.captureCopyImage, () => this.copyImage(Promise.resolve(), this.options.copy === 'image-source')),
           button(S.captureCopySource, () => this.copySource(Promise.resolve())),
           button(S.captureSavePng, () => { void this.savePng(); }),
+          button(S.captureAsLatex, () => { if (this.region) this.openLatex(this.region); }),
         ]),
       ]),
       closeBtn,
@@ -512,18 +590,18 @@ export class FigureCapture {
     this.toastTimer.addEventListener('animationend', () => { if (gen === this.generation) this.close(); });
     this.toast.append(this.toastTimer);
     this.toast.hidden = false;
-    void this.thumbnail(region, gen).catch((error: unknown) => debugLog('viewer', 'capture thumbnail failed', () => ({ error: String(error) })));
+    void this.thumbnailInto(this.toastThumb, region, gen).catch((error: unknown) => debugLog('viewer', 'capture thumbnail failed', () => ({ error: String(error) })));
   }
 
   /** The area again, small: about 176 px on its long side (the card shows it at half that). */
-  private async thumbnail(region: Region, gen: number): Promise<void> {
+  private async thumbnailInto(into: HTMLElement, region: Region, gen: number): Promise<void> {
     const doc = this.deps.getDoc();
     if (!doc) return;
     const page = await doc.getPage(region.pageNumber);
     const longest = Math.max(region.pdf[2] - region.pdf[0], region.pdf[3] - region.pdf[1], 1);
     const dpi = Math.min(150, Math.max(12, Math.round((176 * 72) / longest)));
     const canvas = await renderRegion(doc, page, region, { ...this.options, dpi });
-    if (gen === this.generation) this.toastThumb.replaceChildren(canvas);
+    if (gen === this.generation) into.replaceChildren(canvas);
   }
 
   private buildPanel(): void {
@@ -536,6 +614,8 @@ export class FigureCapture {
     copySourceBtn.addEventListener('click', () => this.copySource(Promise.resolve()));
     const saveBtn = el('button', { type: 'button', className: 'vt-btn vt-btn-text' }, [S.captureSavePng]);
     saveBtn.addEventListener('click', () => { void this.savePng(); });
+    const latexBtn = el('button', { type: 'button', className: 'vt-btn vt-btn-text' }, [S.captureAsLatex]);
+    latexBtn.addEventListener('click', () => { if (this.region) this.openLatex(this.region); });
     this.optionsBtn.addEventListener('click', () => {
       this.optionsBox.hidden = !this.optionsBox.hidden;
       this.optionsBtn.setAttribute('aria-expanded', String(!this.optionsBox.hidden));
@@ -564,7 +644,7 @@ export class FigureCapture {
     this.panel.append(
       el('div', { className: 'vt-capture-head' }, [this.status, closeBtn]),
       this.sourceInput,
-      el('div', { className: 'vt-capture-actions' }, [copyImageBtn, copySourceBtn, saveBtn, this.optionsBtn]),
+      el('div', { className: 'vt-capture-actions' }, [copyImageBtn, copySourceBtn, saveBtn, latexBtn, this.optionsBtn]),
       this.optionsBox,
     );
     this.panel.addEventListener('keydown', (e) => {
@@ -629,6 +709,104 @@ export class FigureCapture {
       node.textContent = text;
       node.dataset.kind = kind;
     }
+  }
+
+  // ─── LaTeX ───
+
+  private buildLatexCard(): void {
+    const closeBtn = el('button', { type: 'button', className: 'vt-btn vt-icon-btn vt-capture-close', title: S.captureClose, 'aria-label': S.captureCloseAria });
+    closeBtn.innerHTML = '<svg><use href="#i-close"/></svg>';
+    closeBtn.addEventListener('click', () => this.close());
+    const button = (label: string, title: string, wrap: (latex: string) => string) => {
+      const b = el('button', { type: 'button', className: 'vt-btn vt-btn-text', title, disabled: true }, [label]);
+      b.addEventListener('click', () => {
+        const latex = this.latexInput.value.trim();
+        if (latex) this.writeLatex(Promise.resolve(wrap(latex)), this.generation, () => S.latexCopiedAs(label));
+      });
+      this.latexButtons.push(b);
+      return b;
+    };
+    this.latexInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); this.close(); }
+    });
+    this.latexCard.append(
+      el('div', { className: 'vt-capture-toast-body' }, [
+        el('div', { className: 'vt-latex-head' }, [this.latexThumb, this.latexTitle]),
+        this.latexInput,
+        el('div', { className: 'vt-capture-toast-actions' }, [
+          button(S.latexCopy, S.latexCopyTitle, (t) => t),
+          button('$…$', S.latexInlineTitle, (t) => `$${t}$`),
+          button('$$…$$', S.latexDisplayTitle, (t) => `$$\n${t}\n$$`),
+        ]),
+      ]),
+      closeBtn,
+    );
+  }
+
+  /**
+   * Reads the area as LaTeX and copies it: the clipboard write starts now,
+   * inside the press, with the text to come (the first time, the model is
+   * downloaded first).
+   */
+  private openLatex(region: Region): void {
+    this.close();
+    this.region = region;
+    const gen = this.generation;
+    region.rectEl.remove();
+    this.latexThumb.replaceChildren();
+    this.latexInput.value = '';
+    this.latexInput.disabled = true;
+    for (const b of this.latexButtons) b.disabled = true;
+    this.setLatexStatus(S.latexReading, 'busy');
+    this.latexCard.hidden = false;
+    void this.thumbnailInto(this.latexThumb, region, gen).catch(() => { /* the text is what matters */ });
+    const reading = this.readLatex(region, gen);
+    let sure = true;
+    void reading.then((read) => {
+      sure = read.sure;
+      if (gen !== this.generation) return;
+      this.latexInput.value = read.latex;
+      this.latexInput.disabled = false;
+      for (const b of this.latexButtons) b.disabled = false;
+    }, (error: unknown) => {
+      if (gen !== this.generation) return;
+      this.latexInput.disabled = false;
+      this.setLatexStatus(error instanceof NotAFormula ? S.latexNotFormula : S.latexFailed(error instanceof Error ? error.message : String(error)), 'error');
+    });
+    this.writeLatex(reading.then((read) => read.latex), gen, () => (sure ? S.latexCopied : S.latexCopiedUnsure));
+  }
+
+  private async readLatex(region: Region, gen: number): Promise<FormulaReading> {
+    const doc = this.deps.getDoc();
+    if (!doc) throw new Error(S.captureNoPdf);
+    const page = await doc.getPage(region.pageNumber);
+    // Drawings left out, on white: the model reads print.
+    const canvas = await renderRegion(doc, page, region, { ...this.options, dpi: LATEX_DPI, annotations: false, background: 'white' });
+    return recognizeFormula(canvas, (progress: FormulaProgress) => {
+      if (gen === this.generation) this.setLatexStatus(progress.phase === 'load' ? S.latexLoading : S.latexReading, 'busy');
+    });
+  }
+
+  /** Writes `text` (when it comes) to the clipboard and says so on the card (`done`, asked then). */
+  private writeLatex(text: Promise<string>, gen: number, done: () => string): void {
+    let write: Promise<void>;
+    try {
+      write = navigator.clipboard.write([new ClipboardItem({ 'text/plain': text.then((t) => new Blob([t], { type: 'text/plain' })) })]);
+    } catch (error) {
+      write = Promise.reject(error);
+    }
+    void write.then(() => {
+      if (gen === this.generation) this.setLatexStatus(done());
+    }, (error: unknown) => {
+      // A failed reading says so itself (openLatex).
+      if (gen !== this.generation || this.latexTitle.dataset.kind === 'error') return;
+      void text.then(() => this.setLatexStatus(S.captureCopyFailed(error instanceof Error ? error.message : String(error)), 'error'), () => undefined);
+    });
+  }
+
+  private setLatexStatus(text: string, kind: 'ok' | 'busy' | 'error' = 'ok'): void {
+    this.latexTitle.textContent = text;
+    this.latexTitle.dataset.kind = kind;
   }
 
   // ─── Source line ───

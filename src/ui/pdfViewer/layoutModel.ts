@@ -1,8 +1,7 @@
 // ─── Layout model: where the figures and tables of a page are, by sight ───
 //
-// PP-DocLayout-S (assets/models/NOTICE.md), run with ONNX Runtime Web (wasm,
-// one thread: extension pages are not cross-origin isolated) on the page
-// rendered at rotation 0. Loaded the first time auto-detect needs it (the
+// PP-DocLayout-S (assets/models/NOTICE.md), run with ONNX Runtime Web
+// (ortRuntime.ts) on the page rendered at rotation 0. Loaded the first time auto-detect needs it (the
 // runtime and model are ~18 MB, never fetched otherwise); runs one page at a
 // time. Interpreting the output with the PDF's own text and graphics is
 // shared/layoutDetect.ts.
@@ -11,26 +10,22 @@ import type { PDFPageProxy } from 'pdfjs-dist';
 import { AnnotationMode } from 'pdfjs-dist';
 import { LAYOUT_INPUT_SIZE, layoutDetections, layoutInput, type LayoutDetection } from '../../shared/layoutDetect';
 import { debugLog } from '../../shared/debugLog';
+import { type Ort, type OrtSession, createSession, loadOrt, takeTurn } from './ortRuntime';
 
 // The page is rendered this tall before being squeezed to 480×480: enough
 // detail for small panels, cheap to render.
 const RENDER_HEIGHT = 960;
 const MODEL_PATH = 'models/pp-doclayout-s.onnx';
 
-type Ort = typeof import('onnxruntime-web/wasm');
-interface Loaded { ort: Ort; session: Awaited<ReturnType<Ort['InferenceSession']['create']>> }
+interface Loaded { ort: Ort; session: OrtSession }
 
 let loading: Promise<Loaded | null> | null = null;
-let queue: Promise<unknown> = Promise.resolve();
 
 function load(): Promise<Loaded | null> {
   loading ??= (async () => {
     const started = performance.now();
-    const ort = await import(/* webpackChunkName: "ort" */ 'onnxruntime-web/wasm');
-    ort.env.wasm.numThreads = 1;
-    ort.env.wasm.wasmPaths = chrome.runtime.getURL('ort/');
-    const bytes = await (await fetch(chrome.runtime.getURL(MODEL_PATH))).arrayBuffer();
-    const session = await ort.InferenceSession.create(new Uint8Array(bytes), { executionProviders: ['wasm'] });
+    const ort = await loadOrt();
+    const session = await createSession(MODEL_PATH);
     debugLog('viewer', `layout model loaded in ${Math.round(performance.now() - started)}ms`);
     return { ort, session };
   })().catch((error: unknown) => {
@@ -51,7 +46,7 @@ export class LayoutSkipped extends Error {
  * wait for each other): false rejects with LayoutSkipped instead of running.
  */
 export function detectLayout(page: PDFPageProxy, wanted: () => boolean = () => true): Promise<LayoutDetection[] | null> {
-  const run = queue.then(async () => {
+  const run = takeTurn(async () => {
     if (!wanted()) throw new LayoutSkipped();
     const loaded = await load();
     if (!wanted()) throw new LayoutSkipped();
@@ -85,6 +80,5 @@ export function detectLayout(page: PDFPageProxy, wanted: () => boolean = () => t
     // Boxes come back in the rendered canvas's pixels; the canvas was rounded up.
     return layoutDetections(rows, count, canvas.height / base.height);
   });
-  queue = run.catch(() => undefined);
   return run.catch((error: unknown) => { if (error instanceof LayoutSkipped) throw error; return null; });
 }

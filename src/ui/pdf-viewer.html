@@ -31,6 +31,7 @@
     <symbol id="i-prev" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></symbol>
     <symbol id="i-next" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
     <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/></symbol>
+    <symbol id="i-latex" viewBox="0 0 24 24"><path d="M17 5H7l6 7-6 7h10"/></symbol>
     <symbol id="i-capture" viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><rect x="8" y="8" width="8" height="8" rx="1"/></symbol>
   </svg>
   <!-- Selection ink (pdfViewer.css): under a selection, dark → blue, white stays white.
@@ -84,6 +85,7 @@
       <button id="vt-redo" class="vt-btn vt-icon-btn" type="button" title="다시실행 (Ctrl+Y)" aria-label="다시실행" data-i18n-title="redoTitle" data-i18n-aria-label="redo" disabled><svg><use href="#i-redo"/></svg></button>
       <span class="vt-sep vt-sep-compact"></span>
       <button id="vt-capture" class="vt-btn vt-icon-btn" type="button" title="그림 복사 (⌘⇧X · S · Alt+드래그)" aria-label="그림·표 영역 복사" data-i18n-aria-label="captureAria" aria-pressed="false"><svg><use href="#i-capture"/></svg></button>
+      <button id="vt-latex" class="vt-btn vt-icon-btn" type="button" title="수식을 LaTeX로 복사 (L)" aria-label="수식을 LaTeX로 복사" data-i18n-title="latexTitle" data-i18n-aria-label="latexAria" aria-pressed="false"><svg><use href="#i-latex"/></svg></button>
     </div>
 
     <div class="vt-group vt-right">
@@ -99,6 +101,7 @@
           <button type="button" role="menuitem" class="vt-menu-item vt-menu-compact" data-menu-for="vt-undo"><span data-i18n="undo">실행취소</span> <kbd>Ctrl+Z</kbd></button>
           <button type="button" role="menuitem" class="vt-menu-item vt-menu-compact" data-menu-for="vt-redo"><span data-i18n="redo">다시실행</span> <kbd>Ctrl+Y</kbd></button>
           <button type="button" role="menuitem" class="vt-menu-item vt-menu-compact" data-menu-for="vt-capture"><span data-i18n="captureMenu">그림 복사</span> <kbd>S</kbd></button>
+          <button type="button" role="menuitem" class="vt-menu-item vt-menu-compact" data-menu-for="vt-latex"><span data-i18n="latexMenu">수식 → LaTeX</span> <kbd>L</kbd></button>
           <button type="button" role="menuitem" class="vt-menu-item vt-menu-compact" data-menu-for="vt-fit-toggle"><span id="vt-menu-fit-label" data-i18n="fitToPage">페이지에 맞춤</span></button>
           <button type="button" role="menuitem" class="vt-menu-item vt-menu-compact" data-menu-for="vt-rotate"><span data-i18n="rotate">시계 방향 회전</span> <kbd>Ctrl+]</kbd></button>
           <hr class="vt-menu-sep vt-menu-compact">

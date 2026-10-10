@@ -22,6 +22,7 @@ export const S = messages({
     download: '다운로드 (필기 포함)',
     undoRedo: '실행 취소·다시 실행',
     capture: '그림 캡처 켜기·끄기: 그림·표를 누르거나 영역을 드래그',
+    latex: '수식 → LaTeX 켜기·끄기: 수식을 누르거나 영역을 드래그',
     escape: '캡처·찾기·필기 도구 닫기',
   },
   en: {
@@ -44,6 +45,7 @@ export const S = messages({
     download: 'Download (with annotations)',
     undoRedo: 'Undo / redo',
     capture: 'Capture on/off: click a figure or table, or drag an area',
+    latex: 'Formula → LaTeX on/off: click a formula, or drag an area',
     escape: 'Close capture, find, and annotation tools',
   },
 });

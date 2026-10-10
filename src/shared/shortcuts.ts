@@ -43,6 +43,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { group: 'view', combos: [['Ctrl', 'S']], label: 'download' },
   { group: 'annotate', combos: [['Ctrl', 'Z'], ['Ctrl', 'Y']], label: 'undoRedo' },
   { group: 'annotate', combos: [['S'], ['Ctrl', 'Shift', 'X']], label: 'capture', tour: true },
+  { group: 'annotate', combos: [['L']], label: 'latex' },
   { group: 'annotate', combos: [['Esc']], label: 'escape' },
 ];
 

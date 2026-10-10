@@ -65,6 +65,12 @@ Google Drive.
   graphics. The region is rendered again at 150–600 dpi, with
   or without your drawings, next to a ready source line (`Source: Hao et al.
   (2024). Title. arXiv. Fig. 2.`) read from the caption beside it.
+- Copies a formula as LaTeX: `L` (or the ∑ button) outlines the formulas the
+  layout model finds; a click, or a drag around one, reads it on the device
+  with a formula-recognition model (pix2text-mfr-1.5, MIT, int8, ~31 MB,
+  loaded on first use; about a second per formula) and copies the LaTeX. A
+  card shows it to correct and copy again, bare or as `$…$` / `$$…$$`; any
+  captured area can be read the same way from its notice.
 - Gathers the PDFs already open in Chrome's own viewer into the PDF tab
   (from home, the settings page or the welcome guide), with their zoom; an
   original tab closes only once its PDF is there.
@@ -107,6 +113,7 @@ step).
 | Ctrl+S | Download (with annotations) |
 | Ctrl+Z / Ctrl+Y | Undo / redo |
 | S / Ctrl+Shift+X | Capture on/off: click a figure or table, or drag an area |
+| L | Formula → LaTeX on/off: click a formula, or drag an area |
 | Esc | Close capture, find, and annotation tools |
 
 Site and privacy policy: https://research-pdf.croksuter.com/

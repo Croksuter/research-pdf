@@ -14,7 +14,9 @@ describe.skipIf(!existsSync(resolve(dist, 'pdfViewer.js')))('production package'
       'settings.js', 'tokens.css', 'welcome.css', 'welcome.html', 'welcome.js',
     ]);
     // Figure auto-detect: the model with its license, and ONNX Runtime's wasm (loaded on first use).
-    for (const file of ['models/pp-doclayout-s.onnx', 'models/LICENSE-Apache-2.0.txt', 'models/NOTICE.md', 'ort/ort-wasm-simd-threaded.wasm', 'ort/ort-wasm-simd-threaded.mjs']) {
+    // Formula → LaTeX: the formula model with its license.
+    for (const file of ['models/pp-doclayout-s.onnx', 'models/LICENSE-Apache-2.0.txt', 'models/NOTICE.md', 'ort/ort-wasm-simd-threaded.wasm', 'ort/ort-wasm-simd-threaded.mjs',
+      'models/pix2text-mfr/encoder_kv.onnx', 'models/pix2text-mfr/decoder_with_past.onnx', 'models/pix2text-mfr/tokenizer.json', 'models/LICENSE-MIT-Pix2Text.txt']) {
       expect(existsSync(resolve(dist, file)), `expected ${file}`).toBe(true);
     }
     for (const dir of ['pdfjs/cmaps', 'pdfjs/standard_fonts', 'pdfjs/wasm', 'pdfjs/iccs', 'pdfjs/images']) {
