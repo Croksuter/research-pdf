@@ -29,6 +29,8 @@ import {
   titleMatchConfirmed,
   twoYearCell,
 } from '../../shared/paperIdentifiers';
+import { DEFAULT_PAPER_STRIP_SHOWN, PAPER_STRIP_SHOWN_SETTING_KEY } from '../../shared/constants';
+import { getSetting } from '../../db/settingsRepository';
 import { byId, el } from './dom';
 import { OPENALEX_BUDGET_REASON, openAlexBudgetSpent } from './openAlexAccess';
 import { buildCitationChart } from './paperChart';
@@ -74,8 +76,16 @@ export class PaperStrip {
   private readonly reparseBtn = byId<HTMLButtonElement>('vt-paper-reparse');
   private generation = 0;
   private current: { doc: PDFDocumentProxy; sourceUrl: string | null } | null = null;
-  /** Documents (by fingerprint) whose strip the reader closed in this page. */
-  private readonly dismissed = new Set<string>();
+  /**
+   * Open or folded: the setting's default until the reader toggles it in this
+   * page (null: the setting is not read yet). Folded, the lookup still runs —
+   * the paper's title names the tab — and its result waits in the strip.
+   */
+  private open: boolean | null = null;
+  /** Something to show: a status or the paper (paper info on, a lookup started). */
+  private filled = false;
+  /** Paper info is on in settings (the toggle shows only then). */
+  private available = false;
   private meta: PaperMeta | null = null;
   private bibtexCache: string | null = null;
   private readonly refs = new ReferenceList();
@@ -91,8 +101,13 @@ export class PaperStrip {
    * @param onPaperMeta called with the resolved paper (its title names the
    *   document better than a file name like `2401.12345`).
    */
-  constructor(private readonly onLayoutChange: () => void, private readonly onPaperMeta?: (meta: PaperMeta) => void) {
-    this.closeBtn.addEventListener('click', () => this.dismiss());
+  constructor(
+    private readonly onLayoutChange: () => void,
+    private readonly onPaperMeta?: (meta: PaperMeta) => void,
+    /** The strip's toggle: `available` false while paper info is off in settings. */
+    private readonly onOpenChange?: (state: { available: boolean; open: boolean }) => void,
+  ) {
+    this.closeBtn.addEventListener('click', () => this.setOpen(false));
     this.reparseBtn.addEventListener('click', () => {
       if (this.current) void this.show(this.current.doc, this.current.sourceUrl, { fresh: true });
     });
@@ -103,20 +118,31 @@ export class PaperStrip {
     return this.meta;
   }
 
-  /** × : the strip stays closed for this document, and a lookup still running stops. */
-  dismiss(): void {
-    this.generation += 1;
-    const fingerprint = this.current?.doc.fingerprints[0];
-    if (fingerprint) this.dismissed.add(fingerprint);
-    this.hide();
+  /** The toolbar's ⓘ: opens or folds the strip for this page's documents. */
+  toggle(): void {
+    this.setOpen(!(this.open ?? DEFAULT_PAPER_STRIP_SHOWN));
   }
 
-  hide(): void {
+  /** × folds the strip (as the toggle does); what it shows stays, for opening it again. */
+  setOpen(open: boolean): void {
+    this.open = open;
+    this.applyVisibility();
+  }
+
+  private applyVisibility(): void {
+    const visible = this.filled && this.open === true;
     const wasVisible = !this.root.hidden;
-    this.root.hidden = true;
-    document.body.classList.remove('vt-has-paper');
+    this.root.hidden = !visible;
+    document.body.classList.toggle('vt-has-paper', visible);
+    this.onOpenChange?.({ available: this.available, open: this.open ?? DEFAULT_PAPER_STRIP_SHOWN });
+    if (wasVisible !== visible) this.onLayoutChange();
+  }
+
+  /** Empties the strip for the next document (or none). */
+  private clear(): void {
+    this.filled = false;
     this.refs.reset();
-    if (wasVisible) this.onLayoutChange();
+    this.applyVisibility();
   }
 
   /** Kicks off the background reference lookup for a fully resolved meta. */
@@ -178,13 +204,17 @@ export class PaperStrip {
   async show(doc: PDFDocumentProxy, sourceUrl: string | null, { fresh = false } = {}): Promise<void> {
     const gen = ++this.generation;
     this.current = { doc, sourceUrl };
-    this.hide();
+    this.clear();
     this.meta = null;
     this.bibtexCache = null;
     this.refsLoading = false;
-    if (this.dismissed.has(doc.fingerprints[0] ?? '')) return;
     try {
-      if (!(await loadPaperSettings())) {
+      const [enabled, shown] = await Promise.all([loadPaperSettings(), getSetting(PAPER_STRIP_SHOWN_SETTING_KEY, DEFAULT_PAPER_STRIP_SHOWN)]);
+      if (gen !== this.generation) return;
+      this.open ??= shown;
+      this.available = enabled;
+      this.applyVisibility();
+      if (!enabled) {
         debugLog('paper', 'paper info disabled by setting');
         return;
       }
@@ -279,10 +309,8 @@ export class PaperStrip {
       value.append(text);
     }
     this.body.append(el('span', { className: 'vt-paper-seg' }, [el('span', { className: 'vt-paper-label', textContent: S.paperInfo }), value]));
-    const wasHidden = this.root.hidden;
-    this.root.hidden = false;
-    document.body.classList.add('vt-has-paper');
-    if (wasHidden) this.onLayoutChange();
+    this.filled = true;
+    this.applyVisibility();
   }
 
   /** `pending`: the record is the first answer, the other databases are still being asked. */
@@ -388,10 +416,8 @@ export class PaperStrip {
     actions.append(copyBib, copyApa);
     this.body.append(actions);
 
-    const wasHidden = this.root.hidden;
-    this.root.hidden = false;
-    document.body.classList.add('vt-has-paper');
-    if (wasHidden) this.onLayoutChange();
+    this.filled = true;
+    this.applyVisibility();
   }
 
   /** Floating panel under 논문정보: title, authors, links, venue 2-year citedness. */

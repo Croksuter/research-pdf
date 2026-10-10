@@ -8,6 +8,8 @@ export const homeBtn = byId<HTMLButtonElement>('rpdf-home-btn');
 export const settingsBtn = byId<HTMLButtonElement>('rpdf-settings-btn');
 export const settingsView = byId<HTMLElement>('rpdf-settings');
 export const tabList = byId<HTMLDivElement>('rpdf-tabs');
+// The right half's tabs while split (hub/split.ts).
+export const tabListRight = byId<HTMLDivElement>('rpdf-tabs-right');
 export const frames = byId<HTMLElement>('rpdf-frames');
 export const addBtn = byId<HTMLButtonElement>('rpdf-add');
 export const listBtn = byId<HTMLButtonElement>('rpdf-list-btn');

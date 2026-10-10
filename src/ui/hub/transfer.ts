@@ -25,7 +25,7 @@ import {
 import type { PdfTearOffRequest } from '../../shared/messages';
 import { S } from '../pdfHub.strings';
 import { type HubTab, ask, isHub, myTabId, openTabFor, projectId, projectName, projects, sendProjectUpdate, succeeded, tabName, tabs } from './store';
-import { splitDrop, tabList } from './dom';
+import { splitDrop, tabList, tabListRight } from './dom';
 import { el, showMenu, showToast } from './uiKit';
 import { askToStore } from './frames';
 import { activate, addDocs, clearStripDropMarks, dragKey, removeTab, render, updateTabLabel } from './tabStrip';
@@ -148,6 +148,8 @@ function sourceProject(payload: TabPayload): string {
 export interface DropPlace {
   /** Where in the strip. */
   index?: number;
+  /** Among which half's tabs (split view). */
+  group?: Side;
   /** Which half of the page. */
   side?: Side;
   /** Where the dialog goes (page coordinates). */
@@ -171,7 +173,7 @@ export async function receive(payload: TabPayload, place: DropPlace, decided: Dr
   if (!action) return;
   const got = await takeFrom(payload, action === 'move');
   if (!got && !payload.url) { showToast(S.transferFailed); return; }
-  const [tab] = addDocs([{ url: payload.url, hash: got?.hash ?? '', file: got?.file ?? null }], true, true, place.index);
+  const [tab] = addDocs([{ url: payload.url, hash: got?.hash ?? '', file: got?.file ?? null }], true, true, place.index, place.group);
   if (!tab) return;
   if (!tab.loaded) {
     tab.title = payload.title;
@@ -392,18 +394,21 @@ function disarm(): void {
   clearStripDropMarks();
 }
 
-/** Where in the strip a drop at `e` goes, marking it. */
-function stripPlace(e: DragEvent, mark: boolean): number | undefined {
+/** Where in the strip a drop at `e` goes (and, split, among which half's tabs), marking it. */
+function stripPlace(e: DragEvent, mark: boolean): Pick<DropPlace, 'index' | 'group'> | undefined {
   const target = (e.target as Element | null)?.closest<HTMLElement>('.rpdf-tab');
   const tab = target ? tabs.find((t) => t.root === target) : undefined;
-  if (!tab) return (e.target as Element | null)?.closest('#rpdf-tabs') ? tabs.length : undefined;
+  if (!tab) {
+    const list = (e.target as Element | null)?.closest<HTMLElement>('.rpdf-tabs');
+    return list ? { index: tabs.length, group: list.dataset.side === 'right' ? 'right' : 'left' } : undefined;
+  }
   const rect = tab.root.getBoundingClientRect();
   const after = e.clientX > rect.left + rect.width / 2;
   if (mark) {
     clearStripDropMarks();
     tab.root.classList.add(after ? 'is-drop-after' : 'is-drop-before');
   }
-  return tabs.indexOf(tab) + (after ? 1 : 0);
+  return { index: tabs.indexOf(tab) + (after ? 1 : 0), group: tab.side };
 }
 
 function halfAt(e: DragEvent): HTMLElement | null {
@@ -426,10 +431,10 @@ document.addEventListener('drop', (e) => {
   e.preventDefault();
   const payload = parseTabPayload(e.dataTransfer?.getData(TAB_DRAG_TYPE) ?? '');
   const half = halfAt(e);
-  const index = half ? undefined : stripPlace(e, false);
+  const inStrip = half ? undefined : stripPlace(e, false);
   disarm();
   const side = half?.dataset.side === 'left' || half?.dataset.side === 'right' ? half.dataset.side : undefined;
-  if (payload) void receive(payload, { index, side, x: e.clientX, y: e.clientY }, null);
+  if (payload) void receive(payload, { ...inStrip, side, x: e.clientX, y: e.clientY }, null);
 });
 
-tabList.addEventListener('dragleave', (e) => { if (!e.relatedTarget) clearStripDropMarks(); });
+for (const list of [tabList, tabListRight]) list.addEventListener('dragleave', (e) => { if (!e.relatedTarget) clearStripDropMarks(); });

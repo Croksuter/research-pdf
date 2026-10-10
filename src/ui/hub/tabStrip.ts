@@ -3,7 +3,8 @@
 // Tabs (a tab button and, beside it, its close or unpin button), what is in
 // front, closing and reopening, keyboard, drag, overflow, pins and their
 // order, the tab menu. `render()` brings the strip, the title and the saved
-// state up to date after any change.
+// state up to date after any change. Split, each half has its own tabs
+// (hub/split.ts): `side` says among which a tab is.
 
 import { APP_NAME } from '../../shared/brand';
 import { arxivVersionBadges, findOpenDoc, hubDocKey, moveInOrder, pushClosedTab, tabsThatLeft, type HubClosedTab } from '../../shared/hubTabs';
@@ -16,12 +17,12 @@ import { HUB_MESSAGE_TAG, hubDocumentTitle, sameTitle, type HubKeyAction } from 
 import type { PdfTearOffRequest } from '../../shared/messages';
 import { SETTINGS_SHOWN_MESSAGE } from '../openPdfTabs';
 import { S } from '../pdfHub.strings';
-import { HOME, type HubTab, type NewDoc, SETTINGS, activeKey, activeTab, ask, currentProject, display, isLocal, isPage, library, libraryIdForUrl, pendingPins, pinnedDocIds, projectId, projectName, projects, registerDoc, registered, reloadProjects, sendProjectUpdate, succeeded, tabName, tabs, updateError, setActiveKey, setProjectsLocally } from './store';
-import { homeBtn, listBtn, listCount, moveBtn, settingsView, splitDrop, tabList } from './dom';
+import { HOME, type HubTab, type NewDoc, SETTINGS, type Side, activeKey, activeTab, ask, currentProject, display, isLocal, isPage, library, libraryIdForUrl, pendingPins, pinnedDocIds, projectId, projectName, projects, registerDoc, registered, reloadProjects, sendProjectUpdate, succeeded, tabName, tabs, updateError, setActiveKey, setProjectsLocally } from './store';
+import { addBtn, homeBtn, listBtn, listCount, moveBtn, settingsView, splitDrop, strip, tabList, tabListRight } from './dom';
 import { type MenuEntry, copyUrl, el, hidePanels, icon, showMenu, showToast } from './uiKit';
 import { enforceSleep, ensureFrame, loadWaiters, postToFrame, queuePrefetch, retireFrame } from './frames';
 import { dragPrefs, sendToWindow, showWindowMenu, startDrag } from './transfer';
-import { closeSplit, focusIfBehind, focusOtherPane, frontElement, layoutPanes, onScreen, otherSide, releaseTab, replaceInSplit, showInFront, split, splitWith, toggleSplit } from './split';
+import { closeMirrorPane, closeSplit, focusIfBehind, focusOtherPane, focusSide, frontElement, groupOf, layoutPanes, moveToSide, onScreen, otherSide, releaseTab, replaceInSplit, showInFront, showInPane, split, splitWith, toggleSplit } from './split';
 import { closed, reopenClosed, reopenEntries, setClosed, persistState } from './session';
 import { localFileId, scheduleLocalFilePrune } from './localFiles';
 import { scheduleHomeRender, showHome } from './home/home';
@@ -33,7 +34,8 @@ import { moveTab, showMove } from './movePanel';
 export const PENDING_TIMEOUT_MS = 60_000;
 let nextKey = 1;
 
-export function createTab(doc: NewDoc): HubTab {
+/** `side`: among which half's tabs while split (default: the half in front). */
+export function createTab(doc: NewDoc, side: Side = split?.focus ?? 'left'): HubTab {
   const key = nextKey++;
   const initialTitle = doc.file ? doc.file.name : doc.url ? pdfDisplayName(doc.url) : 'PDF';
   const root = el('div', { className: 'rpdf-tab' });
@@ -51,7 +53,7 @@ export function createTab(doc: NewDoc): HubTab {
   const closeEl = el('button', { type: 'button', className: 'rpdf-tab-close', tabIndex: -1 });
   root.append(button, closeEl);
   const tab: HubTab = {
-    key, url: doc.url, hash: doc.hash, file: doc.file, fileId: doc.file ? doc.fileId ?? localFileId(doc.file) : null,
+    key, side, url: doc.url, hash: doc.hash, file: doc.file, fileId: doc.file ? doc.fileId ?? localFileId(doc.file) : null,
     title: initialTitle, paperTitle: null, docId: null, libraryId: doc.url ? libraryIdForUrl(doc.url) : null,
     pinned: false, keepOnUnpin: false, pendingPin: 0, pendingMove: null,
     frame: null, mirror: null, loaded: false, unseenHash: '', prefetched: false, lastShownAt: 0, busyUntil: 0,
@@ -101,14 +103,75 @@ export function pinnedCount(): number {
 export function insertTab(tab: HubTab, index: number): void {
   const at = Math.min(Math.max(index, tab.pinned ? 0 : pinnedCount()), tabs.length);
   tabs.splice(at, 0, tab);
-  tabList.insertBefore(tab.root, tabs[at + 1]?.root ?? null);
+  placeRoots();
+}
+
+const tabLists = [[tabList, 'left'], [tabListRight, 'right']] as const;
+
+/** The list a tab's element belongs in: its half's while split. */
+export function listOf(side: Side): HTMLDivElement {
+  return split && side === 'right' ? tabListRight : tabList;
+}
+
+/**
+ * Each tab's element in its half's list, in strip order, and the stand-in
+ * of a document shown twice last in its half. Lists already in order are
+ * left alone (moving an element would drop its focus).
+ */
+function placeRoots(): void {
+  for (const [list, side] of tabLists) {
+    const wanted: Element[] = groupOf(side).map((t) => t.root);
+    const ghost = mirrorTab(side);
+    if (ghost) wanted.push(ghost);
+    const current = Array.from(list.children);
+    if (wanted.length === current.length && wanted.every((e, i) => current[i] === e)) continue;
+    list.replaceChildren(...wanted);
+  }
+}
+
+// ─── The stand-in tab of a document shown in both halves ───
+
+let ghost: { root: HTMLDivElement; button: HTMLButtonElement; iconEl: HTMLSpanElement; titleEl: HTMLSpanElement; closeEl: HTMLButtonElement; side: Side } | null = null;
+
+function mirrorTab(side: Side): HTMLDivElement | null {
+  const pane = split?.[side];
+  const tab = pane?.mirror ? tabs.find((t) => t.key === pane.key) : undefined;
+  if (!split || !tab) return null;
+  if (!ghost) {
+    const root = el('div', { className: 'rpdf-tab is-mirror' });
+    const button = el('button', { type: 'button', className: 'rpdf-tab-main', tabIndex: -1 });
+    button.setAttribute('role', 'tab');
+    const iconEl = el('span', { className: 'rpdf-tab-icon' });
+    const titleEl = el('span', { className: 'rpdf-tab-title' });
+    const text = el('span', { className: 'rpdf-tab-text' });
+    text.append(titleEl);
+    button.append(iconEl, text);
+    const closeEl = el('button', { type: 'button', className: 'rpdf-tab-close', tabIndex: -1, title: S.closeShortcut });
+    closeEl.append(icon('i-close'));
+    root.append(button, closeEl);
+    const made = { root, button, iconEl, titleEl, closeEl, side };
+    button.addEventListener('click', () => focusSide(made.side));
+    closeEl.addEventListener('click', () => closeMirrorPane(made.side));
+    root.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); closeMirrorPane(made.side); } });
+    ghost = made;
+  }
+  ghost.side = side;
+  const name = tabName(tab);
+  ghost.titleEl.textContent = tab.titleEl.textContent;
+  ghost.iconEl.replaceChildren(icon('i-split'));
+  ghost.button.title = S.splitMirrorTip(name);
+  ghost.closeEl.setAttribute('aria-label', S.closeAria(name));
+  const on = split.focus === side;
+  ghost.root.classList.toggle('is-active', on);
+  ghost.button.setAttribute('aria-selected', String(on));
+  return ghost.root;
 }
 
 /**
  * Opens the documents here (or finds the tab already showing one). Returns,
  * per document, its tab — or null when the project was full.
  */
-export function addDocs(docs: NewDoc[], activateLast: boolean, autoActivate = true, at?: number): Array<HubTab | null> {
+export function addDocs(docs: NewDoc[], activateLast: boolean, autoActivate = true, at?: number, side?: Side): Array<HubTab | null> {
   let last: HubTab | null = null;
   let insertAt = at;
   const placed: Array<HubTab | null> = [];
@@ -131,7 +194,7 @@ export function addDocs(docs: NewDoc[], activateLast: boolean, autoActivate = tr
       placed.push(null);
       continue;
     }
-    const tab = createTab(doc);
+    const tab = createTab(doc, side);
     insertTab(tab, insertAt ?? tabs.length);
     if (insertAt !== undefined) insertAt += 1;
     registerDoc(tab.libraryId);
@@ -170,8 +233,15 @@ export function activate(key: number, focusFrame = true): void {
   if (key === SETTINGS) { showSettings(); return; }
   const tab = tabs.find((t) => t.key === key);
   if (!tab) return;
-  // Split: shown in the half behind, which comes in front.
-  if (focusIfBehind(key)) return;
+  // Split: shown in its own half, which comes in front.
+  if (split) {
+    showInPane(tab.side, key);
+    if (split.focus !== tab.side) {
+      focusSide(tab.side, focusFrame);
+      void enforceSleep();
+      return;
+    }
+  }
   const now = Date.now();
   const previous = activeTab();
   if (previous) previous.lastShownAt = now;
@@ -267,14 +337,16 @@ export function step(action: HubKeyAction): void {
   if (action === 'reopen') { reopenClosed(); return; }
   if (action === 'split') { toggleSplit(); return; }
   if (action === 'pane') { focusOtherPane(); return; }
-  if (tabs.length === 0) return;
+  // Split: along the tabs of the half in front.
+  const group = groupOf(split?.focus ?? 'left');
+  if (group.length === 0) return;
   if (isPage(activeKey) || activeKey === null) {
-    activate((action === 'next' ? tabs[0] : tabs[tabs.length - 1]).key);
+    activate((action === 'next' ? group[0] : group[group.length - 1]).key);
     return;
   }
-  if (tabs.length < 2) return;
-  const index = tabs.findIndex((t) => t.key === activeKey);
-  const next = tabs[(index + (action === 'next' ? 1 : -1) + tabs.length) % tabs.length];
+  if (group.length < 2) return;
+  const index = group.findIndex((t) => t.key === activeKey);
+  const next = group[(index + (action === 'next' ? 1 : -1) + group.length) % group.length];
   activate(next.key);
 }
 
@@ -289,15 +361,17 @@ export function rovingTab(): HubTab | undefined {
 
 export function onStripKey(e: KeyboardEvent, tab: HubTab): boolean {
   if (e.altKey || e.ctrlKey || e.metaKey) return false;
-  const index = tabs.indexOf(tab);
+  // Split: along this half's tabs.
+  const group = groupOf(split ? tab.side : 'left');
+  const index = group.indexOf(tab);
   let next: HubTab | undefined;
-  if (e.key === 'ArrowRight') next = tabs[(index + 1) % tabs.length];
-  else if (e.key === 'ArrowLeft') next = tabs[(index - 1 + tabs.length) % tabs.length];
-  else if (e.key === 'Home') next = tabs[0];
-  else if (e.key === 'End') next = tabs[tabs.length - 1];
+  if (e.key === 'ArrowRight') next = group[(index + 1) % group.length];
+  else if (e.key === 'ArrowLeft') next = group[(index - 1 + group.length) % group.length];
+  else if (e.key === 'Home') next = group[0];
+  else if (e.key === 'End') next = group[group.length - 1];
   else if (e.key === 'Delete') {
     if (tab.pinned) { showToast(S.pinnedCantClose); return true; }
-    const neighbor = tabs[index + 1] ?? tabs[index - 1];
+    const neighbor = group[index + 1] ?? group[index - 1];
     closeTab(tab.key);
     (neighbor && tabs.includes(neighbor) ? neighbor.button : homeBtn).focus();
     return true;
@@ -323,8 +397,12 @@ export function dropAfter(tab: HubTab, e: DragEvent): boolean {
   return e.clientX > rect.left + rect.width / 2;
 }
 
-/** Puts the dragged tab before or after `target` (null: last of its kind). */
-export function dropTab(moved: HubTab, target: HubTab | null, after: boolean): void {
+/**
+ * Puts the dragged tab before or after `target` (null: last of its kind, in
+ * half `side`'s tabs). From the other half's tabs, it joins this half's.
+ */
+export function dropTab(moved: HubTab, target: HubTab | null, after: boolean, side: Side = target?.side ?? moved.side): void {
+  if (split && moved.side !== side) moveToSide(moved, side);
   if (moved.pinned) {
     const docOf = (t: HubTab) => t.libraryId ?? t.docId;
     const movedDoc = docOf(moved);
@@ -335,7 +413,6 @@ export function dropTab(moved: HubTab, target: HubTab | null, after: boolean): v
   }
   const loose = moveInOrder(tabs.filter((t) => !t.pinned), moved, target, after);
   tabs.splice(0, tabs.length, ...tabs.filter((t) => t.pinned), ...loose);
-  for (const t of loose) tabList.append(t.root);
   render();
 }
 
@@ -382,21 +459,26 @@ export function wireDrag(tab: HubTab): void {
   });
 }
 
-// The strip past the last tab: drop there to put a tab last.
-tabList.addEventListener('dragover', (e) => {
-  const moved = tabs.find((t) => t.key === dragKey);
-  if (!moved || moved.pinned || e.target !== tabList) return;
-  e.preventDefault();
-  clearStripDropMarks();
-  tabs[tabs.length - 1]?.root.classList.add('is-drop-after');
-});
-tabList.addEventListener('drop', (e) => {
-  const moved = tabs.find((t) => t.key === dragKey);
-  if (!moved || moved.pinned || e.target !== tabList) return;
-  e.preventDefault();
-  clearStripDropMarks();
-  dropTab(moved, null, true);
-});
+// The strip past the last tab (of a half, while split): drop there to put a
+// tab last. The stand-in of a document shown twice counts as past them.
+const pastTabs = (e: DragEvent) => !(e.target as Element | null)?.closest('.rpdf-tab:not(.is-mirror)');
+for (const [list, side] of tabLists) {
+  list.addEventListener('dragover', (e) => {
+    const moved = tabs.find((t) => t.key === dragKey);
+    if (!moved || moved.pinned || !pastTabs(e)) return;
+    e.preventDefault();
+    clearStripDropMarks();
+    const group = groupOf(side);
+    group[group.length - 1]?.root.classList.add('is-drop-after');
+  });
+  list.addEventListener('drop', (e) => {
+    const moved = tabs.find((t) => t.key === dragKey);
+    if (!moved || moved.pinned || !pastTabs(e)) return;
+    e.preventDefault();
+    clearStripDropMarks();
+    dropTab(moved, null, true, side);
+  });
+}
 
 // ─── Pins ───
 
@@ -434,7 +516,7 @@ export function reconcilePinned(): void {
   const ordered = [...pinnedTabs, ...tabs.filter((t) => !pinnedTabs.includes(t))];
   if (ordered.some((t, i) => tabs[i] !== t)) {
     tabs.splice(0, tabs.length, ...ordered);
-    for (const t of ordered) tabList.append(t.root);
+    placeRoots();
   }
   render();
 }
@@ -525,6 +607,14 @@ export function render(): void {
   listBtn.setAttribute('aria-label', S.allTabsCount(tabs.length));
   const badges = arxivVersionBadges(tabs.map((t) => t.url));
   const roving = rovingTab();
+  // Split: two groups of tabs, the boundary on the divider; "+" opens into the half in front.
+  strip.classList.toggle('is-split', !!split);
+  tabListRight.hidden = !split;
+  tabList.classList.toggle('is-focus', !split || split.focus === 'left');
+  tabListRight.classList.toggle('is-focus', !!split && split.focus === 'right');
+  placeRoots();
+  const addAfter = listOf(split?.focus ?? 'left');
+  if (addBtn.previousElementSibling !== addAfter) addAfter.after(addBtn);
   tabs.forEach((t, i) => {
     t.verEl.textContent = badges[i] ?? '';
     t.verEl.hidden = !badges[i];
@@ -543,20 +633,24 @@ export function render(): void {
 export const NARROW_TAB_PX = 150;
 
 export function updateOverflow(): void {
-  const { scrollLeft, scrollWidth, clientWidth } = tabList;
-  tabList.classList.toggle('fade-left', scrollLeft > 1);
-  tabList.classList.toggle('fade-right', scrollLeft + clientWidth < scrollWidth - 1);
-  // Squeezed tabs drop the paper line (they all share one width).
-  const sample = tabs.find((t) => !t.pinned)?.root;
-  tabList.classList.toggle('is-narrow', !!sample && sample.getBoundingClientRect().width < NARROW_TAB_PX);
+  for (const [list, side] of tabLists) {
+    const { scrollLeft, scrollWidth, clientWidth } = list;
+    list.classList.toggle('fade-left', scrollLeft > 1);
+    list.classList.toggle('fade-right', scrollLeft + clientWidth < scrollWidth - 1);
+    // Squeezed tabs drop the paper line (they all share one width).
+    const sample = groupOf(side).find((t) => !t.pinned)?.root;
+    list.classList.toggle('is-narrow', !!sample && sample.getBoundingClientRect().width < NARROW_TAB_PX);
+  }
 }
-tabList.addEventListener('scroll', updateOverflow, { passive: true });
-new ResizeObserver(updateOverflow).observe(tabList);
-tabList.addEventListener('wheel', (e) => {
-  if (Math.abs(e.deltaY) <= Math.abs(e.deltaX) || tabList.scrollWidth <= tabList.clientWidth) return;
-  e.preventDefault();
-  tabList.scrollLeft += e.deltaY;
-}, { passive: false });
+for (const [list] of tabLists) {
+  list.addEventListener('scroll', updateOverflow, { passive: true });
+  new ResizeObserver(updateOverflow).observe(list);
+  list.addEventListener('wheel', (e) => {
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX) || list.scrollWidth <= list.clientWidth) return;
+    e.preventDefault();
+    list.scrollLeft += e.deltaY;
+  }, { passive: false });
+}
 
 // ─── Tab context menu ───
 

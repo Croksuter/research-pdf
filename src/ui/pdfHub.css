@@ -72,6 +72,31 @@ body {
 
 .rpdf-strip-spacer { flex: 1 1 0; min-width: 8px; }
 
+/* The strip's two groups: project, home and the tabs; the right one keeps
+   the page's buttons. Split view gives each half its own tabs (hub/split.ts),
+   the boundary on the divider below: the left group ends where the left
+   pane does (the strip's 10px padding, half the 6px divider). */
+.rpdf-strip-group { display: flex; align-items: flex-end; gap: 2px; min-width: 0; height: 100%; }
+#rpdf-strip-left { flex: 0 1 auto; }
+#rpdf-strip-right { flex: 1 0 auto; }
+.rpdf-tabs[hidden] { display: none; }
+.rpdf-strip.is-split #rpdf-strip-left { flex: 0 0 calc(var(--split-px) - 13px); }
+.rpdf-strip.is-split #rpdf-strip-right { position: relative; flex: 1 1 0; padding-left: 6px; }
+.rpdf-strip.is-split #rpdf-strip-right::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  bottom: 8px;
+  height: 22px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--hub-border);
+}
+/* The half in front: its group's tabs stay at full strength, the other's dim a little. */
+.rpdf-strip.is-split .rpdf-tabs:not(.is-focus) .rpdf-tab:not(:hover) { opacity: 0.82; }
+/* A document shown in both halves: its second view, as a tab of that half. */
+.rpdf-tab.is-mirror .rpdf-tab-title { font-style: italic; }
+
 /* Home: the library, left of every tab. */
 .rpdf-home-btn,
 .rpdf-list-btn {

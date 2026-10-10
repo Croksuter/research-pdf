@@ -30,6 +30,7 @@
     <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
     <symbol id="i-prev" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6"/></symbol>
     <symbol id="i-next" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/></symbol>
     <symbol id="i-capture" viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><rect x="8" y="8" width="8" height="8" rx="1"/></symbol>
   </svg>
   <!-- Selection ink (pdfViewer.css): under a selection, dark → blue, white stays white.
@@ -86,6 +87,7 @@
     </div>
 
     <div class="vt-group vt-right">
+      <button id="vt-paper-toggle" class="vt-btn vt-icon-btn" type="button" title="논문 정보 줄 펼치기/접기" aria-label="논문 정보 줄 펼치기/접기" data-i18n-title="paperToggle" data-i18n-aria-label="paperToggle" aria-pressed="false" hidden><svg><use href="#i-info"/></svg></button>
       <button id="vt-find-toggle" class="vt-btn vt-icon-btn" type="button" title="문서에서 찾기 (Ctrl+F)" aria-label="찾기" data-i18n-title="findTitle" data-i18n-aria-label="find" aria-pressed="false"><svg><use href="#i-search"/></svg></button>
       <button id="vt-download" class="vt-btn vt-icon-btn" type="button" title="다운로드 (Ctrl+S)" aria-label="다운로드" data-i18n-title="downloadTitle" data-i18n-aria-label="download"><svg><use href="#i-download"/></svg></button>
       <button id="vt-print" class="vt-btn vt-icon-btn" type="button" title="인쇄 (Ctrl+P)" aria-label="인쇄" data-i18n-title="printTitle" data-i18n-aria-label="print"><svg><use href="#i-print"/></svg></button>

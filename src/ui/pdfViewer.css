@@ -75,6 +75,7 @@ html, body {
 .vt-btn:focus-visible { outline: 2px solid var(--vt-accent); outline-offset: 1px; }
 .vt-btn:disabled { opacity: 0.35; cursor: default; }
 .vt-btn.is-active { background: var(--vt-active); color: var(--vt-accent); }
+.vt-btn[hidden] { display: none; }
 .vt-icon-btn { padding: 0; width: 32px; }
 .vt-btn svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .vt-btn-text { font-size: 12px; border-color: var(--vt-toolbar-border); padding: 0 12px; }
@@ -516,10 +517,15 @@ body.vt-annotating .vt-sidebar { top: calc(var(--vt-toolbar-height) + var(--vt-a
 .vt-attachment-size { font-size: 11px; color: var(--vt-toolbar-muted); }
 
 /* ── Progress ── */
-.vt-progress { position: fixed; top: var(--vt-toolbar-height); left: 0; right: 0; height: 3px; background: rgba(255, 255, 255, 0.08); z-index: 21; }
+/* Always on the toolbar's bottom edge, over it: the paper strip, find and
+   annotation bars below come and go without moving it or being covered. */
+.vt-progress { position: fixed; top: calc(var(--vt-toolbar-height) - 3px); left: 0; right: 0; height: 3px; background: rgba(255, 255, 255, 0.08); z-index: 21; pointer-events: none; transition: opacity 0.3s; }
 .vt-progress[hidden] { display: none; }
+.vt-progress.is-done { opacity: 0; }
 .vt-progress-bar { height: 100%; width: 0; background: var(--vt-accent); transition: width 0.15s; }
 .vt-progress-bar.is-indeterminate { width: 30%; animation: vt-slide 1.2s infinite linear; }
+.vt-progress.is-failed .vt-progress-bar { background: #f28b82; }
+body.vt-presenting .vt-progress { display: none; }
 @keyframes vt-slide { from { transform: translateX(-100%); } to { transform: translateX(400%); } }
 
 /* ── Viewer ── */

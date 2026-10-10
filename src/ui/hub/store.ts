@@ -19,8 +19,13 @@ import { S as SHARED } from '../../shared/shared.strings';
 import { LANGUAGE_STORAGE_KEY, currentLanguage, parseLanguagePref, resolveLanguage } from '../../shared/i18n';
 import { S } from '../pdfHub.strings';
 
+/** A half of the page in split view (hub/split.ts). */
+export type Side = 'left' | 'right';
+
 export interface HubTab {
   key: number;
+  /** The half whose tabs it is among while split (the left one otherwise). */
+  side: Side;
   /** Source URL, or null for a local file opened from disk (kept for this hub tab's session, see "Local files"). */
   url: string | null;
   /** Fragment to open at (`#page=3`), consumed by the next load. */

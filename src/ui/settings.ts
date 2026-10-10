@@ -10,11 +10,13 @@
 import {
   DEFAULT_LOCAL_PDF_VIEWER_ENABLED,
   DEFAULT_PAPER_INFO_ENABLED,
+  DEFAULT_PAPER_STRIP_SHOWN,
   DEFAULT_PDF_FILE_CACHE_ENABLED,
   DEFAULT_WEB_PDF_VIEWER_ENABLED,
   LOCAL_PDF_VIEWER_ENABLED_SETTING_KEY,
   OPENALEX_API_KEY_SETTING_KEY,
   PAPER_INFO_ENABLED_SETTING_KEY,
+  PAPER_STRIP_SHOWN_SETTING_KEY,
   PDF_FILE_CACHE_ENABLED_SETTING_KEY,
   SEMANTIC_SCHOLAR_API_KEY_SETTING_KEY,
   STORE_PDF_ANNOTATIONS,
@@ -484,7 +486,12 @@ captureChannel.onmessage = (e: MessageEvent) => reflectCapture(normalizeFigureCo
 // ─── Paper info and database keys ───
 
 const paperInfoInput = byId<HTMLInputElement>('paper-info-enabled');
-paperInfoInput.addEventListener('change', () => { void setSetting(PAPER_INFO_ENABLED_SETTING_KEY, paperInfoInput.checked); });
+const paperStripShownInput = byId<HTMLInputElement>('paper-strip-shown');
+paperInfoInput.addEventListener('change', () => {
+  void setSetting(PAPER_INFO_ENABLED_SETTING_KEY, paperInfoInput.checked);
+  paperStripShownInput.disabled = !paperInfoInput.checked;
+});
+paperStripShownInput.addEventListener('change', () => { void setSetting(PAPER_STRIP_SHOWN_SETTING_KEY, paperStripShownInput.checked); });
 
 interface KeyField {
   setting: string;
@@ -671,11 +678,14 @@ function renderShortcuts(): void {
 // ─── Boot ───
 
 async function loadSettings(): Promise<void> {
-  const [paperInfo, fileCache] = await Promise.all([
+  const [paperInfo, paperStripShown, fileCache] = await Promise.all([
     getSetting(PAPER_INFO_ENABLED_SETTING_KEY, DEFAULT_PAPER_INFO_ENABLED),
+    getSetting(PAPER_STRIP_SHOWN_SETTING_KEY, DEFAULT_PAPER_STRIP_SHOWN),
     getSetting(PDF_FILE_CACHE_ENABLED_SETTING_KEY, DEFAULT_PDF_FILE_CACHE_ENABLED),
   ]);
   paperInfoInput.checked = paperInfo;
+  paperStripShownInput.checked = paperStripShown;
+  paperStripShownInput.disabled = !paperInfo;
   fileCacheInput.checked = fileCache;
   await Promise.all([renderAccess(), renderDisplay(), renderHubScope(), renderDrag(), renderCapture(), ...keyFields.map(renderKey), renderStorage()]);
 }

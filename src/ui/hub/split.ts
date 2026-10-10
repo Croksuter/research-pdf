@@ -14,6 +14,13 @@
 // cache's channel). Closing the split keeps the pane in front, a mirror
 // becoming the tab's own view.
 //
+// Each half has its own tabs while split: the strip divides where the panes
+// do (project and home stay at its left end). A tab shows in its own half;
+// dragged to the other half's tabs (or onto that half of the page) it joins
+// them and shows there, its old half showing its next tab — or, with none
+// left, the halves join, and so do their tabs. A document shown twice has a
+// stand-in tab among the second half's tabs.
+//
 // In: the tab menu, the strip's split button or Alt+Shift+S, or a tab
 // dragged onto either half of the page. Out: the same button or key, or
 // closing the tab of one half. The divider drags (double-click: even
@@ -22,13 +29,13 @@
 
 import { HUB_MESSAGE_TAG } from '../../shared/pdfHubProtocol';
 import { S } from '../pdfHub.strings';
-import { HOME, SETTINGS, type HubTab, activeKey, activeTab, isPage, isHub, projectId, setActiveKey, tabs } from './store';
+import { HOME, SETTINGS, type HubTab, type Side, activeKey, activeTab, isPage, isHub, projectId, setActiveKey, tabs } from './store';
 import { frames, home, homeBtn, settingsBtn, settingsView, splitBtn, splitDivider, splitDrop, splitFront } from './dom';
 import { showToast } from './uiKit';
 import { askToStore, ensureFrame, frameUrl, retiring } from './frames';
 import { activate, dragKey, render } from './tabStrip';
 
-export type Side = 'left' | 'right';
+export type { Side };
 export interface Pane {
   key: number;
   /** Shown in the tab's mirror frame (the same document is in the other pane in its own). */
@@ -56,6 +63,32 @@ export function behindKey(): number | null {
   if (!split) return null;
   const pane = split[otherSide(split.focus)];
   return isPage(pane.key) || pane.key === activeKey ? null : pane.key;
+}
+
+/** The tabs of half `side` (all of them unless split), in strip order. */
+export function groupOf(side: Side): HubTab[] {
+  return tabs.filter((t) => (split ? t.side : 'left') === side);
+}
+
+/**
+ * The tab half `side` shows once `tab` no longer is there: the next of that
+ * half's tabs (the one before at the end), or — `tab` being of the other
+ * half — the one of this half seen last.
+ */
+function nextInGroup(side: Side, tab: HubTab | undefined): HubTab | undefined {
+  if (tab && tab.side === side) {
+    const group = tabs.filter((t) => t.side === side);
+    const i = group.indexOf(tab);
+    return group[i + 1] ?? group[i - 1];
+  }
+  return tabs.filter((t) => t.side === side && t !== tab).sort((a, b) => b.lastShownAt - a.lastShownAt)[0];
+}
+
+/** The split begins: every tab joins the half keeping what was in front, `key` (not a mirror) the half `side`. */
+function beginGroups(side: Side, key: number, mirror: boolean): void {
+  for (const t of tabs) t.side = otherSide(side);
+  const tab = tabOf(key);
+  if (tab && !mirror) tab.side = side;
 }
 
 // ─── Mirror frames ───
@@ -219,6 +252,52 @@ export function focusIfBehind(key: number): boolean {
   return true;
 }
 
+/** Pane `side` shows `key` in its own view (a mirror there goes); which pane is in front stays. */
+export function showInPane(side: Side, key: number): void {
+  if (!split) return;
+  const pane = split[side];
+  if (pane.key === key && !pane.mirror) return;
+  if (pane.mirror) {
+    const shown = tabOf(pane.key);
+    if (shown) dropMirror(shown);
+  }
+  split[side] = { key, mirror: false };
+}
+
+/**
+ * `tab` joins the tabs of half `side` and shows there, in front when
+ * `focus`. The half it left shows its next tab, or the halves join when it
+ * has none.
+ */
+export function moveToSide(tab: HubTab, side: Side, focus = true): void {
+  if (!split) { tab.side = side; return; }
+  const from = otherSide(side);
+  const wasShown = split[from].key === tab.key && !split[from].mirror;
+  tab.side = side;
+  showInPane(side, tab.key);
+  if (wasShown) {
+    const next = nextInGroup(from, tab);
+    if (!next) { closeSplit(side); return; }
+    split[from] = { key: next.key, mirror: false };
+  }
+  if (focus && split.focus !== side) { focusSide(side); return; }
+  setActiveKey(split[split.focus].key);
+  layoutPanes();
+  if (focus) frontElement()?.focus();
+  render();
+}
+
+/** The stand-in tab of a document shown twice closes: its half shows one of its own tabs, or the halves join. */
+export function closeMirrorPane(side: Side): void {
+  if (!split || !split[side].mirror) return;
+  const next = nextInGroup(side, tabOf(split[side].key));
+  if (!next) { closeSplit(otherSide(side)); return; }
+  showInPane(side, next.key);
+  if (split.focus === side) setActiveKey(next.key);
+  layoutPanes();
+  render();
+}
+
 /** The pane in front now shows `key` (a mirror there goes). Call before `setActiveKey`. */
 export function showInFront(key: number): void {
   if (!split) return;
@@ -244,20 +323,14 @@ export function splitWith(key: number, side: Side = 'right', mirror = false, foc
   if (!split) {
     if (key === activeKey && !mirror) return;
     split = { left: { key: activeKey, mirror: false }, right: { key: activeKey, mirror: false }, focus: otherSide(side) };
+    beginGroups(side, key, mirror);
+  } else if (tab && !mirror) {
+    // A tab, from either half: it joins this half's tabs.
+    moveToSide(tab, side, focusNew);
+    return;
   } else {
     const there = split[side];
     if (there.key === key && there.mirror === mirror) { focusSide(side); return; }
-    const opposite = split[otherSide(side)];
-    if (opposite.key === key && !mirror) {
-      // Already in the other half: the halves trade places.
-      split = { left: split.right, right: split.left, focus: split.focus };
-      split.focus = side;
-      setActiveKey(split[side].key);
-      layoutPanes();
-      frontElement()?.focus();
-      render();
-      return;
-    }
     if (there.mirror) {
       const shown = tabOf(there.key);
       if (shown) dropMirror(shown);
@@ -289,27 +362,45 @@ export function closeSplit(keep?: Side): void {
   if (kept.mirror && keptTab) promoteMirror(keptTab);
   if (goneTab) goneTab.lastShownAt = Date.now();
   split = null;
+  // One strip again: the left half's tabs, then the right half's.
+  const merged = [...tabs.filter((t) => t.pinned), ...tabs.filter((t) => !t.pinned && t.side === 'left'), ...tabs.filter((t) => !t.pinned && t.side === 'right')];
+  tabs.splice(0, tabs.length, ...merged);
+  for (const t of tabs) t.side = 'left';
   setActiveKey(kept.key);
   layoutPanes();
   frontElement()?.focus();
   render();
 }
 
-/** A tab leaves the strip: a split showing it ends with the other half (a document in both halves keeps its own view). */
+/**
+ * A tab leaves the strip: the half showing it shows that half's next tab,
+ * or, with none, the split ends with the other half (a document in both
+ * halves keeps its own view).
+ */
 export function releaseTab(key: number): void {
   if (!split) return;
   const left = split.left.key === key;
   const right = split.right.key === key;
-  if (left && right) closeSplit(split.left.mirror ? 'right' : 'left');
-  else if (left) closeSplit('right');
-  else if (right) closeSplit('left');
+  if (left && right) { closeSplit(split.left.mirror ? 'right' : 'left'); return; }
+  const side: Side | null = left ? 'left' : right ? 'right' : null;
+  if (!side) return;
+  const tab = tabOf(key);
+  const next = nextInGroup(side, tab);
+  if (!next) { closeSplit(otherSide(side)); return; }
+  if (split[side].mirror && tab) dropMirror(tab);
+  split[side] = { key: next.key, mirror: false };
+  if (split.focus === side) setActiveKey(next.key);
+  layoutPanes();
 }
 
 /** Two tabs turned out to be one document: the halves show the one kept. */
 export function replaceInSplit(dropKey: number, keepKey: number): void {
   if (!split) return;
   for (const side of ['left', 'right'] as const) {
-    if (split[side].key === dropKey) split[side] = { key: keepKey, mirror: false };
+    if (split[side].key !== dropKey) continue;
+    split[side] = { key: keepKey, mirror: false };
+    const kept = tabOf(keepKey);
+    if (kept) kept.side = side;
   }
   if (activeKey === dropKey) setActiveKey(keepKey);
   if (split.left.key === split.right.key && !split.left.mirror && !split.right.mirror) closeSplit();
@@ -347,6 +438,7 @@ export function dropOnSide(key: number, side: Side): void {
     if (partner) {
       split = { left: { key: partner.key, mirror: false }, right: { key: partner.key, mirror: false }, focus: otherSide(side) };
       split[side] = { key, mirror: false };
+      beginGroups(side, key, false);
       focusSide(side);
     } else {
       splitWith(key, otherSide(side), true);
@@ -390,6 +482,8 @@ function applyRatio(): void {
   const min = width > 0 ? Math.min(0.5, MIN_PANE_PX / width) : 0.2;
   const shown = Math.min(1 - min, Math.max(min, ratio));
   frames.style.setProperty('--split-at', `${(shown * 100).toFixed(2)}%`);
+  // The strip's two groups divide where the panes do (a length: a % there is of the strip's own box).
+  document.documentElement.style.setProperty('--split-px', `${Math.round(shown * width)}px`);
 }
 
 function setRatio(next: number, save: boolean): void {
@@ -493,11 +587,21 @@ export function saveSplit(): void {
   try {
     const left = split ? savedPane(split.left) : null;
     const right = split ? savedPane(split.right) : null;
-    if (split && left && right) sessionStorage.setItem(key, JSON.stringify({ left, right, focus: split.focus }));
+    // The right half's tabs (the rest are the left half's).
+    const rightTabs = split ? tabs.filter((t) => t.side === 'right' && (t.url || t.fileId !== null)).map((t) => ({ url: t.url, fileId: t.url ? null : t.fileId })) : [];
+    if (split && left && right) sessionStorage.setItem(key, JSON.stringify({ left, right, focus: split.focus, rightTabs }));
     else sessionStorage.removeItem(key);
   } catch {
     /* not kept */
   }
+}
+
+function savedTab(saved: unknown): HubTab | undefined {
+  if (!saved || typeof saved !== 'object') return undefined;
+  const s = saved as Partial<SavedPane>;
+  return typeof s.url === 'string'
+    ? tabs.find((t) => t.url === s.url)
+    : typeof s.fileId === 'number' ? tabs.find((t) => t.fileId === s.fileId) : undefined;
 }
 
 function paneFor(saved: unknown): Pane | null {
@@ -505,9 +609,7 @@ function paneFor(saved: unknown): Pane | null {
   const s = saved as Partial<SavedPane>;
   if (s.page === 'home') return { key: HOME, mirror: false };
   if (s.page === 'settings') return { key: SETTINGS, mirror: false };
-  const tab = typeof s.url === 'string'
-    ? tabs.find((t) => t.url === s.url)
-    : typeof s.fileId === 'number' ? tabs.find((t) => t.fileId === s.fileId) : undefined;
+  const tab = savedTab(saved);
   return tab ? { key: tab.key, mirror: s.mirror === true } : null;
 }
 
@@ -515,12 +617,19 @@ function paneFor(saved: unknown): Pane | null {
 export function restoreSplit(): void {
   restored = true;
   try {
-    const raw = JSON.parse(sessionStorage.getItem(`${SPLIT_STORAGE_KEY}:${projectId}`) ?? 'null') as { left?: unknown; right?: unknown; focus?: unknown } | null;
+    const raw = JSON.parse(sessionStorage.getItem(`${SPLIT_STORAGE_KEY}:${projectId}`) ?? 'null') as { left?: unknown; right?: unknown; focus?: unknown; rightTabs?: unknown } | null;
     if (!raw) return;
     const left = paneFor(raw.left);
     const right = paneFor(raw.right);
     if (!left || !right || (left.key === right.key && left.mirror === right.mirror)) return;
     const focus: Side = raw.focus === 'left' ? 'left' : 'right';
+    for (const t of tabs) t.side = 'left';
+    if (Array.isArray(raw.rightTabs)) for (const saved of raw.rightTabs) { const t = savedTab(saved); if (t) t.side = 'right'; }
+    for (const side of ['left', 'right'] as const) {
+      const pane = side === 'left' ? left : right;
+      const t = tabOf(pane.key);
+      if (t && !pane.mirror) t.side = side;
+    }
     split = { left, right, focus: otherSide(focus) };
     focusSide(focus);
   } catch {

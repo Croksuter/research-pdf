@@ -14,7 +14,9 @@ Google Drive.
 - Split view: two papers side by side in one PDF tab, or the same paper
   twice (text beside its references) — drag a tab onto either half of the
   page, use the split button, or Alt+Shift+S. Drawings show in both halves
-  as you make them.
+  as you make them. Each half has its own tabs, the strip dividing where
+  the page does (project and home stay at its left end); drag a tab to the
+  other half's tabs to move it there.
 - Works with several windows: by default a PDF joins the PDF tab of the
   window it was opened in and never pulls another window forward; for
   browsers where you switch spaces in one window (Arc), choose one PDF tab
@@ -46,7 +48,8 @@ Google Drive.
   (DOI / arXiv / title), via OpenAlex, Crossref, arXiv and Semantic Scholar; the
   reference list falls back to the one printed in the PDF. Optional API keys
   for Semantic Scholar and OpenAlex (OpenAlex's keyless use is a daily budget
-  shared per network).
+  shared per network). The strip opens with each PDF or starts folded (a
+  setting); the toolbar's ⓘ opens or folds it per tab.
 - Copies a figure or table as a sharp image for slides. The capture key (`S`,
   ⌘+Shift+X / Ctrl+Shift+X or the toolbar button) turns capture mode on: the
   page's figures and tables are outlined as they are found, a click copies

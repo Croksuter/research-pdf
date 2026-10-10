@@ -69,21 +69,26 @@
     <symbol id="i-split" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M12 4.5v15"/></symbol>
   </svg>
   <nav id="rpdf-strip" class="rpdf-strip" aria-label="열린 PDF" data-i18n-aria-label="stripAria">
-    <button id="rpdf-project-btn" class="rpdf-project-btn" type="button" aria-haspopup="dialog" aria-expanded="false">
-      <span id="rpdf-project-badge" class="rpdf-pbadge" aria-hidden="true"></span><span id="rpdf-project-name" class="rpdf-project-name"></span><svg class="rpdf-chevron"><use href="#i-chevron"/></svg>
-    </button>
-    <button id="rpdf-home-btn" class="rpdf-home-btn" type="button" title="홈 · 라이브러리" aria-label="홈 · 라이브러리" data-i18n-title="homeLibrary" data-i18n-aria-label="homeLibrary" aria-pressed="false"><svg><use href="#i-home"/></svg></button>
-    <div id="rpdf-tabs" class="rpdf-tabs" role="tablist"></div>
-    <button id="rpdf-add" class="rpdf-add" type="button" title="PDF 파일 열기" aria-label="PDF 파일 열기" data-i18n-title="openPdfFile" data-i18n-aria-label="openPdfFile"><svg><use href="#i-plus"/></svg></button>
-    <span class="rpdf-strip-spacer"></span>
-    <button id="rpdf-move-btn" class="rpdf-move-btn" type="button" title="다른 프로젝트로 이동" aria-label="다른 프로젝트로 이동" data-i18n-title="moveToOtherProject" data-i18n-aria-label="moveToOtherProject" aria-haspopup="dialog" aria-expanded="false">
-      <svg><use href="#i-move"/></svg><span data-i18n="moveToProject">프로젝트로 이동</span>
-    </button>
-    <button id="rpdf-split-btn" class="rpdf-home-btn rpdf-split-btn" type="button" title="화면 분할 (Alt+Shift+S)" aria-label="화면 분할 (Alt+Shift+S)" data-i18n-title="splitView" data-i18n-aria-label="splitView" aria-pressed="false"><svg><use href="#i-split"/></svg></button>
-    <button id="rpdf-settings-btn" class="rpdf-home-btn rpdf-settings-btn" type="button" title="설정" aria-label="설정" data-i18n-title="settings" data-i18n-aria-label="settings" aria-pressed="false"><svg><use href="#i-settings"/></svg></button>
-    <button id="rpdf-list-btn" class="rpdf-list-btn" type="button" title="모든 탭 · 최근 닫은 탭" aria-label="모든 탭 · 최근 닫은 탭" data-i18n-title="allTabsRecent" data-i18n-aria-label="allTabsRecent" aria-haspopup="dialog" aria-expanded="false">
-      <span id="rpdf-list-count" class="rpdf-list-count" aria-hidden="true"></span><svg><use href="#i-chevron"/></svg>
-    </button>
+    <div id="rpdf-strip-left" class="rpdf-strip-group">
+      <button id="rpdf-project-btn" class="rpdf-project-btn" type="button" aria-haspopup="dialog" aria-expanded="false">
+        <span id="rpdf-project-badge" class="rpdf-pbadge" aria-hidden="true"></span><span id="rpdf-project-name" class="rpdf-project-name"></span><svg class="rpdf-chevron"><use href="#i-chevron"/></svg>
+      </button>
+      <button id="rpdf-home-btn" class="rpdf-home-btn" type="button" title="홈 · 라이브러리" aria-label="홈 · 라이브러리" data-i18n-title="homeLibrary" data-i18n-aria-label="homeLibrary" aria-pressed="false"><svg><use href="#i-home"/></svg></button>
+      <div id="rpdf-tabs" class="rpdf-tabs" role="tablist" data-side="left"></div>
+      <button id="rpdf-add" class="rpdf-add" type="button" title="PDF 파일 열기" aria-label="PDF 파일 열기" data-i18n-title="openPdfFile" data-i18n-aria-label="openPdfFile"><svg><use href="#i-plus"/></svg></button>
+    </div>
+    <div id="rpdf-strip-right" class="rpdf-strip-group rpdf-strip-group-right">
+      <div id="rpdf-tabs-right" class="rpdf-tabs" role="tablist" data-side="right" hidden></div>
+      <span class="rpdf-strip-spacer"></span>
+      <button id="rpdf-move-btn" class="rpdf-move-btn" type="button" title="다른 프로젝트로 이동" aria-label="다른 프로젝트로 이동" data-i18n-title="moveToOtherProject" data-i18n-aria-label="moveToOtherProject" aria-haspopup="dialog" aria-expanded="false">
+        <svg><use href="#i-move"/></svg><span data-i18n="moveToProject">프로젝트로 이동</span>
+      </button>
+      <button id="rpdf-split-btn" class="rpdf-home-btn rpdf-split-btn" type="button" title="화면 분할 (Alt+Shift+S)" aria-label="화면 분할 (Alt+Shift+S)" data-i18n-title="splitView" data-i18n-aria-label="splitView" aria-pressed="false"><svg><use href="#i-split"/></svg></button>
+      <button id="rpdf-settings-btn" class="rpdf-home-btn rpdf-settings-btn" type="button" title="설정" aria-label="설정" data-i18n-title="settings" data-i18n-aria-label="settings" aria-pressed="false"><svg><use href="#i-settings"/></svg></button>
+      <button id="rpdf-list-btn" class="rpdf-list-btn" type="button" title="모든 탭 · 최근 닫은 탭" aria-label="모든 탭 · 최근 닫은 탭" data-i18n-title="allTabsRecent" data-i18n-aria-label="allTabsRecent" aria-haspopup="dialog" aria-expanded="false">
+        <span id="rpdf-list-count" class="rpdf-list-count" aria-hidden="true"></span><svg><use href="#i-chevron"/></svg>
+      </button>
+    </div>
     <input id="rpdf-file-input" type="file" accept="application/pdf,.pdf" multiple hidden>
   </nav>
   <div id="rpdf-list" class="rpdf-popover" role="dialog" aria-label="모든 탭" data-i18n-aria-label="allTabs" hidden>

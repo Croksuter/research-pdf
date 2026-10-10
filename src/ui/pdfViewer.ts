@@ -166,12 +166,18 @@ const presentation = new PresentationMode(container, pdfViewer, eventBus);
 // and names the document in the library. A paper found by its title alone
 // only gets here with its first author on page 1 (a talk called "Deep
 // Learning" is not LeCun's review).
+const paperToggleBtn = byId<HTMLButtonElement>('vt-paper-toggle');
 const paperStrip = new PaperStrip(() => eventBus.dispatch('resize', { source: paperStrip }), (meta) => {
   setTitles({ paper: meta.title.trim() });
   if (currentIdentity) {
     recordInLibrary({ kind: 'meta', docId: currentIdentity.docId, docTitle: null, title: meta.title, venue: meta.venue, year: meta.year, paperKind: classifyPaperKind(meta) });
   }
+}, ({ available, open }) => {
+  paperToggleBtn.hidden = !available;
+  paperToggleBtn.classList.toggle('is-active', open);
+  paperToggleBtn.setAttribute('aria-pressed', String(open));
 });
+paperToggleBtn.addEventListener('click', () => paperStrip.toggle());
 // Figure copy: a dragged region rendered again as an image, with its source.
 const figureCapture = new FigureCapture({
   container,
@@ -811,10 +817,42 @@ class PasswordCancelled extends Error {
   constructor() { super('password cancelled'); }
 }
 
-function setProgress(ratio: number | null) {
-  progress.hidden = ratio === null;
-  progressBar.classList.toggle('is-indeterminate', ratio !== null && !Number.isFinite(ratio));
-  if (ratio !== null && Number.isFinite(ratio)) progressBar.style.width = `${Math.round(Math.min(1, ratio) * 100)}%`;
+// The loading bar, on the toolbar's bottom edge: a fraction while the file
+// arrives (NaN: size unknown), gone once the document opens, red (and kept)
+// when it could not open. PDF.js goes on reporting while it fetches the rest
+// of a ranged file in the background; once the document is open those reports
+// are not shown — a bar back at 100% would never go.
+type LoadState = number | 'done' | 'failed' | null;
+let progressDone = true;
+let progressFade: ReturnType<typeof setTimeout> | null = null;
+
+function setProgress(state: LoadState) {
+  if (progressFade !== null) { clearTimeout(progressFade); progressFade = null; }
+  if (typeof state === 'number') {
+    if (progressDone && Number.isFinite(state)) return;
+    progressDone = false;
+    progress.hidden = false;
+    progress.classList.remove('is-failed', 'is-done');
+    progressBar.classList.toggle('is-indeterminate', !Number.isFinite(state));
+    if (Number.isFinite(state)) progressBar.style.width = `${Math.round(Math.min(1, state) * 100)}%`;
+    return;
+  }
+  progressDone = true;
+  progressBar.classList.remove('is-indeterminate');
+  if (state === 'failed') {
+    progress.hidden = false;
+    progress.classList.remove('is-done');
+    progress.classList.add('is-failed');
+    progressBar.style.width = '100%';
+  } else if (state === 'done' && !progress.hidden) {
+    progress.classList.remove('is-failed');
+    progress.classList.add('is-done');
+    progressBar.style.width = '100%';
+    progressFade = setTimeout(() => { progressFade = null; progress.hidden = true; progress.classList.remove('is-done'); }, 400);
+  } else {
+    progress.hidden = true;
+    progress.classList.remove('is-failed', 'is-done');
+  }
 }
 
 function openExtensionSettings() {
@@ -832,7 +870,7 @@ async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesIn
   pendingRestore = null;
   setProgress(Number.NaN);
   task.onProgress = ({ loaded, total }: { loaded: number; total: number }) => {
-    if (total > 0) { currentByteLength = total; setProgress(loaded / total); }
+    if (total > 0) { currentByteLength = total; if (loadingTask === task) setProgress(loaded / total); }
   };
   let cancelled = false;
   task.onPassword = (updatePassword: (password: string) => void, reason: number) => {
@@ -853,7 +891,7 @@ async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesIn
   } catch (error) {
     throw cancelled ? new PasswordCancelled() : error;
   }
-  setProgress(null);
+  if (loadingTask === task) setProgress('done');
   hideMessage();
   currentDoc = doc;
   currentFileName = /\.pdf$/iu.test(label) ? label : `${label}.pdf`;
@@ -926,6 +964,7 @@ async function reopenInPlace(doc: PDFDocumentProxy): Promise<void> {
     await openDocument(pdfjsLib.getDocument({ data, ...documentOptions() }), currentLabel, bytesInfo);
   } catch (error) {
     if (error instanceof PasswordCancelled) return;
+    setProgress('failed');
     showMessage(S.reloadFailed(error instanceof Error ? error.message : String(error)));
   }
 }
@@ -942,6 +981,7 @@ function documentOptions(): Record<string, unknown> {
 }
 
 async function loadFromFile(file: File) {
+  setProgress(Number.NaN);
   currentFileUrl = null;
   currentByteLength = file.size;
   openNativeBtn.hidden = true;
@@ -952,8 +992,8 @@ async function loadFromFile(file: File) {
     const bytesInfo = await inspectPdfBytes(data);
     await openDocument(pdfjsLib.getDocument({ data, ...documentOptions() }), file.name, bytesInfo);
   } catch (error) {
-    setProgress(null);
-    if (error instanceof PasswordCancelled) return;
+    if (error instanceof PasswordCancelled) { setProgress(null); return; }
+    setProgress('failed');
     showMessage(S.openFailed(error instanceof Error ? error.message : String(error)));
   }
 }
@@ -974,6 +1014,8 @@ async function keepLocalCopy(fileUrl: string, doc: PDFDocumentProxy, resolved: R
 }
 
 async function loadFromUrl(fileUrl: string) {
+  // From the start: the cache lookup and the server's answer come before PDF.js reports anything.
+  setProgress(Number.NaN);
   currentFileUrl = fileUrl;
   currentByteLength = null;
   const isWeb = isWebPdfSourceUrl(fileUrl);
@@ -1007,8 +1049,8 @@ async function loadFromUrl(fileUrl: string) {
     const doc = await openDocument(pdfjsLib.getDocument({ url: resolved?.finalUrl ?? fileUrl, ...documentOptions() }), displayName);
     void keepLocalCopy(fileUrl, doc, resolved);
   } catch (error) {
-    setProgress(null);
-    if (error instanceof PasswordCancelled) return;
+    if (error instanceof PasswordCancelled) { setProgress(null); return; }
+    setProgress('failed');
     const message = error instanceof Error ? error.message : String(error);
     if (isWeb) {
       // Cross-origin fetch from an extension page needs host access; that is
