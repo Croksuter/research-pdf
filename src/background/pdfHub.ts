@@ -16,15 +16,21 @@
 //     handed to it and the tab goes back (or closes when it has nowhere to go
 //     back to).
 //
-// A project is open in at most one hub, so a hub tab can be dragged to any
-// window and stays that project's hub. Claims are serialized: opening five
-// PDFs at once must elect one hub, not five that each see the others. The
-// registry (project → hub tab) lives in chrome.storage.session so a
-// service-worker restart keeps it.
+// Which hub "the project already has" depends on the device's hub scope
+// (shared/hubScope.ts): with 'window' only one in the claimer's window
+// counts, so a PDF never pulls another window forward and each window can
+// hold a hub of the same project; with 'browser' any counts (this window's
+// first). A hub tab dragged to another window stays its project's hub there.
+// A document can also be torn off into a hub of its own in a new window.
+// Claims are serialized: opening five PDFs at once must elect one hub, not
+// five that each see the others. The registry (project → its hub tabs, the
+// oldest first) lives in chrome.storage.session so a service-worker restart
+// keeps it; the oldest hub's tabs are the project's saved layout.
 
 import { PDF_HUB_PAGE, PDF_HUB_SHOW_SETTINGS, buildPdfHubEntryUrl, buildPdfHubUrl, type PdfHubDoc } from '../shared/localPdf';
 import type { PdfHubOpenMessage } from '../shared/messages';
 import { hubDocKey } from '../shared/hubTabs';
+import { DEFAULT_HUB_SCOPE, HUB_SCOPE_STORAGE_KEY, parseHubScope, pickHub, type HubCandidate, type HubScope } from '../shared/hubScope';
 import { DEFAULT_PROJECT_ID, appendToPdfProjectLayout, applyPdfProjectUpdate, targetProjectForDoc, type PdfProjects } from '../shared/pdfProjects';
 import type { PdfLibrary } from '../shared/pdfLibrary';
 import { debugError, debugLog } from '../shared/debugLog';
@@ -109,13 +115,28 @@ export function libraryIdForUrl(library: PdfLibrary, url: string): string | null
 // ─── Registry (chrome.storage.session) ───
 
 const HUB_REGISTRY_KEY = 'rpdfProjectHubs';
-type HubRegistry = Record<string, HubRegistryEntry>;
+/** Project → its hub tabs, in the order they became hubs. */
+type HubRegistry = Record<string, HubRegistryEntry[]>;
+
+function parseEntry(value: unknown): HubRegistryEntry | null {
+  if (!value || typeof value !== 'object') return null;
+  const entry = value as Partial<HubRegistryEntry>;
+  if (typeof entry.tabId !== 'number') return null;
+  return { tabId: entry.tabId, ready: entry.ready === true, pending: Array.isArray(entry.pending) ? entry.pending : [] };
+}
 
 async function readRegistry(): Promise<HubRegistry> {
   try {
     const stored = await chrome.storage.session.get(HUB_REGISTRY_KEY);
     const value = stored[HUB_REGISTRY_KEY];
-    return value && typeof value === 'object' ? value as HubRegistry : {};
+    if (!value || typeof value !== 'object') return {};
+    const registry: HubRegistry = {};
+    for (const [project, raw] of Object.entries(value as Record<string, unknown>)) {
+      // A build with one hub per project kept a single entry.
+      const entries = (Array.isArray(raw) ? raw : [raw]).map(parseEntry).filter((e): e is HubRegistryEntry => e !== null);
+      if (entries.length) registry[project] = entries;
+    }
+    return registry;
   } catch {
     return {};
   }
@@ -126,6 +147,14 @@ async function writeRegistry(registry: HubRegistry): Promise<void> {
     await chrome.storage.session.set({ [HUB_REGISTRY_KEY]: registry });
   } catch {
     /* best effort: a lost registry only means the next PDF elects a new hub */
+  }
+}
+
+async function readHubScope(): Promise<HubScope> {
+  try {
+    return parseHubScope((await chrome.storage.local.get(HUB_SCOPE_STORAGE_KEY))[HUB_SCOPE_STORAGE_KEY]);
+  } catch {
+    return DEFAULT_HUB_SCOPE;
   }
 }
 
@@ -173,34 +202,49 @@ async function writeHandedBack(value: HandedBack, now = Date.now()): Promise<voi
   }
 }
 
-async function liveEntry(registry: HubRegistry, project: string): Promise<HubRegistryEntry | null> {
-  const entry = registry[project];
-  if (!entry) return null;
-  try {
-    await chrome.tabs.get(entry.tabId);
-    return entry;
-  } catch {
-    /* closed */
-  }
-  delete registry[project];
-  return null;
+function entryOf(registry: HubRegistry, project: string, tabId: number): HubRegistryEntry | null {
+  return registry[project]?.find((e) => e.tabId === tabId) ?? null;
 }
 
-/** Projects with a hub right now (entries are checked lazily, on claim). */
-async function liveProjects(registry: HubRegistry): Promise<Set<string>> {
-  const live = new Set<string>();
-  for (const project of Object.keys(registry)) {
-    if (await liveEntry(registry, project)) live.add(project);
+function dropEntry(registry: HubRegistry, project: string, tabId: number): void {
+  const rest = (registry[project] ?? []).filter((e) => e.tabId !== tabId);
+  if (rest.length) registry[project] = rest;
+  else delete registry[project];
+}
+
+interface LiveHub extends HubCandidate {
+  discarded: boolean;
+}
+
+/** The project's hubs whose tabs are open, where they are now (oldest first); closed ones are dropped. */
+async function liveHubs(registry: HubRegistry, project: string): Promise<LiveHub[]> {
+  const live: LiveHub[] = [];
+  for (const entry of [...(registry[project] ?? [])]) {
+    const tab = await chrome.tabs.get(entry.tabId).catch(() => null);
+    if (!tab) { dropEntry(registry, project, entry.tabId); continue; }
+    live.push({ tabId: entry.tabId, windowId: tab.windowId, active: tab.active, discarded: !!tab.discarded });
   }
   return live;
 }
 
-/** `tabId` holds `project` and nothing else. */
-function register(registry: HubRegistry, project: string, entry: HubRegistryEntry): void {
-  for (const [key, other] of Object.entries(registry)) {
-    if (other.tabId === entry.tabId && key !== project) delete registry[key];
+/** Projects with a hub a PDF opened in `windowId` would go to. */
+async function reachableProjects(registry: HubRegistry, windowId: number | null, scope: HubScope): Promise<Set<string>> {
+  const reachable = new Set<string>();
+  for (const project of Object.keys(registry)) {
+    if (pickHub(await liveHubs(registry, project), windowId, scope)) reachable.add(project);
   }
-  registry[project] = entry;
+  return reachable;
+}
+
+/** `tabId` is a hub of `project` and of nothing else; a new one goes after the project's other hubs. */
+function register(registry: HubRegistry, project: string, entry: HubRegistryEntry): void {
+  for (const key of Object.keys(registry)) {
+    if (key !== project) dropEntry(registry, key, entry.tabId);
+  }
+  const list = registry[project] ?? [];
+  registry[project] = list.some((e) => e.tabId === entry.tabId)
+    ? list.map((e) => (e.tabId === entry.tabId ? entry : e))
+    : [...list, entry];
 }
 
 // How long a live hub gets to take handed-over documents before the claimer
@@ -224,9 +268,8 @@ function forwardToLiveHub(hubTabId: number, docs: PdfHubDoc[], activate: boolean
   return Promise.race([answer, late]).then((delivery) => ({ delivery, answer }));
 }
 
-async function hubLiveness(tabId: number): Promise<HubLiveness> {
-  const tab = await chrome.tabs.get(tabId).catch(() => null);
-  return !tab ? 'gone' : tab.discarded ? 'discarded' : 'present';
+function livenessOf(hub: LiveHub | null): HubLiveness {
+  return !hub ? 'gone' : hub.discarded ? 'discarded' : 'present';
 }
 
 /**
@@ -235,19 +278,18 @@ async function hubLiveness(tabId: number): Promise<HubLiveness> {
  * a hub that wakes normally does not get them twice; one Chrome discards
  * before waking still gets them from the queue when it reloads.
  */
-function queueForHub(registry: HubRegistry, project: string, docs: readonly PdfHubDoc[], ready: boolean, answer: Promise<'taken' | 'gone'> | null): void {
-  const entry = registry[project];
+function queueForHub(registry: HubRegistry, project: string, tabId: number, docs: readonly PdfHubDoc[], ready: boolean, answer: Promise<'taken' | 'gone'> | null): void {
+  const entry = entryOf(registry, project, tabId);
   if (!entry) return;
   entry.ready = ready;
   entry.pending = mergeHubDocs(entry.pending, docs);
   if (!answer) return;
-  const tabId = entry.tabId;
   void answer.then((result) => {
     if (result !== 'taken') return;
     void serialized(async () => {
       const current = await readRegistry();
-      const queued = current[project];
-      if (!queued || queued.tabId !== tabId) return;
+      const queued = entryOf(current, project, tabId);
+      if (!queued) return;
       const taken = new Set(docs.map((d) => d.url));
       const rest = queued.pending.filter((d) => !taken.has(d.url));
       if (rest.length === queued.pending.length) return;
@@ -268,7 +310,7 @@ async function activateTab(tabId: number): Promise<void> {
 }
 
 /** Which project a claim is for: the one named, or where entering documents go. */
-async function claimTarget(request: { docs: PdfHubDoc[]; project: string | null }, registry: HubRegistry): Promise<{ project: string; projects: PdfProjects }> {
+async function claimTarget(request: { docs: PdfHubDoc[]; project: string | null }, registry: HubRegistry, windowId: number, scope: HubScope): Promise<{ project: string; projects: PdfProjects }> {
   const projects = await readPdfProjects();
   const named = request.project;
   if (named) {
@@ -279,8 +321,8 @@ async function claimTarget(request: { docs: PdfHubDoc[]; project: string | null 
   if (request.docs.length !== 1) return { project: DEFAULT_PROJECT_ID, projects };
   const library = await readPdfLibrary();
   const docId = libraryIdForUrl(library, request.docs[0].url);
-  const live = await liveProjects(registry);
-  return { project: targetProjectForDoc(projects, docId, (id) => live.has(id)), projects };
+  const reachable = await reachableProjects(registry, windowId, scope);
+  return { project: targetProjectForDoc(projects, docId, (id) => reachable.has(id)), projects };
 }
 
 export type HubClaimResult =
@@ -391,10 +433,13 @@ async function settleClaim(
   dispose: 'back' | 'close',
 ): Promise<HubClaimResult> {
   const registry = await readRegistry();
-  const { project } = await claimTarget(request, registry);
+  const scope = await readHubScope();
+  const { project } = await claimTarget(request, registry, claimer.windowId, scope);
   const promoted = await takePromotion(claimer.id, request.docs);
-  const entry = registry[project] ?? null;
-  const liveness = entry ? await hubLiveness(entry.tabId) : 'gone';
+  const hubs = await liveHubs(registry, project);
+  // A tab that is already one of the project's hubs (a new hub page, a reload) stays one.
+  const hub = hubs.find((h) => h.tabId === claimer.id) ?? pickHub(hubs, claimer.windowId, scope);
+  const liveness = livenessOf(hub);
   let delivery: HubDelivery | null = null;
   let answer: Promise<'taken' | 'gone'> | null = null;
   for (;;) {
@@ -402,11 +447,11 @@ async function settleClaim(
     // switched to it), and so is one replacing a PDF's wrapper page: it
     // never hands its tab back to a web page.
     const decision = decideHubClaim({
-      entry: registry[project] ?? null, liveness, delivery,
+      entry: hub ? entryOf(registry, project, hub.tabId) : null, liveness, delivery,
       claimerTabId: claimer.id, canGoBack: request.canGoBack && !request.project && !promoted, hasDocs: request.docs.length > 0,
     });
-    debugLog('bg:hub', `claim → ${decision.kind}`, () => ({ tabId: claimer.id, project, docs: request.docs.length, liveness, delivery }));
-    if ((decision.kind === 'become-hub' || decision.kind === 'spawn-hub') && decision.forget) delete registry[project];
+    debugLog('bg:hub', `claim → ${decision.kind}`, () => ({ tabId: claimer.id, project, scope, docs: request.docs.length, liveness, delivery }));
+    if ((decision.kind === 'become-hub' || decision.kind === 'spawn-hub') && decision.forget && hub) dropEntry(registry, project, hub.tabId);
     switch (decision.kind) {
       case 'become-hub': {
         register(registry, project, { tabId: claimer.id, ready: true, pending: [] });
@@ -414,7 +459,7 @@ async function settleClaim(
         return { success: true, role: 'hub', project, docs: decision.pending };
       }
       case 'queue': {
-        queueForHub(registry, project, request.docs, decision.ready, answer);
+        queueForHub(registry, project, decision.hubTabId, request.docs, decision.ready, answer);
         await writeRegistry(registry);
         if (claimer.active && !answer) await activateTab(decision.hubTabId);
         return { success: true, role: 'forwarded', dispose };
@@ -466,10 +511,9 @@ export function showPdfSettings(): Promise<{ success: boolean }> {
     const focused = await chrome.windows.getLastFocused().then((w) => w.id, () => undefined);
     const hubs: Array<{ tabId: number; windowId: number; active: boolean }> = [];
     for (const project of Object.keys(registry)) {
-      const entry = await liveEntry(registry, project);
-      if (!entry?.ready) continue;
-      const tab = await chrome.tabs.get(entry.tabId).catch(() => null);
-      if (tab && !tab.discarded) hubs.push({ tabId: entry.tabId, windowId: tab.windowId, active: tab.active });
+      for (const hub of await liveHubs(registry, project)) {
+        if (entryOf(registry, project, hub.tabId)?.ready && !hub.discarded) hubs.push(hub);
+      }
     }
     const pick = hubs.find((h) => h.windowId === focused && h.active) ?? hubs.find((h) => h.windowId === focused) ?? hubs[0];
     if (pick) {
@@ -488,9 +532,10 @@ export function showPdfSettings(): Promise<{ success: boolean }> {
 // ─── Opening a project, moving a document ───
 
 /**
- * Shows the project's hub if it is open anywhere. Closed: with `inPlace` the
- * answer is the hub URL with its saved tabs, for the sender to switch to;
- * otherwise a new hub tab opens next to the sender.
+ * Shows the project's hub if one is open where a PDF from the sender's window
+ * would go (that window's; with scope 'browser', any). Otherwise: with
+ * `inPlace` the answer is the hub URL with its saved tabs, for the sender to
+ * switch to; otherwise a new hub tab opens next to the sender.
  */
 export function openPdfProject(project: string, sender: chrome.runtime.MessageSender, inPlace = false): Promise<{ success: boolean; url?: string; error?: string }> {
   return serialized(async () => {
@@ -498,9 +543,9 @@ export function openPdfProject(project: string, sender: chrome.runtime.MessageSe
     const target = projects[project];
     if (!target || target.deletedAt !== 0) return { success: false, error: S.noSuchProject };
     const registry = await readRegistry();
-    const entry = await liveEntry(registry, project);
-    if (entry) {
-      if (entry.tabId !== sender.tab?.id) await activateTab(entry.tabId);
+    const hub = pickHub(await liveHubs(registry, project), sender.tab?.windowId ?? null, await readHubScope());
+    if (hub) {
+      if (hub.tabId !== sender.tab?.id) await activateTab(hub.tabId);
       return { success: true };
     }
     const base = chrome.runtime.getURL(PDF_HUB_PAGE);
@@ -526,12 +571,13 @@ export function openPdfProject(project: string, sender: chrome.runtime.MessageSe
 
 /**
  * Moves (or, with `keep`, also registers) a document to project `to`; its tab
- * goes to that project's hub when it is open (queued when the hub is loading,
- * asleep or discarded), otherwise into the tabs it opens with. A moved
- * document never vanishes: a hub that turns out to be gone is forgotten and
- * the layout gets it. Answers whether the target hub is open.
+ * goes to that project's hub when one is open — the one in the sender's
+ * window `windowId` first — (queued when the hub is loading, asleep or
+ * discarded), otherwise into the tabs it opens with. A moved document never
+ * vanishes: a hub that turns out to be gone is forgotten and the layout gets
+ * it. Answers whether a target hub is open.
  */
-export function movePdfToProject(request: { docId: string; url: string | null; from: string; to: string; keep: boolean }): Promise<{ success: boolean; open?: boolean; error?: string }> {
+export function movePdfToProject(request: { docId: string; url: string | null; from: string; to: string; keep: boolean }, windowId: number | null = null): Promise<{ success: boolean; open?: boolean; error?: string }> {
   return serialized(async () => {
     const projects = await readPdfProjects();
     if (projects[request.to]?.deletedAt !== 0) return { success: false, error: S.noSuchProject };
@@ -539,17 +585,17 @@ export function movePdfToProject(request: { docId: string; url: string | null; f
       ? request.to === DEFAULT_PROJECT_ID ? current : applyPdfProjectUpdate(current, { kind: 'member', id: request.to, docId: request.docId, member: true })
       : applyPdfProjectUpdate(current, { kind: 'move', docId: request.docId, from: request.from, to: request.to })));
     const registry = await readRegistry();
-    const entry = registry[request.to] ?? null;
-    const liveness = entry ? await hubLiveness(entry.tabId) : 'gone';
+    const hub = pickHub(await liveHubs(registry, request.to), windowId, 'browser');
+    const liveness = livenessOf(hub);
     if (request.keep || !request.url) {
-      return { success: true, open: !!entry && liveness !== 'gone' };
+      return { success: true, open: !!hub };
     }
     const docs = [{ url: request.url, hash: '' }];
     let delivery: HubDelivery | null = null;
     let answer: Promise<'taken' | 'gone'> | null = null;
     for (;;) {
       // Never the claimer and never going back: 'become-hub' means no hub is open.
-      const decision = decideHubClaim({ entry: registry[request.to] ?? null, liveness, delivery, claimerTabId: -1, canGoBack: false, hasDocs: true });
+      const decision = decideHubClaim({ entry: hub ? entryOf(registry, request.to, hub.tabId) : null, liveness, delivery, claimerTabId: -1, canGoBack: false, hasDocs: true });
       debugLog('bg:hub', `move → ${decision.kind}`, () => ({ to: request.to, liveness, delivery }));
       switch (decision.kind) {
         case 'forward-live':
@@ -558,12 +604,12 @@ export function movePdfToProject(request: { docId: string; url: string | null; f
         case 'handed-over':
           return { success: true, open: true };
         case 'queue':
-          queueForHub(registry, request.to, docs, decision.ready, answer);
+          queueForHub(registry, request.to, decision.hubTabId, docs, decision.ready, answer);
           await writeRegistry(registry);
           return { success: true, open: true };
         default: {
-          if (decision.kind !== 'spawn-hub' && decision.forget) {
-            delete registry[request.to];
+          if (decision.kind !== 'spawn-hub' && decision.forget && hub) {
+            dropEntry(registry, request.to, hub.tabId);
             await writeRegistry(registry);
           }
           const url = request.url;
@@ -575,14 +621,65 @@ export function movePdfToProject(request: { docId: string; url: string | null; f
   });
 }
 
+// ─── Several hubs of one project ───
+
+/**
+ * Whether `tabId` is the hub whose tabs are `project`'s saved layout (what
+ * it reopens with): its oldest open hub. A document torn off into a window of
+ * its own must not make the project reopen with that one document. A hub the
+ * registry does not know (it was lost) still records.
+ */
+export function isLayoutHub(project: string, tabId: number): Promise<boolean> {
+  return serialized(async () => {
+    const hubs = await liveHubs(await readRegistry(), project);
+    return hubs.length === 0 || hubs[0].tabId === tabId || !hubs.some((h) => h.tabId === tabId);
+  });
+}
+
+export interface WindowBounds {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Opens `url` in a new window, in a hub of `project` of its own (a document
+ * dragged out of its hub, or "새 창으로 분리"). That tab is registered before
+ * its page claims, so it becomes a hub of the project next to the one the
+ * document came from — with either hub scope — instead of handing it back.
+ */
+export function tearOffPdfDoc(request: { project: string; url: string; bounds: WindowBounds | null }): Promise<{ success: boolean; error?: string }> {
+  return serialized(async () => {
+    const projects = await readPdfProjects();
+    const project = projects[request.project]?.deletedAt === 0 ? request.project : DEFAULT_PROJECT_ID;
+    const url = buildPdfHubUrl([request.url], 0, chrome.runtime.getURL(PDF_HUB_PAGE), null, project);
+    const create = (bounds: WindowBounds | null) => chrome.windows.create({ url, focused: true, type: 'normal', ...(bounds ?? {}) });
+    try {
+      // Bounds Chrome finds mostly off screen are refused: then wherever Chrome puts it.
+      const created = await create(request.bounds).catch(() => (request.bounds ? create(null) : Promise.reject(new Error('no window'))));
+      const tabId = created?.tabs?.[0]?.id;
+      if (typeof tabId !== 'number') throw new Error('no tab id');
+      const registry = await readRegistry();
+      register(registry, project, { tabId, ready: false, pending: [] });
+      await writeRegistry(registry);
+      debugLog('bg:hub', 'tore a document off into a new window', () => ({ project, tabId }));
+      return { success: true };
+    } catch (error) {
+      debugError('bg:hub', 'failed to tear a document off', () => ({ error: error instanceof Error ? error.message : String(error) }));
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
+}
+
 // ─── Registry upkeep ───
 
 function forgetHubTab(tabId: number): Promise<void> {
   return serialized(async () => {
     const registry = await readRegistry();
     let changed = false;
-    for (const [project, entry] of Object.entries(registry)) {
-      if (entry.tabId === tabId) { delete registry[project]; changed = true; }
+    for (const project of Object.keys(registry)) {
+      if (entryOf(registry, project, tabId)) { dropEntry(registry, project, tabId); changed = true; }
     }
     if (changed) await writeRegistry(registry);
   });

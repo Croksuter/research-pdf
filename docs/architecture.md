@@ -55,7 +55,7 @@ no longer scatter across tabs that look like web pages.
   from the web goes to an open project it is registered to, otherwise the
   default project; no hub for that project and no history → this tab is the
   hub; no hub but the tab came from a web page → a clean hub tab is created
-  next to it; a hub exists (in any window) → the documents are handed to it
+  next to it; a hub exists → the documents are handed to it
   (`VOCAB_T_PDF_HUB_OPEN` broadcast, or queued while a new hub is still
   loading, discarded by Chrome, or frozen in the background and not answering
   yet — a frozen hub gets the message when it wakes, and the queue covers
@@ -65,8 +65,47 @@ no longer scatter across tabs that look like web pages.
   the PDF by itself, as publishers' download pages do — closes instead and
   does not bring the hub forward again (`rpdfHandedBack`, session storage);
   otherwise the two would loop. The hub (and its window) is brought forward only
-  when the PDF opened in the foreground. The registry is project → tab, so a
-  hub dragged to another window stays that project's hub.
+  when the PDF opened in the foreground. The registry is project → its hub
+  tabs (oldest first), so a hub dragged to another window stays that
+  project's hub.
+- **Which hub "exists"** is the device's hub scope (`shared/hubScope.ts`,
+  `rpdfHubScope`, settings → Opening PDFs, and asked in the welcome guide):
+  `window` (the default) counts only a hub in the claimer's window — the one
+  in front there, else the oldest — so a PDF stays in the window it was
+  opened in, never pulls another window forward, and each window can hold a
+  hub of the same project; `browser` counts any (this window's first, else
+  the oldest): one hub per project, for browsers where one window holds
+  every space (Arc). With one window they are the same. Opening a project
+  from the switcher follows the same rule; a moved document goes to the
+  target's hub in the sender's window first, else any.
+- **Several hubs of one project** (window scope, or a document torn off):
+  each shows the project's pins and registers what it shows; only the
+  oldest open one writes the project's saved layout (`isLayoutHub`), so a
+  window holding one torn-off paper never becomes what the project reopens
+  with. The extension-reload records still keep every hub.
+- **Tearing off** ("새 창으로 분리" in the tab menu, or a tab dropped outside
+  the browser window): the viewer stores its position, then
+  `VOCAB_T_PDF_TEAR_OFF` opens a new window (at the drop point, Chrome
+  placing it when those bounds are refused) whose tab is registered as a hub
+  of the project before its page claims, so it stays one instead of handing
+  the document back; the tab leaves this hub (a pinned one stays — pins are
+  the project's). A file picked from disk has no address and cannot go.
+- **Split view** (`ui/hub/split.ts`): the page shows two panes; the pane in
+  front holds the active tab (strip, title, keys and "move" act on it), the
+  tab of the other pane is marked in the strip. Choosing a tab shows it in
+  the pane in front, or brings the other pane in front when it shows it;
+  pressing in a pane does too (viewers post `focus`). Home and settings fill
+  a pane like a document. In: the tab menu, the strip's split button or
+  Alt+Shift+S (the last other document beside this one, or this one twice),
+  or a tab dragged onto either half of the page; Alt+Shift+O goes to the
+  other half. Out: the same button or key, or closing the tab of one half.
+  The same document in both halves is a mirror frame next to the tab's own
+  (`window.name` = `rpdf-aux`): opened where the reader is (asked like
+  before sleeping), it saves no reading position until joining the halves
+  makes it the tab's view (`primary`); drawings show in both live (the
+  annotation channel). Frames of either pane never sleep. The divider drags
+  (per-device ratio, ≥ 240 px a pane); the halves are kept per project in
+  sessionStorage, so a reload or a project switched back to keeps them.
 - An embedded PDF gets the viewer inline, unless its frame fills the tab
   (≥ 85 % wide, ≥ 70 % high): a publisher page that only wraps the PDF in an
   iframe (IEEE's stamp.jsp). Then the viewer asks the background
@@ -84,8 +123,9 @@ no longer scatter across tabs that look like web pages.
   Chrome's session restore bring them back. Iframes are created the first
   time a document is shown.
 - Viewer ↔ hub talk over same-origin `postMessage` (`shared/pdfHubProtocol.ts`):
-  document title and identity, Alt+Shift+←/→, Alt+W and Alt+Shift+T (not
-  while typing in a text field), local
+  document title and identity, Alt+Shift+←/→, Alt+W, Alt+Shift+T,
+  Alt+Shift+S and Alt+Shift+O (not while typing in a text field), a press
+  inside the viewer (split view), local
   files opened inside a viewer (they become new hub tabs), the sleep
   handshake. "Open in Chrome's viewer" from the hub opens a separate tab so
   the hub's other documents stay.

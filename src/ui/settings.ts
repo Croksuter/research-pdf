@@ -30,6 +30,7 @@ import { PDF_LIBRARY_STORAGE_KEY, parsePdfLibrary } from '../shared/pdfLibrary';
 import { PDF_PROJECTS_STORAGE_KEY, parsePdfProjects } from '../shared/pdfProjects';
 import { isEmptyAnnotationCache, parsePdfAnnotationCache } from '../shared/pdfAnnotations';
 import { openAlexCheck, semanticScholarCheck, type ApiCheck } from '../shared/apiStatus';
+import { HUB_SCOPE_STORAGE_KEY, parseHubScope } from '../shared/hubScope';
 import { DISPLAY_PREFS_STORAGE_KEY, parseDisplayPrefs, type DisplayPrefs } from '../shared/displayPrefs';
 import { FIGURE_COPY_OPTIONS_CHANNEL, FIGURE_COPY_OPTIONS_SETTING_KEY, normalizeFigureCopyOptions, type FigureCopyOptions } from '../shared/figureSource';
 import { LANGUAGE_STORAGE_KEY, currentLanguage, localizeDocument, parseLanguagePref, saveLanguagePref } from '../shared/i18n';
@@ -343,6 +344,18 @@ gatherButton.addEventListener('click', () => {
   })();
 });
 
+// ─── Where PDFs gather: a hub per window, or one for the browser (this device) ───
+
+const hubScope = byId<HTMLSelectElement>('hub-scope');
+
+async function renderHubScope(): Promise<void> {
+  hubScope.value = parseHubScope((await chrome.storage.local.get(HUB_SCOPE_STORAGE_KEY))[HUB_SCOPE_STORAGE_KEY]);
+}
+
+hubScope.addEventListener('change', () => {
+  void chrome.storage.local.set({ [HUB_SCOPE_STORAGE_KEY]: parseHubScope(hubScope.value) });
+});
+
 // ─── Display (this device; open hubs follow at once) ───
 
 const displayLanguage = byId<HTMLSelectElement>('display-language');
@@ -639,7 +652,7 @@ async function loadSettings(): Promise<void> {
   ]);
   paperInfoInput.checked = paperInfo;
   fileCacheInput.checked = fileCache;
-  await Promise.all([renderAccess(), renderDisplay(), renderCapture(), ...keyFields.map(renderKey), renderStorage()]);
+  await Promise.all([renderAccess(), renderDisplay(), renderHubScope(), renderCapture(), ...keyFields.map(renderKey), renderStorage()]);
 }
 
 // The hub keeps this frame once made, so what it shows can go stale: look

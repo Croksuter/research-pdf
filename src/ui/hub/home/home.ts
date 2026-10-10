@@ -10,7 +10,7 @@ import { libraryEntryKind, relativeTime, searchPdfLibrary, type PdfDocKind, type
 import { currentLanguage } from '../../../shared/i18n';
 import { S } from '../../pdfHub.strings';
 import { HOME, SETTINGS, activeKey, annotated, currentProject, docRecords, entryName, inThisProject, library, loadAnnotated, membershipIndex, openTabFor, pinnedDocIds, projectId, projectName } from '../store';
-import { fileInput, home, homeBtn, homeOpen, homeSearch, homeSections, homeTitle, settingsBtn, settingsView } from '../dom';
+import { fileInput, home, homeBtn, homeOpen, homeSearch, homeSections, homeTitle, settingsBtn } from '../dom';
 import { el, icon, listRow, showToast } from '../uiKit';
 import { activate, addDocs, leaveTabs, render, showSettings } from '../tabStrip';
 import { closed, reopenClosed } from '../session';
@@ -23,11 +23,8 @@ export const HOME_PAGE_SIZE = 30;
 export const SEARCH_PAGE_SIZE = 100;
 
 export function showHome(focusSearch: boolean): void {
-  leaveTabs(HOME);
-  home.hidden = false;
-  homeBtn.setAttribute('aria-pressed', 'true');
-  settingsView.hidden = true;
-  settingsBtn.setAttribute('aria-pressed', 'false');
+  // Split view: home was in the half behind, which came in front.
+  if (!leaveTabs(HOME)) { if (focusSearch) homeSearch.focus(); return; }
   resetHomeLimits();
   renderHome();
   void loadAnnotated().then(() => scheduleHomeRender());

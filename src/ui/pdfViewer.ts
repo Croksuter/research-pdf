@@ -23,7 +23,7 @@ import {
 import { APP_NAME } from '../shared/brand';
 import { debugLog, initDebugLogging } from '../shared/debugLog';
 import { PDF_HUB_PAGE, WEB_PDF_HOST_ORIGINS, buildPdfHubEntryUrl, isWebPdfSourceUrl, parsePdfViewerFile, pdfDisplayName } from '../shared/localPdf';
-import { HUB_MESSAGE_TAG, hubKeyAction, parseHubToViewerMessage, sameTitle, type ViewerToHubMessage } from '../shared/pdfHubProtocol';
+import { HUB_AUX_FRAME_NAME, HUB_MESSAGE_TAG, hubKeyAction, parseHubToViewerMessage, sameTitle, type ViewerToHubMessage } from '../shared/pdfHubProtocol';
 import { AnnotationToolbar, HIGHLIGHT_COLORS } from './pdfViewer/annotate';
 import { FigureCapture } from './pdfViewer/figureCapture';
 import { byId } from './pdfViewer/dom';
@@ -238,6 +238,15 @@ function postToHub(message: ViewerToHubMessage) {
   if (inHub) window.parent.postMessage(message, location.origin);
 }
 
+// A second view of a document beside its tab's own (the hub's split view):
+// reading the references there must not move where the document reopens.
+let auxView = inHub && window.name === HUB_AUX_FRAME_NAME;
+// In a split hub, pressing in a viewer brings its half in front.
+if (inHub) {
+  document.addEventListener('pointerdown', () => postToHub({ tag: HUB_MESSAGE_TAG, kind: 'focus' }), { capture: true, passive: true });
+  window.addEventListener('focus', () => postToHub({ tag: HUB_MESSAGE_TAG, kind: 'focus' }));
+}
+
 // The hub's library (shared/pdfLibrary.ts) lists documents opened in the hub;
 // PDFs embedded in web pages are not the user's reading list.
 function recordInLibrary(update: PdfLibraryUpdate) {
@@ -273,6 +282,7 @@ window.addEventListener('message', (event) => {
   if (!message) return;
   if (message.kind === 'open-file') void loadFromFile(message.file);
   else if (message.kind === 'sleep') void prepareForSleep(message.id);
+  else if (message.kind === 'primary') auxView = false;
   else if (currentDoc) applyViewParams(classifyViewerHash(message.hash));
 });
 
@@ -591,7 +601,7 @@ let docStateTimer: ReturnType<typeof setTimeout> | null = null;
 let docStatePending: (() => PdfDocRecord | null) | null = null;
 function rememberDocState() {
   const identity = currentIdentity;
-  if (!identity || !userTouched || holdPosition) return;
+  if (!identity || !userTouched || holdPosition || auxView) return;
   if (docStateTimer) clearTimeout(docStateTimer);
   docStatePending = () => (currentIdentity !== identity ? null : {
     ...identity,

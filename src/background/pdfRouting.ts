@@ -33,13 +33,14 @@ import {
   parsePdfProjectMoveRequest,
   parsePdfProjectOpenRequest,
   parsePdfProjectUpdateRequest,
+  parsePdfTearOffRequest,
   parseRestoreViewerTabsRequest,
   parseSyncWebPdfRoutingRequest,
 } from '../shared/messages';
 import { DEFAULT_PROJECT_ID, PDF_PROJECTS_MAX, PDF_PROJECT_FOLDERS_MAX, isPdfProjectId } from '../shared/pdfProjects';
 import { getSetting } from '../db/settingsRepository';
 import { debugError, debugLog } from '../shared/debugLog';
-import { claimPdfHub, movePdfToProject, noteTopLevelCommit, openPdfProject, promoteEmbeddedPdf, showPdfSettings } from './pdfHub';
+import { claimPdfHub, isLayoutHub, movePdfToProject, noteTopLevelCommit, openPdfProject, promoteEmbeddedPdf, showPdfSettings, tearOffPdfDoc } from './pdfHub';
 import { applyPdfProjectRequest, updatePdfProjects } from './pdfProjectStore';
 import { isExtensionPageSender } from './messageDispatcher';
 import { requestPdfSyncSoon } from './pdfSyncService';
@@ -356,6 +357,8 @@ async function recordHubState(
     await writeViewerTabs(records);
   });
   const { urls, active, project, show } = request;
+  // With several hubs of the project open, the oldest one's tabs are what it reopens with.
+  if (!(await isLayoutHub(project, tabId))) return { success: true };
   if (await updatePdfProjects({ kind: 'layout', id: project, urls, active, show })) requestPdfSyncSoon();
   return { success: true };
 }
@@ -502,9 +505,15 @@ export const pdfMessageHandlers: Record<string, PdfMessageHandler> = {
   VOCAB_T_PDF_PROJECT_MOVE: async (m, sender) => {
     const request = parsePdfProjectMoveRequest(m);
     if (!request || !isHubPageSender(sender)) return { success: false, error: S.badMoveProjectRequest };
-    const result = await movePdfToProject(request);
+    const result = await movePdfToProject(request, sender.tab?.windowId ?? null);
     if (result.success) requestPdfSyncSoon();
     return result;
+  },
+  VOCAB_T_PDF_TEAR_OFF: (m, sender) => {
+    const request = parsePdfTearOffRequest(m);
+    return request && isHubPageSender(sender)
+      ? tearOffPdfDoc(request)
+      : { success: false, error: S.badPdfTabRequest };
   },
   VOCAB_T_RESTORE_VIEWER_TABS: async (m) => {
     if (!parseRestoreViewerTabsRequest(m)) return { success: false, error: S.badRestoreTabsRequest };

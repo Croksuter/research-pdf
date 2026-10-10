@@ -6,13 +6,22 @@
 
 export const HUB_MESSAGE_TAG = 'rpdf-hub';
 
-export type HubKeyAction = 'prev' | 'next' | 'close' | 'reopen';
-const HUB_KEY_ACTIONS: readonly HubKeyAction[] = ['prev', 'next', 'close', 'reopen'];
+export type HubKeyAction = 'prev' | 'next' | 'close' | 'reopen' | 'split' | 'pane';
+const HUB_KEY_ACTIONS: readonly HubKeyAction[] = ['prev', 'next', 'close', 'reopen', 'split', 'pane'];
+
+/**
+ * `window.name` of a second view of a document shown beside its tab's own
+ * (split view, the same document twice): it remembers no reading position
+ * until the hub says it is the tab's view now (`primary`).
+ */
+export const HUB_AUX_FRAME_NAME = 'rpdf-aux';
 
 export type ViewerToHubMessage =
   | { tag: typeof HUB_MESSAGE_TAG; kind: 'doc'; title: string; paperTitle: string | null; docId: string | null }
   | { tag: typeof HUB_MESSAGE_TAG; kind: 'key'; action: HubKeyAction }
   | { tag: typeof HUB_MESSAGE_TAG; kind: 'open-files'; files: File[] }
+  // The reader pressed or focused inside this viewer (split view: its pane comes in front).
+  | { tag: typeof HUB_MESSAGE_TAG; kind: 'focus' }
   // Answer to `sleep`: `ok` once drawings and position are stored (false
   // while presenting, printing or asking for a password); `hash` reopens an
   // untouched document where it was.
@@ -22,7 +31,9 @@ export type HubToViewerMessage =
   | { tag: typeof HUB_MESSAGE_TAG; kind: 'open-file'; file: File }
   | { tag: typeof HUB_MESSAGE_TAG; kind: 'hash'; hash: string }
   // The hub is about to unload this frame to free memory.
-  | { tag: typeof HUB_MESSAGE_TAG; kind: 'sleep'; id: number };
+  | { tag: typeof HUB_MESSAGE_TAG; kind: 'sleep'; id: number }
+  // A second view (HUB_AUX_FRAME_NAME) is now its tab's own view.
+  | { tag: typeof HUB_MESSAGE_TAG; kind: 'primary' };
 
 const HASH_PATTERN = /^#[^\s]{1,512}$/u;
 const DOC_ID_MAX_CHARS = 128;
@@ -60,6 +71,8 @@ export function parseViewerToHubMessage(value: unknown): ViewerToHubMessage | nu
       return Array.isArray(value.files) && value.files.length > 0 && value.files.every(isFile)
         ? { tag: HUB_MESSAGE_TAG, kind: 'open-files', files: value.files as File[] }
         : null;
+    case 'focus':
+      return { tag: HUB_MESSAGE_TAG, kind: 'focus' };
     default:
       return null;
   }
@@ -74,14 +87,16 @@ export function parseHubToViewerMessage(value: unknown): HubToViewerMessage | nu
       : null;
   }
   if (value.kind === 'sleep') return Number.isInteger(value.id) ? { tag: HUB_MESSAGE_TAG, kind: 'sleep', id: value.id as number } : null;
+  if (value.kind === 'primary') return { tag: HUB_MESSAGE_TAG, kind: 'primary' };
   return null;
 }
 
 /**
  * Hub tab switching keys. Ctrl+Tab / Ctrl+PgUp / Ctrl+W / Ctrl+Shift+T belong
  * to Chrome, so the hub uses Alt+Shift+←/→ to switch, Alt+W to close and
- * Alt+Shift+T to reopen (matched on `code`, since macOS Option turns the key
- * itself into a symbol).
+ * Alt+Shift+T to reopen; Alt+Shift+S splits the view in two (or joins it)
+ * and Alt+Shift+O brings the other half in front (matched on `code`, since
+ * macOS Option turns the key itself into a symbol).
  */
 export function hubKeyAction(e: { altKey: boolean; shiftKey: boolean; ctrlKey: boolean; metaKey: boolean; code: string; target?: unknown }): HubKeyAction | null {
   if (!e.altKey || e.ctrlKey || e.metaKey) return null;
@@ -91,6 +106,8 @@ export function hubKeyAction(e: { altKey: boolean; shiftKey: boolean; ctrlKey: b
   if (e.shiftKey && e.code === 'ArrowRight') return 'next';
   if (!e.shiftKey && e.code === 'KeyW') return 'close';
   if (e.shiftKey && e.code === 'KeyT') return 'reopen';
+  if (e.shiftKey && e.code === 'KeyS') return 'split';
+  if (e.shiftKey && e.code === 'KeyO') return 'pane';
   return null;
 }
 

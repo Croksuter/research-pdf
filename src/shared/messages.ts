@@ -148,6 +148,37 @@ export function parsePdfProjectMoveRequest(value: unknown): PdfProjectMoveReques
   return { type: 'VOCAB_T_PDF_PROJECT_MOVE', docId, url, from, to, keep };
 }
 
+// Tear a document off its hub into a hub of its own in a new window
+// ("새 창으로 분리", or a tab dragged out of the hub's window). `bounds`: where
+// the new window goes (the drop point), or null for wherever Chrome puts it.
+export interface PdfTearOffRequest {
+  type: 'VOCAB_T_PDF_TEAR_OFF';
+  project: string;
+  url: string;
+  bounds: { left: number; top: number; width: number; height: number } | null;
+}
+
+const BOUND_LIMIT = 100_000;
+
+function parseBounds(value: unknown): PdfTearOffRequest['bounds'] | undefined {
+  if (value === null || value === undefined) return null;
+  if (!isRecord(value)) return undefined;
+  const { left, top, width, height } = value;
+  const ints = [left, top, width, height];
+  if (!ints.every((n) => Number.isInteger(n) && Math.abs(n as number) <= BOUND_LIMIT)) return undefined;
+  if ((width as number) < 200 || (height as number) < 150) return undefined;
+  return { left: left as number, top: top as number, width: width as number, height: height as number };
+}
+
+export function parsePdfTearOffRequest(value: unknown): PdfTearOffRequest | null {
+  if (!isRecord(value) || value.type !== 'VOCAB_T_PDF_TEAR_OFF') return null;
+  const { project, url } = value;
+  if (!isPdfProjectId(project) || typeof url !== 'string' || !isPdfViewerSourceUrl(url)) return null;
+  const bounds = parseBounds(value.bounds);
+  if (bounds === undefined) return null;
+  return { type: 'VOCAB_T_PDF_TEAR_OFF', project, url, bounds };
+}
+
 // Background → hub page broadcast: add these documents to the hub in tab `tabId`.
 export interface PdfHubOpenMessage {
   type: 'VOCAB_T_PDF_HUB_OPEN';
