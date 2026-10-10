@@ -1,8 +1,10 @@
 // ─── Home: the project's pinned, recently closed and other documents ───
 //
-// Filters and sort (per device), paging, search over the whole library. A
-// re-render keeps the scroll and the focused control; reading positions
-// saved elsewhere re-render only when home shows what changed.
+// Only this project's documents (the default project's: those of no other
+// project). Filters and sort (per device), paging, search within the project
+// — or, asked for, over the whole library, where a document of elsewhere can
+// be added here. A re-render keeps the scroll and the focused control;
+// reading positions saved elsewhere re-render only when home shows what changed.
 
 import { homeFilterChoices, homePositionKey, progressBucket } from '../../../shared/hubTabs';
 import { DEFAULT_PROJECT_ID } from '../../../shared/pdfProjects';
@@ -41,8 +43,10 @@ export function showHome(focusSearch: boolean): void {
 
 // ─── Home: the library ───
 
-export type HomeList = 'docs' | 'others' | 'search';
-export const homeLimits: Record<HomeList, number> = { docs: HOME_PAGE_SIZE, others: HOME_PAGE_SIZE, search: SEARCH_PAGE_SIZE };
+export type HomeList = 'docs' | 'search';
+export const homeLimits: Record<HomeList, number> = { docs: HOME_PAGE_SIZE, search: SEARCH_PAGE_SIZE };
+// The search looks beyond this project (asked for; until the search is cleared).
+let searchEverywhere = false;
 export let homeRenderQueued = false;
 // What the last render showed: the rows (by document) and the reading positions it depended on.
 export let homeShownDocs = new Set<string>();
@@ -50,7 +54,6 @@ export let homePositions = '';
 
 export function resetHomeLimits(): void {
   homeLimits.docs = HOME_PAGE_SIZE;
-  homeLimits.others = HOME_PAGE_SIZE;
   homeLimits.search = SEARCH_PAGE_SIZE;
 }
 
@@ -251,15 +254,21 @@ export function buildHome(): void {
   const pinnedSet = new Set(pinnedIds);
   const query = homeSearch.value.trim();
   const sections: HTMLElement[] = [];
+  const here = (e: PdfLibraryEntry) => pinnedSet.has(e.docId) || inThisProject(e.docId, index);
+  if (!query) searchEverywhere = false;
   if (query) {
-    const found = searchPdfLibrary(entries, query);
+    const found = searchPdfLibrary(searchEverywhere ? entries : entries.filter(here), query);
+    const beyond = searchEverywhere ? 0 : searchPdfLibrary(entries.filter((e) => !here(e)), query).length;
+    // Searched everywhere: a document of elsewhere can be added here.
+    const rows = found.slice(0, homeLimits.search).map((e) => homeRow(e, { pinned: pinnedSet.has(e.docId), elsewhere: otherNames(e.docId), add: !here(e) }));
     sections.push(found.length
-      ? homeSection(
-        S.searchResults(found.length),
-        found.slice(0, homeLimits.search).map((e) => homeRow(e, { pinned: pinnedSet.has(e.docId), elsewhere: otherNames(e.docId) })),
-        moreButton('search', found.length, SEARCH_PAGE_SIZE),
-      )
-      : el('p', { className: 'rpdf-home-empty', textContent: S.noMatchingPdf }));
+      ? homeSection(searchEverywhere ? S.searchResultsEverywhere(found.length) : S.searchResults(found.length), rows, moreButton('search', found.length, SEARCH_PAGE_SIZE))
+      : el('p', { className: 'rpdf-home-empty', textContent: searchEverywhere ? S.noMatchingPdf : S.noMatchingPdfHere }));
+    if (searchEverywhere || beyond > 0) {
+      const scope = el('button', { type: 'button', className: 'rpdf-more rpdf-home-scope', textContent: searchEverywhere ? S.searchHereOnly : S.searchEverywhere(beyond) });
+      scope.addEventListener('click', () => { searchEverywhere = !searchEverywhere; resetHomeLimits(); renderHome(); });
+      sections.push(scope);
+    }
     homeSections.replaceChildren(...sections);
     return;
   }
@@ -281,8 +290,7 @@ export function buildHome(): void {
     sections.push(homeSection(S.recentlyClosed, rows));
   }
   const mine = entries.filter((e) => !pinnedSet.has(e.docId) && inThisProject(e.docId, index));
-  const others = isDefault ? [] : entries.filter((e) => !pinnedSet.has(e.docId) && !inThisProject(e.docId, index));
-  const tools = homeTools([...mine, ...others]);
+  const tools = homeTools(mine);
   const shown = (list: PdfLibraryEntry[]) => sortEntries(list.filter((e) => matchesFilter(e, homeView.filter)), homeView.sort);
   const mineShown = shown(mine);
   if (isDefault) {
@@ -298,14 +306,6 @@ export function buildHome(): void {
   if (mine.length === 0) own.append(el('p', { className: 'rpdf-home-hint', textContent: S.emptyProject }));
   else if (mineShown.length === 0) own.append(el('p', { className: 'rpdf-home-hint', textContent: S.noMatchFilter }));
   sections.push(own);
-  const othersShown = shown(others);
-  if (othersShown.length) {
-    sections.push(homeSection(
-      S.otherPdfs,
-      othersShown.slice(0, homeLimits.others).map((e) => homeRow(e, { pinned: false, add: true, elsewhere: otherNames(e.docId) })),
-      moreButton('others', othersShown.length),
-    ));
-  }
   homeSections.replaceChildren(...sections);
 }
 

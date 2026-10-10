@@ -29,6 +29,7 @@ import { scheduleHomeRender, showHome } from './home/home';
 import { removeDocsFromProject } from './home/selection';
 import { KIND_LABEL, docKind, kindIcon, showKindMenu } from './looks';
 import { moveTab, showMove } from './movePanel';
+import { showDocInfo } from './docInfo';
 
 // A pin or move waiting for a document that never reports itself gives up.
 export const PENDING_TIMEOUT_MS = 60_000;
@@ -75,7 +76,7 @@ export function createTab(doc: NewDoc, side: Side = split?.focus ?? 'left'): Hub
 
 export function updateTabLabel(tab: HubTab): void {
   const entry = library[tab.docId ?? tab.libraryId ?? ''];
-  const { title, subtitle } = tabLabels({ docName: tab.title, paperTitle: tab.paperTitle ?? entry?.title ?? null, venue: entry?.venue ?? null, year: entry?.year ?? null }, display);
+  const { title, subtitle } = tabLabels({ docName: tab.title, paperTitle: tab.paperTitle ?? entry?.title ?? null, venue: entry?.venue ?? null, year: entry?.year ?? null, userTitle: entry?.userTitle }, display);
   // A pinned tab is narrow: one line.
   tab.titleEl.textContent = title;
   tab.paperEl.textContent = subtitle ?? '';
@@ -87,13 +88,13 @@ export function updateTabLabel(tab: HubTab): void {
   const kind = docKind(tab.docId ?? tab.libraryId);
   tab.iconEl.replaceChildren(icon(tab.pinned ? 'i-pin' : kindIcon(display.kindIcons === 'off' ? 'document' : kind, isLocal(tab))));
   tab.iconEl.dataset.kind = tab.pinned || display.kindIcons !== 'color' ? '' : kind;
-  tab.button.title = [tab.paperTitle, tab.title, tab.url, kind !== 'document' ? KIND_LABEL[kind] : null, tab.pinned ? S.pinnedTip : null]
+  tab.button.title = [entry?.userTitle, tab.paperTitle, tab.title, tab.url, kind !== 'document' ? KIND_LABEL[kind] : null, tab.pinned ? S.pinnedTip : null]
     .filter(Boolean).filter((v, i, all) => all.indexOf(v) === i).join('\n');
   const name = tabName(tab);
   tab.closeEl.title = tab.pinned ? S.unpin : S.closeShortcut;
   tab.closeEl.setAttribute('aria-label', tab.pinned ? S.unpinAria(name) : S.closeAria(name));
   tab.closeEl.replaceChildren(icon(tab.pinned ? 'i-unpin' : 'i-close'));
-  if (tab.frame) tab.frame.title = tab.paperTitle ?? tab.title;
+  if (tab.frame) tab.frame.title = tabName(tab);
 }
 
 export function pinnedCount(): number {
@@ -369,6 +370,11 @@ export function onStripKey(e: KeyboardEvent, tab: HubTab): boolean {
   else if (e.key === 'ArrowLeft') next = group[(index - 1 + group.length) % group.length];
   else if (e.key === 'Home') next = group[0];
   else if (e.key === 'End') next = group[group.length - 1];
+  else if (e.key === 'F2') {
+    const docId = tab.docId ?? tab.libraryId;
+    if (docId) showDocInfo(docId, 'name');
+    return true;
+  }
   else if (e.key === 'Delete') {
     if (tab.pinned) { showToast(S.pinnedCantClose); return true; }
     const neighbor = group[index + 1] ?? group[index - 1];
@@ -599,7 +605,7 @@ export function completePendingPins(): void {
 
 export function render(): void {
   const current = activeTab();
-  const name = activeKey === HOME ? S.home : activeKey === SETTINGS ? S.settings : current?.paperTitle ?? current?.title ?? 'PDF';
+  const name = activeKey === HOME ? S.home : activeKey === SETTINGS ? S.settings : current ? tabName(current) : 'PDF';
   const appName = projectId === DEFAULT_PROJECT_ID ? APP_NAME : `${currentProject().name} · ${APP_NAME}`;
   document.title = hubDocumentTitle(name, tabs.length, appName);
   moveBtn.disabled = !current;
@@ -663,6 +669,7 @@ export function showTabMenu(tab: HubTab, x: number, y: number): void {
   const docId = tab.docId ?? tab.libraryId;
   if (docId && library[docId]) {
     const rect = tab.root.getBoundingClientRect();
+    entries.push({ label: S.docInfoMenu, run: () => showDocInfo(docId, 'name') });
     entries.push({ label: S.kindMenuItem(KIND_LABEL[docKind(docId)]), run: () => showKindMenu(docId, Math.max(x, rect.left), y) });
   }
   if (projectId !== DEFAULT_PROJECT_ID && docId && isDocInProject(projects, projectId, docId)) {

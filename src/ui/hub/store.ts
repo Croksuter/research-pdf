@@ -323,8 +323,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 export type NewDoc = { url: string | null; hash: string; file: File | null; fileId?: number };
 
+/** What a tab is called: the user's name for it, else the paper, else the document's own name. */
 export function tabName(tab: HubTab): string {
-  return tab.paperTitle ?? tab.title;
+  return library[tab.docId ?? tab.libraryId ?? '']?.userTitle ?? tab.paperTitle ?? tab.title;
 }
 
 export function entryName(entry: PdfLibraryEntry): string {

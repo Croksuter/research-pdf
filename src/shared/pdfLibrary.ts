@@ -19,6 +19,10 @@
 // A document's kind — a journal or conference paper, a preprint, a survey, a
 // report, or a plain PDF — is what the paper strip found it to be, unless the
 // user said otherwise. The hub draws it as the document's icon.
+//
+// What the user writes about a document follows it too, each the latest
+// change wins: the name they gave it, a note with links, and the copy they
+// keep in their own Drive folder (background/pdfDriveFiles.ts).
 
 import { S } from './shared.strings';
 import { isRecord } from './guards';
@@ -32,6 +36,9 @@ const DOC_ID_MAX_CHARS = 128;
 const URL_MAX_CHARS = 2_048;
 const TEXT_MAX_CHARS = 300;
 const MAX_PAGES = 100_000;
+export const PDF_NOTE_MAX_CHARS = 4_000;
+export const PDF_LINKS_MAX = 12;
+const DRIVE_ID_MAX_CHARS = 200;
 
 /** Paper kinds, as the paper strip classifies them (classifyPaperKind). */
 export const PDF_PAPER_KINDS = ['journal', 'conference', 'preprint', 'survey', 'technical'] as const;
@@ -69,6 +76,23 @@ export interface PdfLibraryEntry {
   userKind: PdfDocKind | null;
   /** When `userKind` last changed (0 = never). */
   userKindAt: number;
+  /** The name the user gave it (null: automatic), and when (0 = never). */
+  userTitle: string | null;
+  userTitleAt: number;
+  /** The user's note and links (web, file or a local path), and when they last changed. */
+  note: string | null;
+  links: string[];
+  noteAt: number;
+  /** Its copy in the user's Drive folder (null: none), and when that last changed. */
+  driveFileId: string | null;
+  driveAt: number;
+}
+
+export type PdfUserFields = Pick<PdfLibraryEntry, 'userTitle' | 'userTitleAt' | 'note' | 'links' | 'noteAt' | 'driveFileId' | 'driveAt'>;
+
+/** The user's fields of a row nobody named, noted or stored yet. */
+export function noUserFields(): PdfUserFields {
+  return { userTitle: null, userTitleAt: 0, note: null, links: [], noteAt: 0, driveFileId: null, driveAt: 0 };
 }
 
 /** The kind a row is shown as: the user's choice, else the detected one, else a plain PDF. */
@@ -92,8 +116,55 @@ export function librarySourceUrl(value: unknown): string | null {
   }
 }
 
-function text(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim().slice(0, TEXT_MAX_CHARS) : null;
+function text(value: unknown, max = TEXT_MAX_CHARS): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, max) : null;
+}
+
+/**
+ * A link the user keeps with a document: an http(s) or file URL, or an
+ * absolute local path (`/home/…`, `C:\…`, `\\server\…`) kept as written.
+ */
+export function pdfNoteLink(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const link = value.trim();
+  if (!link || link.length > URL_MAX_CHARS) return null;
+  if (/^(?:\/|[A-Za-z]:[\\/]|\\\\)/u.test(link)) return link;
+  try {
+    const parsed = new URL(link);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' || parsed.protocol === 'file:' ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The URL a kept link opens: itself, or a local path as a file URL. */
+export function noteLinkUrl(link: string): string {
+  if (/^[A-Za-z]:[\\/]/u.test(link)) return `file:///${link.replace(/\\/gu, '/').split('/').map((part, i) => (i === 0 ? part : encodeURIComponent(part))).join('/')}`;
+  if (link.startsWith('\\\\')) return `file://${link.slice(2).replace(/\\/gu, '/').split('/').map(encodeURIComponent).join('/')}`;
+  if (link.startsWith('/')) return `file://${link.split('/').map(encodeURIComponent).join('/')}`;
+  return link;
+}
+
+/** A local path of a file URL (`/home/…`, `C:\…`), for showing; other URLs as they are. */
+export function readableSource(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'file:') return safeDecode(url);
+    const path = decodeURIComponent(parsed.pathname);
+    if (/^\/[A-Za-z]:\//u.test(path)) return path.slice(1).replace(/\//gu, '\\');
+    return parsed.host ? `\\\\${parsed.host}${path.replace(/\//gu, '\\')}` : path;
+  } catch {
+    return url;
+  }
+}
+
+function noteLinks(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  return [...new Set(value.map(pdfNoteLink).filter((l): l is string => l !== null))].slice(0, PDF_LINKS_MAX);
+}
+
+function driveId(value: unknown): string | null {
+  return typeof value === 'string' && /^[\w-]{10,200}$/u.test(value) && value.length <= DRIVE_ID_MAX_CHARS ? value : null;
 }
 
 function time(value: unknown): number | null {
@@ -110,9 +181,13 @@ export function parsePdfLibraryEntry(value: unknown): PdfLibraryEntry | null {
   if (openedAt === null || pinChangedAt === null || typeof value.pinned !== 'boolean' || !Array.isArray(value.urls)) return null;
   const urls = [...new Set(value.urls.map(librarySourceUrl).filter((url): url is string => url !== null))].slice(0, PDF_LIBRARY_MAX_URLS);
   const year = Number.isInteger(value.year) && (value.year as number) > 0 && (value.year as number) < 10_000 ? value.year as number : null;
-  // Kinds came later: rows without them read as never set.
-  const userKindAt = value.userKindAt === undefined ? 0 : time(value.userKindAt);
-  if (userKindAt === null) return null;
+  // Kinds came later, and later still the user's name, note and Drive copy: rows without them read as never set.
+  const stamp = (v: unknown) => (v === undefined ? 0 : time(v));
+  const userKindAt = stamp(value.userKindAt);
+  const userTitleAt = stamp(value.userTitleAt);
+  const noteAt = stamp(value.noteAt);
+  const driveAt = stamp(value.driveAt);
+  if (userKindAt === null || userTitleAt === null || noteAt === null || driveAt === null) return null;
   return {
     docId,
     urls,
@@ -128,6 +203,13 @@ export function parsePdfLibraryEntry(value: unknown): PdfLibraryEntry | null {
     paperKind: isPdfPaperKind(value.paperKind) ? value.paperKind : null,
     userKind: isPdfDocKind(value.userKind) ? value.userKind : null,
     userKindAt,
+    userTitle: text(value.userTitle),
+    userTitleAt,
+    note: text(value.note, PDF_NOTE_MAX_CHARS),
+    links: noteLinks(value.links) ?? [],
+    noteAt,
+    driveFileId: driveId(value.driveFileId),
+    driveAt,
   };
 }
 
@@ -173,6 +255,9 @@ export function mergePdfLibraryEntries(a: PdfLibraryEntry, b: PdfLibraryEntry): 
   const [newer, older] = order(a, b, (e) => e.openedAt);
   const [pin] = order(a, b, (e) => e.pinChangedAt * 2 + (e.pinned ? 1 : 0));
   const [chosen] = order(a, b, (e) => e.userKindAt);
+  const [named] = order(a, b, (e) => e.userTitleAt);
+  const [noted] = order(a, b, (e) => e.noteAt);
+  const [stored] = order(a, b, (e) => e.driveAt);
   return {
     docId: newer.docId,
     urls: [...new Set([...newer.urls, ...older.urls])].slice(0, PDF_LIBRARY_MAX_URLS),
@@ -188,6 +273,13 @@ export function mergePdfLibraryEntries(a: PdfLibraryEntry, b: PdfLibraryEntry): 
     paperKind: newer.paperKind ?? older.paperKind,
     userKind: chosen.userKind,
     userKindAt: chosen.userKindAt,
+    userTitle: named.userTitle,
+    userTitleAt: named.userTitleAt,
+    note: noted.note,
+    links: noted.links,
+    noteAt: noted.noteAt,
+    driveFileId: stored.driveFileId,
+    driveAt: stored.driveAt,
   };
 }
 
@@ -230,7 +322,13 @@ export type PdfLibraryUpdate =
   // Null leaves a field as it was.
   | { kind: 'meta'; docId: string; docTitle: string | null; title: string | null; venue: string | null; year: number | null; paperKind?: PdfPaperKind | null }
   // The user's kind for the document (null: back to automatic).
-  | { kind: 'user-kind'; docId: string; userKind: PdfDocKind | null };
+  | { kind: 'user-kind'; docId: string; userKind: PdfDocKind | null }
+  // The user's name for it (null: back to automatic).
+  | { kind: 'rename'; docId: string; userTitle: string | null }
+  // The user's note and links.
+  | { kind: 'note'; docId: string; note: string | null; links: string[] }
+  // Its copy in the user's Drive folder was stored (an id) or removed (null).
+  | { kind: 'drive'; docId: string; driveFileId: string | null };
 
 export function applyPdfLibraryUpdate(library: PdfLibrary, update: PdfLibraryUpdate, now: number = Date.now(), keep: ReadonlySet<string> = new Set()): PdfLibrary {
   const current = library[update.docId];
@@ -252,6 +350,13 @@ export function applyPdfLibraryUpdate(library: PdfLibrary, update: PdfLibraryUpd
       paperKind: current?.paperKind ?? null,
       userKind: current?.userKind ?? null,
       userKindAt: current?.userKindAt ?? 0,
+      userTitle: current?.userTitle ?? null,
+      userTitleAt: current?.userTitleAt ?? 0,
+      note: current?.note ?? null,
+      links: current?.links ?? [],
+      noteAt: current?.noteAt ?? 0,
+      driveFileId: current?.driveFileId ?? null,
+      driveAt: current?.driveAt ?? 0,
     };
   } else if (!current) {
     return library; // meta and kinds only ever apply to a document that was opened
@@ -265,9 +370,21 @@ export function applyPdfLibraryUpdate(library: PdfLibrary, update: PdfLibraryUpd
       paperKind: update.paperKind ?? current.paperKind,
     };
     if (JSON.stringify(next) === JSON.stringify(current)) return library;
-  } else {
+  } else if (update.kind === 'user-kind') {
     if (current.userKind === update.userKind) return library;
     next = { ...current, userKind: update.userKind, userKindAt: Math.max(now, current.userKindAt + 1) };
+  } else if (update.kind === 'rename') {
+    const userTitle = text(update.userTitle);
+    if (current.userTitle === userTitle) return library;
+    next = { ...current, userTitle, userTitleAt: Math.max(now, current.userTitleAt + 1) };
+  } else if (update.kind === 'note') {
+    const note = text(update.note, PDF_NOTE_MAX_CHARS);
+    const links = noteLinks(update.links) ?? [];
+    if (current.note === note && JSON.stringify(current.links) === JSON.stringify(links)) return library;
+    next = { ...current, note, links, noteAt: Math.max(now, current.noteAt + 1) };
+  } else {
+    if (current.driveFileId === update.driveFileId) return library;
+    next = { ...current, driveFileId: update.driveFileId, driveAt: Math.max(now, current.driveAt + 1) };
   }
   const entries = Object.values({ ...library, [next.docId]: next });
   return libraryFromList(boundPdfLibrary(entries, now, keep));
@@ -289,6 +406,15 @@ export function parsePdfLibraryUpdate(value: unknown): PdfLibraryUpdate | null {
     }
     case 'user-kind':
       return value.userKind === null || isPdfDocKind(value.userKind) ? { kind: 'user-kind', docId, userKind: value.userKind } : null;
+    case 'rename':
+      return value.userTitle === null || typeof value.userTitle === 'string' ? { kind: 'rename', docId, userTitle: text(value.userTitle) } : null;
+    case 'note': {
+      const links = noteLinks(value.links);
+      if (!links || (value.note !== null && typeof value.note !== 'string')) return null;
+      return { kind: 'note', docId, note: text(value.note, PDF_NOTE_MAX_CHARS), links };
+    }
+    case 'drive':
+      return value.driveFileId === null || driveId(value.driveFileId) !== null ? { kind: 'drive', docId, driveFileId: value.driveFileId as string | null } : null;
     default:
       return null;
   }
@@ -296,9 +422,23 @@ export function parsePdfLibraryUpdate(value: unknown): PdfLibraryUpdate | null {
 
 // ─── Display helpers (home page) ───
 
-/** The name a row is listed under: the paper, the PDF's title, the file. */
+/**
+ * A file's own name, when it is one: ends in .pdf (a URL's last segment such
+ * as `download` or `view` is not).
+ */
+export function realFileName(name: string | null): string | null {
+  const trimmed = name?.trim();
+  return trimmed && /\.pdf$/iu.test(trimmed) && trimmed.length > 4 ? trimmed : null;
+}
+
+/**
+ * The name a document goes by: the user's, else the paper's, else the file's
+ * own name (a PDF that is not a paper keeps the name it was saved under, its
+ * Title metadata being often a word processor's leftover), else the Title
+ * metadata, else the file name or URL anyway.
+ */
 export function libraryEntryName(entry: PdfLibraryEntry, displayName: (url: string) => string): string {
-  return entry.title ?? entry.docTitle ?? entry.fileName ?? (entry.urls[0] ? displayName(entry.urls[0]) : 'PDF');
+  return entry.userTitle ?? entry.title ?? realFileName(entry.fileName) ?? entry.docTitle ?? entry.fileName ?? (entry.urls[0] ? displayName(entry.urls[0]) : 'PDF');
 }
 
 /** Rows matching every word of `query` in a title, file name or URL; most recent first. */
@@ -307,7 +447,7 @@ export function searchPdfLibrary(entries: readonly PdfLibraryEntry[], query: str
   const sorted = [...entries].sort((a, b) => b.openedAt - a.openedAt);
   if (words.length === 0) return sorted;
   return sorted.filter((e) => {
-    const hay = [e.title, e.docTitle, e.fileName, e.venue, ...e.urls.map(safeDecode)].filter(Boolean).join('\n').toLowerCase();
+    const hay = [e.userTitle, e.title, e.docTitle, e.fileName, e.venue, e.note, ...e.links, ...e.urls.map(safeDecode)].filter(Boolean).join('\n').toLowerCase();
     return words.every((w) => hay.includes(w));
   });
 }

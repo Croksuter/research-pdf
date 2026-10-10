@@ -26,7 +26,9 @@ import {
   pdfSyncSnapshotDataEquals,
 } from '../src/shared/pdfSync';
 import { parseConnectGoogleSyncRequest, parsePdfDocStateSaveRequest, parsePdfSyncHintRequest, parseSetPdfSyncEnabledRequest } from '../src/shared/messages';
-import { PDF_LIBRARY_STORAGE_KEY, type PdfLibraryEntry } from '../src/shared/pdfLibrary';
+import { type SyncedSetting, settingStampKey } from '../src/shared/syncedSettings';
+import { getSetting, setSetting } from '../src/db/settingsRepository';
+import { PDF_LIBRARY_STORAGE_KEY, type PdfLibraryEntry, noUserFields } from '../src/shared/pdfLibrary';
 import type { PdfProject, PdfProjectFolder } from '../src/shared/pdfProjects';
 import researchManifest from '../manifest.json';
 import { FakeGoogle, createFakeGoogle } from './fakeGoogleDrive';
@@ -57,8 +59,8 @@ function doc(docId: string, page: number, updatedAt: number): PdfDocRecord {
   };
 }
 
-function snapshot(docs: PdfDocRecord[] = [], annotations: PdfAnnotationCache[] = [], library: PdfLibraryEntry[] = [], projects: PdfProject[] = [], folders: PdfProjectFolder[] = []): PdfSyncSnapshot {
-  return { version: 5, exportedAt: '2026-09-01T00:00:00.000Z', docs, annotations, library, projects, folders };
+function snapshot(docs: PdfDocRecord[] = [], annotations: PdfAnnotationCache[] = [], library: PdfLibraryEntry[] = [], projects: PdfProject[] = [], folders: PdfProjectFolder[] = [], settings: SyncedSetting[] = []): PdfSyncSnapshot {
+  return { version: 6, exportedAt: '2026-09-01T00:00:00.000Z', docs, annotations, library, projects, folders, settings };
 }
 
 function project(id: string, overrides: Partial<PdfProject> = {}): PdfProject {
@@ -69,7 +71,7 @@ function project(id: string, overrides: Partial<PdfProject> = {}): PdfProject {
 function entry(docId: string, overrides: Partial<PdfLibraryEntry> = {}): PdfLibraryEntry {
   return {
     docId, urls: [`https://example.org/${docId.slice(0, 4)}.pdf`], fileName: null, docTitle: null, title: null, venue: null, year: null,
-    numPages: 10, openedAt: ago(60), pinned: false, pinChangedAt: 0, paperKind: null, userKind: null, userKindAt: 0, ...overrides,
+    numPages: 10, openedAt: ago(60), pinned: false, pinChangedAt: 0, paperKind: null, userKind: null, userKindAt: 0, ...noUserFields(), ...overrides,
   };
 }
 
@@ -155,7 +157,7 @@ describe('pdf sync merge', () => {
 
   it('reads an older build\'s document with what it lacks empty', () => {
     const parsed = parsePdfSyncSnapshot({ version: 1, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [] });
-    expect(parsed).toEqual({ version: 5, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [], folders: [] });
+    expect(parsed).toEqual({ version: 6, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [], folders: [], settings: [] });
     expect(parsePdfSyncSnapshot({ version: 2, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [] })?.projects).toEqual([]);
     // Version 3: projects without looks or places, library rows without kinds.
     const v3 = parsePdfSyncSnapshot({
@@ -165,11 +167,15 @@ describe('pdf sync merge', () => {
     });
     expect(v3?.folders).toEqual([]);
     expect(v3?.projects[0]).toMatchObject({ icon: null, color: null, styledAt: 0, folder: null, order: null, placedAt: 0 });
-    expect(v3?.library[0]).toMatchObject({ paperKind: null, userKind: null, userKindAt: 0 });
+    expect(v3?.library[0]).toMatchObject({ paperKind: null, userKind: null, userKindAt: 0, userTitle: null, note: null, links: [], driveFileId: null });
+    // Version 5: no settings yet.
+    expect(parsePdfSyncSnapshot({ version: 5, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [], folders: [] })?.settings).toEqual([]);
   });
 
   it('refuses a document another build could not read back', () => {
+    expect(parsePdfSyncSnapshot({ version: 7, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [], folders: [], settings: [] })).toBeNull();
     expect(parsePdfSyncSnapshot({ version: 6, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [], folders: [] })).toBeNull();
+    expect(parsePdfSyncSnapshot({ version: 6, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [], folders: [], settings: [{ key: 'x' }] })).toBeNull();
     expect(parsePdfSyncSnapshot({ version: 4, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [] })).toBeNull();
     expect(parsePdfSyncSnapshot({ version: 4, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [], projects: [], folders: [{ id: 'f1' }] })).toBeNull();
     expect(parsePdfSyncSnapshot({ version: 3, exportedAt: '2026-01-01T00:00:00.000Z', docs: [], annotations: [], library: [] })).toBeNull();
@@ -239,6 +245,32 @@ describe('drive sync', () => {
     await expect(syncPdfNow()).resolves.toMatchObject({ success: true });
   }
 
+  it('carries the preferences changed on purpose, the latest change winning per key', async () => {
+    await connect();
+    expect((await google.headBody<PdfSyncSnapshot>()).settings).toEqual([]); // nothing changed yet: no defaults sent
+    await setSetting('paperStripShown', false);
+    await setSetting('semanticScholarApiKey', 'secret'); // never synced
+    await expect(syncPdfNow()).resolves.toMatchObject({ success: true });
+    const pushed = await google.headBody<PdfSyncSnapshot>();
+    expect(pushed.settings.map((s) => [s.key, s.value])).toEqual([['paperStripShown', false]]);
+    expect(JSON.stringify(pushed)).not.toContain('secret');
+
+    // Another device, later: a newer strip choice, a language, a key this build does not know; an older display choice loses.
+    const later = Date.now() + 60_000;
+    await google.chrome.storage.local.set({ rpdfDisplay: { tabTitle: 'file' }, [settingStampKey('rpdfDisplay')]: later + 5 });
+    google.remoteWrite({ ...pushed, settings: [
+      { key: 'futureThing', value: 1, updatedAt: later },
+      { key: 'paperStripShown', value: true, updatedAt: later },
+      { key: 'rpdfDisplay', value: { tabTitle: 'paper' }, updatedAt: later },
+      { key: 'rpdfLanguage', value: 'en', updatedAt: later },
+    ] });
+    await expect(syncPdfNow()).resolves.toMatchObject({ success: true });
+    expect(await getSetting('paperStripShown', null)).toBe(true);
+    const stored = await google.chrome.storage.local.get(['rpdfLanguage', 'rpdfDisplay', settingStampKey('paperStripShown')]);
+    expect(stored).toMatchObject({ rpdfLanguage: 'en', rpdfDisplay: { tabTitle: 'file' }, [settingStampKey('paperStripShown')]: later });
+    expect((await google.headBody<PdfSyncSnapshot>()).settings.map((s) => s.key)).toEqual(['futureThing', 'paperStripShown', 'rpdfDisplay', 'rpdfLanguage']);
+  });
+
   it('uploads drawings and reading positions to its own file, and skips transfer when unchanged', async () => {
     await dbPut(STORE_PDF_ANNOTATIONS, cache(DOC_A, [item('k1')], 5));
     await setDocs([doc(DOC_A, 4, ago(50))]);
@@ -246,7 +278,7 @@ describe('drive sync', () => {
 
     expect(google.files.size).toBe(1);
     const body = await google.headBody<PdfSyncSnapshot>();
-    expect(body.version).toBe(5);
+    expect(body.version).toBe(6);
     expect(body.docs.map((entry) => entry.page)).toEqual([4]);
     expect(keysOf(body.annotations[0])).toEqual(['k1']);
     expect(JSON.stringify(body)).not.toContain('perm-main');
@@ -488,7 +520,7 @@ describe('drive sync', () => {
     let uploaded = false;
     let viewerSave: Promise<boolean> | null = null;
     const realGet = google.chrome.storage.local.get;
-    google.chrome.storage.local.get = async (key: string) => {
+    google.chrome.storage.local.get = async (key: string | string[]) => {
       const result = await realGet(key);
       if (uploaded && key === PDF_DOC_STATE_STORAGE_KEY && !viewerSave) viewerSave = savePdfDocRecord(saved);
       return result;

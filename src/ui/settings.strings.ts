@@ -23,7 +23,7 @@ export const S = messages({
 
     // ── Sync ──
     syncTitle: 'Google Drive 동기화',
-    syncDesc: '필기와 읽던 위치, 열어 본 PDF 목록, 프로젝트를 내 Google Drive의 앱 전용 숨김 폴더에 저장해 모든 Chrome 프로필과 기기에서 이어 봅니다. 이 폴더 밖의 Drive 파일은 볼 수 없고, PDF 파일 자체는 올리지 않습니다.',
+    syncDesc: '필기와 읽던 위치, 열어 본 PDF 목록(직접 붙인 이름·메모·링크 포함), 프로젝트, 설정을 내 Google Drive의 앱 전용 숨김 폴더에 저장해 모든 Chrome 프로필과 기기에서 이어 봅니다. API 키와 이 기기의 접근 권한·저장 공간 설정은 기기에 남습니다. 이 폴더 밖의 Drive 파일은 볼 수 없고, PDF 파일 자체는 올리지 않습니다.',
     noAccount: '연결된 Google 계정이 없습니다.',
     syncNow: '지금 동기화',
     syncUse: '동기화 사용',
@@ -253,7 +253,7 @@ export const S = messages({
 
     // ── Sync ──
     syncTitle: 'Google Drive sync',
-    syncDesc: 'Saves your annotations, reading positions, opened PDF list, and projects in a hidden app-only folder in your Google Drive, so they follow you across Chrome profiles and devices. It can’t see any other Drive files, and the PDF files themselves are not uploaded.',
+    syncDesc: 'Saves your annotations, reading positions, opened PDF list (with the names, notes and links you gave them), projects, and settings in a hidden app-only folder in your Google Drive, so they follow you across Chrome profiles and devices. API keys and this device’s access and storage settings stay on the device. It can’t see any other Drive files, and the PDF files themselves are not uploaded.',
     noAccount: 'No Google account connected.',
     syncNow: 'Sync now',
     syncUse: 'Use sync',

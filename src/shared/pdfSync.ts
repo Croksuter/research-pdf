@@ -8,8 +8,10 @@
 // (shared/pdfLibrary.ts), since version 3 the projects — their documents,
 // pins and saved tabs (shared/pdfProjects.ts) — and since version 4 their
 // looks, folders and order, and each document's kind (paper or not); since
-// version 5 the order of each project's pins. Nothing else: paper-strip lookups are caches,
-// settings are per device, and there are no credentials in here.
+// version 5 the order of each project's pins; since version 6 the user's own
+// name, note and links for a document, its Drive copy, and the preferences
+// that are not about one device (shared/syncedSettings.ts). Nothing else:
+// paper-strip lookups are caches, and there are no credentials in here.
 //
 // Merge rules mirror the vocabulary engine (shared/threeWayMerge.ts):
 //   • reading positions: one row per document, newest `updatedAt` wins;
@@ -18,6 +20,7 @@
 //     disappears everywhere once a base exists, and a drawing edited on both
 //     sides keeps the local copy;
 //   • library: a per-field join (shared/pdfLibrary.ts), no deletions;
+//   • settings: per key, the latest change;
 //   • projects and folders: a join too — latest rename, final deletions,
 //     latest change per member, latest saved tabs, latest look and placement
 //     (shared/pdfProjects.ts);
@@ -42,13 +45,15 @@ import {
 } from './pdfProjects';
 import { byId, chooseThreeWay, mergeRows, stableJson } from './threeWayMerge';
 import { isRecord } from './guards';
+import { type SyncedSetting, mergeSyncedSettings, parseSyncedSettingList } from './syncedSettings';
 
 // Version 2 added `library`, version 3 `projects`, version 4 `folders` (and
 // new fields in projects and library rows), version 5 the pin order in
-// project members. An older build's document
+// project members, version 6 `settings` (and the user's fields in library
+// rows). An older build's document
 // still reads, with what it lacks empty; older builds refuse a newer version
 // rather than write it back without what they do not know.
-export const PDF_SYNC_SNAPSHOT_VERSION = 5;
+export const PDF_SYNC_SNAPSHOT_VERSION = 6;
 export const PDF_SYNC_MAX_DOCS = 5_000;
 
 export interface PdfSyncSnapshot {
@@ -59,12 +64,13 @@ export interface PdfSyncSnapshot {
   library: PdfLibraryEntry[];
   projects: PdfProject[];
   folders: PdfProjectFolder[];
+  settings: SyncedSetting[];
 }
 
 
 /** Strict: a document another build cannot read back is refused, never repaired. */
 export function parsePdfSyncSnapshot(value: unknown): PdfSyncSnapshot | null {
-  if (!isRecord(value) || ![1, 2, 3, 4, PDF_SYNC_SNAPSHOT_VERSION].includes(value.version as number)) return null;
+  if (!isRecord(value) || ![1, 2, 3, 4, 5, PDF_SYNC_SNAPSHOT_VERSION].includes(value.version as number)) return null;
   if (typeof value.exportedAt !== 'string' || !Number.isFinite(Date.parse(value.exportedAt))) return null;
   if (!Array.isArray(value.docs) || !Array.isArray(value.annotations)) return null;
   if (value.docs.length > PDF_SYNC_MAX_DOCS || value.annotations.length > PDF_SYNC_MAX_DOCS) return null;
@@ -88,9 +94,11 @@ export function parsePdfSyncSnapshot(value: unknown): PdfSyncSnapshot | null {
   if (!library) return null;
   const projects = value.version === 1 || value.version === 2 ? [] : parsePdfProjectList(value.projects);
   if (!projects) return null;
-  const folders = value.version === 4 || value.version === PDF_SYNC_SNAPSHOT_VERSION ? parsePdfProjectFolderList(value.folders) : [];
+  const folders = (value.version as number) >= 4 ? parsePdfProjectFolderList(value.folders) : [];
   if (!folders) return null;
-  return { version: PDF_SYNC_SNAPSHOT_VERSION, exportedAt: value.exportedAt, docs, annotations, library, projects, folders };
+  const settings = value.version === PDF_SYNC_SNAPSHOT_VERSION ? parseSyncedSettingList(value.settings) : [];
+  if (!settings) return null;
+  return { version: PDF_SYNC_SNAPSHOT_VERSION, exportedAt: value.exportedAt, docs, annotations, library, projects, folders, settings };
 }
 
 const byDocId = <T extends { docId: string }>(rows: T[]): T[] => [...rows].sort((a, b) => a.docId.localeCompare(b.docId));
@@ -100,6 +108,7 @@ const byProjectId = <T extends { id: string }>(rows: T[]): T[] => [...rows].sort
 export function pdfSyncSnapshotDataEquals(left: PdfSyncSnapshot, right: PdfSyncSnapshot): boolean {
   const data = (s: PdfSyncSnapshot) => stableJson({
     docs: byDocId(s.docs), annotations: byDocId(s.annotations), library: byDocId(s.library), projects: byProjectId(s.projects), folders: byProjectId(s.folders),
+    settings: [...s.settings].sort((a, b) => a.key.localeCompare(b.key)),
   });
   return data(left) === data(right);
 }
@@ -193,6 +202,7 @@ export function mergePdfSyncSnapshots(
   const projects = mergePdfProjectLists(local.projects, remote.projects, now);
   const folders = mergePdfProjectFolderLists(local.folders, remote.folders, now);
   const library = mergePdfLibraries(local.library, remote.library, now, projectDocIds(projects));
+  const settings = mergeSyncedSettings(local.settings, remote.settings);
   const times = [now, Date.parse(local.exportedAt), Date.parse(remote.exportedAt)].filter(Number.isFinite);
   return boundPdfSyncSnapshot({
     version: PDF_SYNC_SNAPSHOT_VERSION,
@@ -202,5 +212,6 @@ export function mergePdfSyncSnapshots(
     library,
     projects,
     folders,
+    settings,
   }, now);
 }

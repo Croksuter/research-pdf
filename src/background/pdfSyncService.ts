@@ -13,6 +13,7 @@
 // a run whose merge only brings the remote side in writes nothing back, so
 // two devices that agree never trade revisions.
 
+import { applySyncedSettings, readSyncedSettings } from './settingsSync';
 import { dbGetAll, openDB } from '../db/database';
 import { getSetting, setSetting } from '../db/settingsRepository';
 import { CloudSyncError } from './cloudSyncError';
@@ -202,8 +203,8 @@ export async function getPdfSyncStatus(): Promise<PdfSyncPublicStatus> {
 const readDocRecords = readPdfDocRecords;
 
 export async function exportPdfSyncSnapshot(): Promise<PdfSyncSnapshot> {
-  const [records, rows, library, projects, folders] = await Promise.all([
-    readDocRecords(), dbGetAll<unknown>(STORE_PDF_ANNOTATIONS), readPdfLibrary(), readPdfProjects(), readPdfProjectFolders(),
+  const [records, rows, library, projects, folders, settings] = await Promise.all([
+    readDocRecords(), dbGetAll<unknown>(STORE_PDF_ANNOTATIONS), readPdfLibrary(), readPdfProjects(), readPdfProjectFolders(), readSyncedSettings(),
   ]);
   const annotations = rows
     .map(parsePdfAnnotationCache)
@@ -216,6 +217,7 @@ export async function exportPdfSyncSnapshot(): Promise<PdfSyncSnapshot> {
     library: Object.values(library),
     projects: Object.values(projects),
     folders: Object.values(folders),
+    settings,
   });
 }
 
@@ -276,6 +278,8 @@ async function applyPdfSyncSnapshot(
   // Projects first: the library keeps every document they refer to.
   await mergeIntoPdfProjects(merged.projects, merged.folders);
   await mergeIntoPdfLibrary(merged.library);
+  // Settings: per key the latest change; one changed here meanwhile is newer and stays.
+  await applySyncedSettings(merged.settings);
 
   const db = await openDB();
   const tx = db.transaction([STORE_PDF_ANNOTATIONS, STORE_SETTINGS], 'readwrite');

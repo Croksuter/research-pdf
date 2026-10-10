@@ -35,11 +35,14 @@ import {
 import { updatePdfLibrary } from './background/pdfLibraryStore';
 import { savePdfDocRecord } from './background/pdfDocStateStore';
 import { followStoredLanguage } from './shared/i18n';
+import { watchSyncedSettings } from './background/settingsSync';
 import { S } from './background/background.strings';
 import './background/onboarding';
 
 initDebugLogging();
 followStoredLanguage();
+// A preference changed on this device goes to the others with the next push.
+watchSyncedSettings(requestPdfSyncSoon);
 
 const messageHandlers: Record<string, MessageHandler> = {
   ...pdfMessageHandlers,

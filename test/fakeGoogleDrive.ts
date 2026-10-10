@@ -181,7 +181,7 @@ export function createFakeGoogle() {
     },
     storage: {
       local: {
-        get: async (key: string) => (localStore.has(key) ? { [key]: localStore.get(key) } : {}),
+        get: async (key: string | string[]) => Object.fromEntries((Array.isArray(key) ? key : [key]).filter((k) => localStore.has(k)).map((k) => [k, localStore.get(k)])),
         set: async (items: Record<string, unknown>) => {
           Object.entries(items).forEach(([key, value]) => localStore.set(key, value));
         },

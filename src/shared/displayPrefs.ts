@@ -1,9 +1,8 @@
 // ─── Display preferences (pure) ───
 //
 // How the hub names its tabs and draws icons, and where moving a document
-// leaves you. Per device (screens and habits differ), kept in
-// chrome.storage.local so every open hub follows a change at once; never
-// synced.
+// leaves you. Kept in chrome.storage.local so every open hub follows a change
+// at once, and synced with the other settings (shared/syncedSettings.ts).
 
 export const DISPLAY_PREFS_STORAGE_KEY = 'rpdfDisplay';
 
@@ -45,16 +44,18 @@ const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
 
 /**
  * A tab's two lines. `docName` is the PDF's own title or its file name;
- * `paperTitle` the detected paper, if any. The second line never repeats the
- * first.
+ * `paperTitle` the detected paper, if any; `userTitle` the name the user gave
+ * it, which is always the first line (the second: the paper, else the file).
+ * The second line never repeats the first.
  */
 export function tabLabels(
-  input: { docName: string; paperTitle: string | null; venue: string | null; year: number | null },
+  input: { docName: string; paperTitle: string | null; venue: string | null; year: number | null; userTitle?: string | null },
   prefs: Pick<DisplayPrefs, 'tabTitle' | 'tabSubtitle'>,
 ): { title: string; subtitle: string | null } {
   const paper = input.paperTitle?.trim() || null;
-  const title = prefs.tabTitle === 'paper' && paper ? paper : input.docName;
-  const other = title === input.docName ? paper : input.docName;
+  const named = input.userTitle?.trim() || null;
+  const title = named ?? (prefs.tabTitle === 'paper' && paper ? paper : input.docName);
+  const other = named ? paper ?? input.docName : title === input.docName ? paper : input.docName;
   let subtitle: string | null = null;
   if (prefs.tabSubtitle === 'venue') subtitle = [input.venue, input.year].filter(Boolean).join(' ') || null;
   else if (prefs.tabSubtitle === 'other') subtitle = other;

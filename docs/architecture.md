@@ -167,9 +167,10 @@ no longer scatter across tabs that look like web pages.
 - **Home** (house button left of the tabs, and what an emptied hub shows):
   the project's pinned documents, this hub's recently closed tabs and the
   project's documents (the default project: every document no other project
-  has; another project: its documents with −, then the rest of the library
-  with + to add), most recent first, with reading progress, a drawings mark
-  and search over the whole library. `s=home` in the hub URL keeps it in
+  has; another project: its documents, with −), most recent first, with
+  reading progress, a drawings mark and search within the project; a link
+  under the results searches the whole library instead, where + adds a
+  document of elsewhere here. `s=home` in the hub URL keeps it in
   front across a reload.
 - **Home tools**: filter chips (kinds, with drawings, reading, unread, with counts; the active one is always shown) and a sort (recent, title, year, progress), remembered per device; rows have a checkbox and "⋯" (open, pin, add to another project, move, remove, kind, copy URL), and a selection — always only rows on screen — gets a bar with the same actions in bulk. Removing from a project is undone with its pin, pin place and open tab.
 - **Pins** belong to a project, so a pinned document is a narrow tab at the
@@ -451,7 +452,15 @@ next one:
 `shared/pdfLibrary.ts`, `chrome.storage.local` key `rpdfLibrary`: one row per
 document identity opened in a hub (embedded PDFs are not recorded) — up to 5
 source URLs, file name, the PDF's Title, the detected paper title/venue/year,
-page count, last opened, kind. Positions and drawings are joined in by
+page count, last opened, kind, and what the user wrote about it: a name
+(`userTitle`), a note with links (web, file or a local path) and its Drive
+copy, each the latest change winning a merge. A document goes by the
+user's name, else the paper's, else the file's own name — a PDF that is not
+a paper keeps the name it was saved under; its Title metadata only stands in
+for a URL segment that is no file name (`download`) — and is found by any of
+them, the note and the links. The hub's document info (tab menu, a home
+row's menu, F2 on a tab, `hub/docInfo.ts`) edits them and lists every place
+the document was opened from. Positions and drawings are joined in by
 `docId` on the home page, not copied. Viewer frames and the hub send
 `VOCAB_T_PDF_LIBRARY_UPDATE` (`opened` / `meta` / `user-kind`); the
 background is the only writer (`background/pdfLibraryStore.ts`, one
@@ -464,8 +473,8 @@ others 365 days).
 ## Sync document
 
 `researchpdf-sync-v1.json` (gzip) in the account's Drive appDataFolder,
-shape in `src/shared/pdfSync.ts` (snapshot version 5; an older build's
-version 1–4 document reads with what it lacks empty, and older builds
+shape in `src/shared/pdfSync.ts` (snapshot version 6; an older build's
+version 1–5 document reads with what it lacks empty, and older builds
 refuse a newer version instead of writing it back without it):
 
 - `docs`: `PdfDocRecord[]`, reading position + zoom per document identity.
@@ -481,7 +490,8 @@ refuse a newer version instead of writing it back without it):
   member the latest change wins, the latest saved layout wins.
 - `library`: `PdfLibraryEntry[]`, joined per field (`mergePdfLibraryEntries`):
   the latest open names the row, the latest pin change wins the pin, URLs are
-  unioned. No deletions, so the join can be applied over local rows at any
+  unioned, the user's name, note and links and Drive copy each go to the
+  latest change. No deletions, so the join can be applied over local rows at any
   time without losing a concurrent write. A library change never reloads an
   open document (`changedPdfDocIds` looks at positions and drawings only).
 - The merged set is bounded exactly like local storage (300 documents /
@@ -494,8 +504,19 @@ refuse a newer version instead of writing it back without it):
   status), `shared/syncErrors.ts`, and worded by the page that shows them,
   in its language. A state an older build stored keeps its sentence.
 
-The PDF files themselves are never uploaded. Paper-strip lookups and settings
-stay on the device.
+- `settings` (version 6): the preferences that are not about one device
+  (`shared/syncedSettings.ts`: tab names and icons, language, drag choices,
+  paper strip, figure capture), per key the latest change. Each change made
+  on purpose is stamped (`rpdfSettingAt:<key>`; `db/settingsRepository.ts`
+  for IndexedDB settings, a `storage.onChanged` listener in
+  `background/settingsSync.ts` for the rest) and pushed soon; a setting never
+  changed is not sent, so a new device's defaults never override a choice.
+  Keys a newer build syncs are carried along. API keys, the open-PDFs-here
+  switches (they need this device's Chrome access), the local file cache and
+  one PDF tab per window or per browser stay on the device.
+
+The PDF files themselves are never uploaded. Paper-strip lookups stay on the
+device.
 
 ## When it syncs
 

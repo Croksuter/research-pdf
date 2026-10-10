@@ -1,3 +1,4 @@
+import { noUserFields } from '../src/shared/pdfLibrary';
 import { describe, expect, it } from 'vitest';
 
 import type { PdfLibrary, PdfLibraryEntry } from '../src/shared/pdfLibrary';
@@ -6,7 +7,7 @@ import { PDF_UPKEEP_VERSION, markPdfUpkeepDone, parsePdfUpkeepState, rowsNeeding
 function entry(docId: string, overrides: Partial<PdfLibraryEntry> = {}): PdfLibraryEntry {
   return {
     docId, urls: [], fileName: null, docTitle: null, title: null, venue: null, year: null,
-    numPages: 3, openedAt: 1_000, pinned: false, pinChangedAt: 0, paperKind: null, userKind: null, userKindAt: 0, ...overrides,
+    numPages: 3, openedAt: 1_000, pinned: false, pinChangedAt: 0, paperKind: null, userKind: null, userKindAt: 0, ...noUserFields(), ...overrides,
   };
 }
 

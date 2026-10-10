@@ -41,7 +41,7 @@ import { cachePdfBytes, paperAliasesOf, pdfFileCacheEnabled, resolvePdfUrl, reva
 import { showAnnotationConflictDialog } from './pdfViewer/annotationConflict';
 import { classifyViewerHash, type ViewerHashPlan } from './pdfViewer/openParams';
 import type { PdfDocIdentity, PdfDocRecord } from '../shared/pdfIdentity';
-import type { PdfLibraryUpdate } from '../shared/pdfLibrary';
+import { PDF_LIBRARY_STORAGE_KEY, parsePdfLibrary, realFileName, type PdfLibraryUpdate } from '../shared/pdfLibrary';
 import { fitTextLayerFonts, useEmbeddedFontsForText } from './pdfViewer/textLayerFonts';
 import { placeTextLayerRuns } from './pdfViewer/textLayerPositions';
 import { localizeDocument } from '../shared/i18n';
@@ -300,12 +300,30 @@ function recordInLibrary(update: PdfLibraryUpdate) {
 // viewer reports both names to it.
 let docTitle = 'PDF';
 let paperTitle: string | null = null;
+// The name the user gave the document (the hub's document info), shown in
+// place of its own; the hub is still told the document's own name.
+let userTitle: string | null = null;
+
+async function followUserTitle(docId: string): Promise<void> {
+  const stored = await chrome.storage.local.get(PDF_LIBRARY_STORAGE_KEY).catch(() => ({} as Record<string, unknown>));
+  if (currentIdentity?.docId !== docId) return;
+  userTitle = parsePdfLibrary(stored[PDF_LIBRARY_STORAGE_KEY])[docId]?.userTitle ?? null;
+  setTitles({});
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes[PDF_LIBRARY_STORAGE_KEY] || !currentIdentity) return;
+  const next = parsePdfLibrary(changes[PDF_LIBRARY_STORAGE_KEY].newValue)[currentIdentity.docId]?.userTitle ?? null;
+  if (next !== userTitle) { userTitle = next; setTitles({}); }
+});
+
 function setTitles(next: { doc?: string; paper?: string | null }) {
   if (next.doc !== undefined) docTitle = next.doc;
   if (next.paper !== undefined) paperTitle = next.paper;
-  const shownPaper = paperTitle && !sameTitle(paperTitle, docTitle) ? paperTitle : null;
-  document.title = `${paperTitle ?? docTitle} · ${APP_NAME}`;
-  fileNameEl.textContent = docTitle;
+  const shownName = userTitle ?? docTitle;
+  const shownPaper = paperTitle && !sameTitle(paperTitle, shownName) ? paperTitle : null;
+  document.title = `${userTitle ?? paperTitle ?? docTitle} · ${APP_NAME}`;
+  fileNameEl.textContent = shownName;
   paperTitleEl.textContent = shownPaper ?? '';
   paperTitleEl.hidden = !shownPaper;
   paperTitleEl.title = shownPaper ?? '';
@@ -878,6 +896,7 @@ async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesIn
   userTouched = false;
   currentIdentity = null;
   pendingRestore = null;
+  userTitle = null;
   setProgress(Number.NaN);
   task.onProgress = ({ loaded, total }: { loaded: number; total: number }) => {
     if (total > 0) { currentByteLength = total; if (loadingTask === task) setProgress(loaded / total); }
@@ -911,6 +930,7 @@ async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesIn
   // apply the remembered position; identity failures never block opening.
   try {
     currentIdentity = await derivePdfDocIdentity(doc, bytesInfo);
+    if (currentIdentity) void followUserTitle(currentIdentity.docId);
     pendingRestore = currentIdentity ? await loadPdfDocRecord(currentIdentity) : null;
     // Made the active view before the document was known: the other views hear it now.
     if (positionWriter) announceActiveView();
@@ -937,7 +957,10 @@ async function openDocument(task: PDFDocumentLoadingTask, label: string, bytesIn
   void doc.getMetadata().then(({ info }) => {
     const title = (info as { Title?: unknown } | undefined)?.Title;
     if (typeof title !== 'string' || !title.trim() || loadingTask !== task) return;
-    setTitles({ doc: title.trim() });
+    // A file keeps the name it was saved under (Title metadata is often a
+    // word processor's leftover); a URL's last segment that is no file name
+    // (`download`, `view`) gives way. The metadata is kept for search either way.
+    if (!realFileName(label)) setTitles({ doc: title.trim() });
     if (currentIdentity) recordInLibrary({ kind: 'meta', docId: currentIdentity.docId, docTitle: title, title: null, venue: null, year: null });
   }).catch(() => { /* metadata is optional */ });
   if (currentByteLength === null) {

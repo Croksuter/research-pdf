@@ -1185,3 +1185,49 @@ body.is-foreign-drag .rpdf-split-drop .rpdf-split-half span { visibility: visibl
 .rpdf-danger:hover { background: #f6aea9; }
 .rpdf-danger:focus-visible,
 .rpdf-li-confirm .rpdf-style-text-btn:focus-visible { outline: 2px solid var(--hub-accent); outline-offset: 1px; }
+
+/* ── Document info (hub/docInfo.ts) ── */
+.rpdf-docinfo { z-index: 40; width: min(420px, calc(100vw - 16px)); max-height: calc(100vh - var(--hub-strip-height) - 16px); overflow-y: auto; padding: 12px 14px; gap: 10px; }
+.rpdf-docinfo-top { display: flex; align-items: center; gap: 8px; }
+.rpdf-docinfo-top .rpdf-ask-title { flex: 1; }
+.rpdf-docinfo-section { display: flex; flex-direction: column; gap: 4px; }
+.rpdf-docinfo-head { margin: 0; color: var(--hub-muted); font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; }
+.rpdf-docinfo-hint { margin: 0; color: var(--hub-muted); font-size: 12px; overflow-wrap: anywhere; }
+.rpdf-docinfo-input,
+.rpdf-docinfo-note {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--hub-border);
+  border-radius: 7px;
+  background: var(--hub-viewer-bg);
+  color: var(--hub-fg);
+  font: inherit;
+  font-size: 13px;
+}
+.rpdf-docinfo-note { resize: vertical; min-height: 60px; line-height: 1.45; }
+.rpdf-docinfo-input:focus-visible,
+.rpdf-docinfo-note:focus-visible { outline: 2px solid var(--hub-accent); outline-offset: 0; }
+.rpdf-docinfo-source { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.rpdf-docinfo-source-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--hub-fg);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.rpdf-docinfo-source-main:hover { background: var(--hub-tab-hover); }
+.rpdf-docinfo-source-main span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rpdf-docinfo-source-main svg { flex: none; width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; color: var(--hub-muted); }
+.rpdf-docinfo-links { display: flex; flex-direction: column; }
+.rpdf-docinfo-add { display: flex; align-items: center; gap: 4px; }
+.rpdf-docinfo[hidden] { display: none; }

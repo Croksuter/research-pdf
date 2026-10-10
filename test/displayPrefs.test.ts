@@ -16,6 +16,8 @@ describe('display preferences', () => {
   it('names a tab by the paper with its venue, by default', () => {
     expect(tabLabels(cot, DEFAULT_DISPLAY_PREFS)).toEqual({ title: 'Chain-of-Thought Prompting', subtitle: 'NeurIPS 2022' });
     expect(tabLabels(cot, { tabTitle: 'document', tabSubtitle: 'other' })).toEqual({ title: '2201.11903', subtitle: 'Chain-of-Thought Prompting' });
+    // A name the user gave it comes first; the second line names the paper.
+    expect(tabLabels({ ...cot, userTitle: 'CoT' }, { tabTitle: 'document', tabSubtitle: 'other' })).toEqual({ title: 'CoT', subtitle: 'Chain-of-Thought Prompting' });
     expect(tabLabels(cot, { tabTitle: 'paper', tabSubtitle: 'other' })).toEqual({ title: 'Chain-of-Thought Prompting', subtitle: '2201.11903' });
     expect(tabLabels(cot, { tabTitle: 'paper', tabSubtitle: 'none' }).subtitle).toBeNull();
   });

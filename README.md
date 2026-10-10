@@ -39,8 +39,8 @@ Google Drive.
   group them in folders by dragging.
 - Papers are told apart from other PDFs at a glance: journal, conference,
   preprint, survey and report icons, which you can correct.
-- A home page lists the project's PDFs and every PDF you have opened, with
-  reading progress and search. Pinned PDFs sit at the left of their project's
+- A home page lists the project's PDFs, with reading progress and search
+  (within the project, or the whole library when you ask). Pinned PDFs sit at the left of their project's
   tab.
 - Remembers drawings and the last page/zoom per document, identified by the
   file's own content rather than its name or path.

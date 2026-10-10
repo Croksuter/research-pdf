@@ -1,3 +1,4 @@
+import { noUserFields } from '../src/shared/pdfLibrary';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { PdfLibraryEntry } from '../src/shared/pdfLibrary';
@@ -45,7 +46,7 @@ const A = 'https://arxiv.org/pdf/2401.00001';
 const B = 'https://a.org/b.pdf';
 
 function libraryEntry(docId: string, pinned = false, pinChangedAt = 0): PdfLibraryEntry {
-  return { docId, urls: [B], fileName: null, docTitle: null, title: null, venue: null, year: null, numPages: 3, openedAt: NOW - 1_000, pinned, pinChangedAt, paperKind: null, userKind: null, userKindAt: 0 };
+  return { docId, urls: [B], fileName: null, docTitle: null, title: null, venue: null, year: null, numPages: 3, openedAt: NOW - 1_000, pinned, pinChangedAt, paperKind: null, userKind: null, userKindAt: 0, ...noUserFields() };
 }
 
 function project(id: string, overrides: Partial<PdfProject> = {}): PdfProject {

@@ -1,3 +1,4 @@
+import { noUserFields } from '../src/shared/pdfLibrary';
 import { describe, expect, it } from 'vitest';
 import { gatherLanded, isHubMessage, openedSinceUrls, parseGatherResult } from '../src/ui/pageKit';
 import type { PdfLibrary, PdfLibraryEntry } from '../src/shared/pdfLibrary';
@@ -7,7 +8,7 @@ import { WELCOME_RESUME_MAX_AGE_MS, parseWelcomeResume, welcomeResumeStep } from
 function entry(docId: string, urls: string[], openedAt: number): PdfLibraryEntry {
   return {
     docId, urls, fileName: null, docTitle: null, title: null, venue: null, year: null, numPages: 3, openedAt,
-    pinned: false, pinChangedAt: 0, paperKind: null, userKind: null, userKindAt: 0,
+    pinned: false, pinChangedAt: 0, paperKind: null, userKind: null, userKindAt: 0, ...noUserFields(),
   };
 }
 

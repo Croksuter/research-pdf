@@ -23,6 +23,7 @@
 // this page's own URL (history.replaceState, see shared/localPdf.ts), so a
 // reload or Chrome's session restore brings every document back.
 
+import { refreshDocInfo } from './hub/docInfo';
 import { initDebugLogging } from '../shared/debugLog';
 import { hubKeyAction } from '../shared/pdfHubProtocol';
 import { localizeDocument } from '../shared/i18n';
@@ -31,7 +32,7 @@ import { isHub, on, projectId, projects, tabs } from './hub/store';
 import { DEFAULT_PROJECT_ID } from '../shared/pdfProjects';
 import { listBtn, listPanel, menu, moveBtn, movePanel, projectBtn, projectsPanel, stylePanel } from './hub/dom';
 import { hideMenu } from './hub/uiKit';
-import { completePendingPins, dropTabsThatLeft, onStripKey, reconcilePinned, step, updateTabLabel } from './hub/tabStrip';
+import { completePendingPins, dropTabsThatLeft, onStripKey, reconcilePinned, render, step, updateTabLabel } from './hub/tabStrip';
 import { boot, reloadInNewLanguage, rehome } from './hub/session';
 import { hideList } from './hub/tabList';
 import { hideStyle, renderStyle, updateFavicon } from './hub/looks';
@@ -72,7 +73,7 @@ function memberIds(): Set<string> {
 }
 
 on('data', ({ library, projects: projectsChanged }) => {
-  if (library) tabs.forEach(updateTabLabel); // kinds
+  if (library) { tabs.forEach(updateTabLabel); refreshDocInfo(); render(); } // kinds, names (the window title too)
   if (isHub) {
     // This project was deleted (here, in another hub, on another device).
     if (projects[projectId]?.deletedAt !== 0) { void rehome(); return; }

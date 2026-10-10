@@ -14,6 +14,9 @@ import {
   relativeTime,
   searchPdfLibrary,
   type PdfLibrary,
+  noUserFields,
+  noteLinkUrl,
+  readableSource,
   type PdfLibraryEntry,
 } from '../src/shared/pdfLibrary';
 import { parsePdfLibraryUpdateRequest } from '../src/shared/messages';
@@ -23,7 +26,7 @@ const NOW = Date.UTC(2026, 8, 30, 12);
 function entry(docId: string, overrides: Partial<PdfLibraryEntry> = {}): PdfLibraryEntry {
   return {
     docId, urls: [], fileName: null, docTitle: null, title: null, venue: null, year: null,
-    numPages: 12, openedAt: NOW - 1_000, pinned: false, pinChangedAt: 0, paperKind: null, userKind: null, userKindAt: 0, ...overrides,
+    numPages: 12, openedAt: NOW - 1_000, pinned: false, pinChangedAt: 0, paperKind: null, userKind: null, userKindAt: 0, ...noUserFields(), ...overrides,
   };
 }
 
@@ -43,16 +46,39 @@ describe('library updates', () => {
     });
   });
 
-  it('names a row by paper, then the PDF title, then the file', () => {
+  it('names a row by the user, then the paper, then the file\'s own name, then the PDF title', () => {
     let lib = applyPdfLibraryUpdate({}, { kind: 'opened', docId: 'd', url: 'https://a.org/x.pdf', fileName: 'x.pdf', numPages: 1 }, NOW);
     const name = () => libraryEntryName(lib.d, () => 'from-url');
     expect(name()).toBe('x.pdf');
-    lib = applyPdfLibraryUpdate(lib, { kind: 'meta', docId: 'd', docTitle: 'Beta Methods', title: null, venue: null, year: null }, NOW);
-    expect(name()).toBe('Beta Methods');
+    // Not a paper: the file keeps its name over the Title metadata.
+    lib = applyPdfLibraryUpdate(lib, { kind: 'meta', docId: 'd', docTitle: 'Microsoft Word - draft.docx', title: null, venue: null, year: null }, NOW);
+    expect(name()).toBe('x.pdf');
     lib = applyPdfLibraryUpdate(lib, { kind: 'meta', docId: 'd', docTitle: null, title: 'The Paper', venue: null, year: null }, NOW);
     expect(name()).toBe('The Paper');
-    expect(lib.d.docTitle).toBe('Beta Methods');
+    expect(lib.d.docTitle).toBe('Microsoft Word - draft.docx');
+    lib = applyPdfLibraryUpdate(lib, { kind: 'rename', docId: 'd', userTitle: '  My name  ' }, NOW);
+    expect(name()).toBe('My name');
+    lib = applyPdfLibraryUpdate(lib, { kind: 'rename', docId: 'd', userTitle: null }, NOW + 1);
+    expect(name()).toBe('The Paper');
     expect(libraryEntryName(entry('e'), () => 'from-url')).toBe('PDF');
+    // A URL's last segment that is no file name gives way to the Title metadata.
+    let web = applyPdfLibraryUpdate({}, { kind: 'opened', docId: 'w', url: 'https://a.org/download?id=3', fileName: 'download', numPages: 1 }, NOW);
+    web = applyPdfLibraryUpdate(web, { kind: 'meta', docId: 'w', docTitle: 'Annual Report', title: null, venue: null, year: null }, NOW);
+    expect(libraryEntryName(web.w, () => 'from-url')).toBe('Annual Report');
+  });
+
+  it('keeps the user\'s note, links and Drive copy, the latest change winning a merge', () => {
+    let lib = applyPdfLibraryUpdate({}, { kind: 'opened', docId: 'd', url: null, fileName: 'a.pdf', numPages: 1 }, NOW);
+    lib = applyPdfLibraryUpdate(lib, { kind: 'note', docId: 'd', note: ' read §3 ', links: ['https://x.org/a#b', '/home/me/papers/a.pdf', 'javascript:alert(1)', 'C:\\Papers\\a.pdf'] }, NOW);
+    expect(lib.d).toMatchObject({ note: 'read §3', links: ['https://x.org/a#b', '/home/me/papers/a.pdf', 'C:\\Papers\\a.pdf'], noteAt: NOW });
+    lib = applyPdfLibraryUpdate(lib, { kind: 'drive', docId: 'd', driveFileId: '1AbCdEfGhIjKlMnOp' }, NOW);
+    expect(lib.d.driveFileId).toBe('1AbCdEfGhIjKlMnOp');
+    const elsewhere = { ...lib.d, note: 'older', noteAt: NOW - 5, driveFileId: null, driveAt: NOW + 5, userTitle: 'Theirs', userTitleAt: NOW + 1 };
+    const merged = mergePdfLibraryEntries(lib.d, elsewhere);
+    expect(merged).toMatchObject({ note: 'read §3', driveFileId: null, userTitle: 'Theirs' });
+    expect(mergePdfLibraryEntries(elsewhere, lib.d)).toEqual(merged);
+    expect(parsePdfLibraryUpdate({ kind: 'drive', docId: 'd', driveFileId: '../x' })).toBeNull();
+    expect(parsePdfLibraryUpdate({ kind: 'note', docId: 'd', note: 'x', links: 'nope' })).toBeNull();
   });
 
   it('keeps a local file without an address, and caps the URLs', () => {
@@ -154,5 +180,17 @@ describe('document kinds', () => {
     expect(mergePdfLibraryEntries(elsewhere, lib.d1)).toEqual(mergePdfLibraryEntries(lib.d1, elsewhere));
     expect(parsePdfLibraryUpdate({ kind: 'user-kind', docId: 'd1', userKind: 'novel' })).toBeNull();
     expect(parsePdfLibraryUpdate({ kind: 'user-kind', docId: 'd1', userKind: null })).toEqual({ kind: 'user-kind', docId: 'd1', userKind: null });
+  });
+});
+
+describe('links and sources', () => {
+  it('opens a kept local path as a file URL, and shows a file URL as a path', () => {
+    expect(noteLinkUrl('/home/me/my papers/a.pdf')).toBe('file:///home/me/my%20papers/a.pdf');
+    expect(noteLinkUrl('C:\\Papers\\a b.pdf')).toBe('file:///C:/Papers/a%20b.pdf');
+    expect(noteLinkUrl('\\\\nas\\share\\a.pdf')).toBe('file://nas/share/a.pdf');
+    expect(noteLinkUrl('https://x.org/a')).toBe('https://x.org/a');
+    expect(readableSource('file:///home/me/my%20papers/a.pdf')).toBe('/home/me/my papers/a.pdf');
+    expect(readableSource('file:///C:/Papers/a.pdf')).toBe('C:\\Papers\\a.pdf');
+    expect(readableSource('https://x.org/a%20b.pdf')).toBe('https://x.org/a b.pdf');
   });
 });
